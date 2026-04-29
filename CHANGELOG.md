@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-04-29
+
+### Changed
+
+- **Compatibility:** widened `illuminate/*` constraints from `^11.0 || ^12.0` to `^11.0 || ^12.0 || ^13.0` across the five required packages (`database`, `contracts`, `cache`, `filesystem`, `log`, `mail`). Surfaced during ADR-0021 cascade onto entreezuil (Laravel 13). No behavioral change — the package's PHPStan rules reason about class names that are stable across Laravel 11/12/13. Forward-looking: removes the constraint as a future cascade blocker.
+
 ## [0.1.0] — 2026-04-29
 
 ### Added
@@ -22,5 +28,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.1.1
 [0.1.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.1.0
