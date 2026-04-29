@@ -1,5 +1,10 @@
 # phpstan-warroom-rules
 
+[![Packagist Version](https://img.shields.io/packagist/v/script-development/phpstan-warroom-rules.svg)](https://packagist.org/packages/script-development/phpstan-warroom-rules)
+[![PHP Version](https://img.shields.io/packagist/dependency-v/script-development/phpstan-warroom-rules/php.svg)](https://packagist.org/packages/script-development/phpstan-warroom-rules)
+[![CI](https://github.com/script-development/phpstan-warroom-rules/actions/workflows/ci.yml/badge.svg)](https://github.com/script-development/phpstan-warroom-rules/actions/workflows/ci.yml)
+[![License](https://img.shields.io/packagist/l/script-development/phpstan-warroom-rules.svg)](LICENSE)
+
 Canonical PHPStan rules enforcing war-room doctrine across `script-development` Laravel territories.
 
 Distributed via Composer as `script-development/phpstan-warroom-rules`. Doctrine source is [ADR-0021](https://adrs.script.nl/decisions/phpstan-rules-package).
