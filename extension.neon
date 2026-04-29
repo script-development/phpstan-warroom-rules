@@ -1,0 +1,16 @@
+services:
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceActionTransactionsRule
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidDatabaseManagerInActionsRule
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidAbortHelperRule
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\LogRule
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
+        tags: [phpstan.broker.dynamicMethodReturnTypeExtension]
