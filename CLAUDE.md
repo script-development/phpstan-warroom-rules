@@ -16,7 +16,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 - Origin campaign: war-room `campaigns/war-room/2026-04-29-phpstan-rules-canonical-promotion.md`
 - Rules originated inside emmie's `backend/app/PHPStan/` and were promoted here for cross-territory distribution.
 
-## Rules shipped (Phase 1)
+## Rules shipped
 
 | Rule | Doctrine | Identifier |
 |---|---|---|
@@ -24,9 +24,10 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 | `ForbidDatabaseManagerInActionsRule` | ADR-0021 §Why ConnectionInterface | `forbidDatabaseManager.inAction` |
 | `ForbidAbortHelperRule` | War-room §Explicit over implicit | `forbidAbortHelper.abortUsed` |
 | `LogRule` | ADR-0001 §Append-only | `logRule.logModification` |
+| `EnforceAuditSnapshotOnRetryRule` | ADR-0001 §Snapshot-on-Retry Safety | `enforceAuditSnapshotOnRetry.firstStatementMustResetState` |
 | `ConnectionTransactionReturnTypeExtension` | (type extension, no rule) | — |
 
-Phase 2 will add an `EnforceExplicitHydrationRule` for ADR-0019.
+Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snapshot-on-Retry Safety) is the first Phase 2 addition, promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). `EnforceExplicitHydrationRule` (ADR-0019) is the next Phase 2 candidate.
 
 ## Conventions
 
