@@ -47,6 +47,8 @@
     },
     "scripts": {
         "test": "phpunit",
+        "test:coverage": "phpunit --coverage-clover=build/logs/clover.xml --coverage-text",
+        "coverage:check": "@php bin/coverage-check.php build/logs/clover.xml 83",
         "phpstan": "phpstan analyse",
         "format": "pint",
         "format:check": "pint --test"
