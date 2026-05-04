@@ -10,7 +10,7 @@
         "laravel"
     ],
     "require": {
-        "php": "^8.3",
+        "php": "^8.4",
         "phpstan/phpstan": "^2.0",
         "nikic/php-parser": "^5.0",
         "illuminate/database": "^11.0 || ^12.0 || ^13.0",

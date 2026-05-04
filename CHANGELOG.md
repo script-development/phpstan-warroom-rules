@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `EnforceAuditSnapshotOnRetryRule` — flags `App\Actions\*` classes whose constructor injects an entity audit logger and whose `$connection->transaction(...)` calls do not begin with an in-memory state reset (`$model->refresh()`, fresh fetch via `->newQuery()->findOrFail(...)` / `->fresh()`, or fresh instantiation via `new ...` / `->newInstance()`). Doctrine: ADR-0001 §Snapshot-on-Retry Safety. Identifier: `enforceAuditSnapshotOnRetry.firstStatementMustResetState`. Promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). Receiver detection is type-based (`Illuminate\Database\ConnectionInterface` subtype) — replaces territory-specific property-name matching (`$this->db` vs `$this->connection`). Escape hatch: `// @audit-snapshot-retry-safety: <rationale>` marker preceding the transaction call.
+
+### Changed
+
+- **PHP constraint:** bumped `composer.json` `php` from `^8.3` to `^8.4`. The package's Pint config (`mb_str_functions: true`) normalizes `ltrim`/`trim` calls to `mb_ltrim`/`mb_trim`, which are PHP 8.4+ functions. The new rule introduced the first `mb_ltrim`/`mb_trim` callsites; aligning the constraint with the formatter's actual output. All consuming territories already run PHP 8.4 — no real-world impact.
+
 ## [0.1.1] — 2026-04-29
 
 ### Changed
