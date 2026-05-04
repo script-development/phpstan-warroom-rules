@@ -15,4 +15,14 @@ final class AuditLog
     {
         return true;
     }
+
+    public function forceDelete(): bool
+    {
+        return true;
+    }
+
+    public function forceDeleteQuietly(): bool
+    {
+        return true;
+    }
 }
