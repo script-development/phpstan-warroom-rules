@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- **CI:** added PHP 8.5 to the `ci.yml` and `release.yml` test matrices alongside 8.4 (`['8.4']` → `['8.4', '8.5']`). PHP 8.5.0 was released 2025-11-20; the war-room dev environment already runs 8.5.5 locally, so PRs were getting ad-hoc 8.5 coverage during pre-push but no CI signal. Adding (rather than replacing) keeps 8.4 — the `composer.json` `^8.4` contractual minimum — covered. `shivammathur/setup-php@v2` supports 8.5 since GA. Resolves issue #5.
+
 ## [0.2.0] — 2026-05-04
 
 ### Added
