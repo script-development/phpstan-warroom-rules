@@ -25,4 +25,20 @@ final class RegularModel
     {
         return true;
     }
+
+    /**
+     * @param array<int, int> $ids
+     */
+    public static function destroy(array $ids): int
+    {
+        return 0;
+    }
+
+    /**
+     * @param array<int, int> $ids
+     */
+    public static function forceDestroy(array $ids): int
+    {
+        return 0;
+    }
 }
