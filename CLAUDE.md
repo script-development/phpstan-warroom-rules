@@ -4,7 +4,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 
 ## Stack
 
-- **Language:** PHP 8.3+ (uses `private const string` syntax)
+- **Language:** PHP 8.4+ (uses `private const string` syntax; `mb_ltrim`/`mb_trim` via Pint `mb_str_functions`)
 - **Static analysis:** PHPStan 2.x (target framework — the package extends it)
 - **Test:** PHPUnit 11 (extends `PHPStan\Testing\RuleTestCase`)
 - **Format:** Pint (canonical config from war-room `templates/pint.json`)
