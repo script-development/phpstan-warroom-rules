@@ -65,6 +65,32 @@ final class LogRuleTest extends RuleTestCase
         );
     }
 
+    public function testFlagsDestroyOnLogClass(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/LogRule/DestroysAuditLog.php'],
+            [
+                [
+                    'Logs should not be updated or deleted.',
+                    11,
+                ],
+            ],
+        );
+    }
+
+    public function testFlagsForceDestroyOnLogClass(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/LogRule/ForceDestroysAuditLog.php'],
+            [
+                [
+                    'Logs should not be updated or deleted.',
+                    11,
+                ],
+            ],
+        );
+    }
+
     public function testIgnoresUpdateOnRegularClass(): void
     {
         $this->analyse(
@@ -77,6 +103,14 @@ final class LogRuleTest extends RuleTestCase
     {
         $this->analyse(
             [__DIR__ . '/../Fixtures/LogRule/ForceDeletesRegularModel.php'],
+            [],
+        );
+    }
+
+    public function testIgnoresDestroyOnRegularClass(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/LogRule/DestroysRegularModel.php'],
             [],
         );
     }
