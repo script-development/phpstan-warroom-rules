@@ -1,12 +1,15 @@
 # Release workflow — runs on tag push (v*).
 #
-# Composer packages on Packagist auto-sync from the configured Git repository,
-# so this workflow's primary job is to (1) re-run the CI gates on the tagged
+# Composer packages on public packagist.org auto-sync from the configured Git
+# repository via push-event webhook (https://packagist.org/api/github), so
+# this workflow's primary job is to (1) re-run the CI gates on the tagged
 # commit and (2) create a GitHub release pointing at the changelog entry.
 #
-# Packagist Trusted Publishing (OIDC) is TBD pending an audit of Packagist's
-# OIDC support relative to fs-packages' npm Trusted Publishing setup. Until
-# then, Packagist relies on the standard repo-webhook auto-update path.
+# OIDC Trusted Publishing on Packagist is currently a Private Packagist–only
+# feature (packagist/artifact-publish-github-action); public packagist.org
+# has no OIDC option today. Migrating would change ally-side Composer
+# consumption (private repo URL + token in composer.json) and is a commercial
+# decision tracked in Issue #11 — out of scope for this workflow until adopted.
 
 name: Release
 
