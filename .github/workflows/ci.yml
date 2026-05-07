@@ -43,7 +43,7 @@ jobs:
 
             - name: Upload coverage report
               if: always()
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: clover-php-${{ matrix.php }}
                   path: build/logs/clover.xml
@@ -55,7 +55,7 @@ jobs:
 
             - name: Upload mutation report
               if: always()
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: infection-php-${{ matrix.php }}
                   path: build/logs/infection.*
