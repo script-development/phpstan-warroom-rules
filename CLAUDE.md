@@ -8,7 +8,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 - **Static analysis:** PHPStan 2.x (target framework — the package extends it)
 - **Test:** PHPUnit 11 (extends `PHPStan\Testing\RuleTestCase`)
 - **Format:** Pint (canonical config from war-room `templates/pint.json`)
-- **Publish:** OIDC Trusted Publishing to Packagist (no stored tokens)
+- **Publish:** Auto-sync to public packagist.org via repository webhook (`https://packagist.org/api/github`, push-trigger; `dev-*` aliases on branch push, versioned releases on tag push via `release.yml`). OIDC Trusted Publishing on Packagist is currently a Private Packagist–only feature (`packagist/artifact-publish-github-action`); public packagist.org has no OIDC option today. Migration to Private Packagist is tracked in Issue #11 — out of scope until adopted (would change ally-side Composer consumption).
 
 ## Doctrine source
 
@@ -60,7 +60,7 @@ Consuming territories pin `^1.0`. Any rule that would surface new errors in alre
 - `main` is always release-ready.
 - Pull requests must update `CHANGELOG.md` under an `[Unreleased]` section.
 - A release PR moves `[Unreleased]` to a versioned heading and tags the merge commit (`v1.x.y`).
-- Trusted Publishing pipeline picks up the tag and publishes to Packagist.
+- Packagist's webhook auto-sync picks up the tag and publishes the release; `release.yml` re-runs CI gates on the tagged commit and creates a GitHub release referencing the matching CHANGELOG entry.
 
 ## What this territory does NOT do
 
