@@ -1,3 +1,13 @@
+parameters:
+    # `EnforceResourceDataValidatorOptInRule`: FQCN of the abstract resource
+    # base class. Default matches the kendo / emmie / ublgenie / entreezuil
+    # convention `App\Http\Resources\ResourceData`. Override per consumer
+    # `phpstan.neon` if a territory ships the base under a different FQCN.
+    resourceDataBaseClass: 'App\\Http\\Resources\\ResourceData'
+
+parametersSchema:
+    resourceDataBaseClass: string()
+
 services:
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceActionTransactionsRule
@@ -13,6 +23,11 @@ services:
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceAuditSnapshotOnRetryRule
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceResourceDataValidatorOptInRule
+        arguments:
+            resourceDataBaseClass: %resourceDataBaseClass%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
