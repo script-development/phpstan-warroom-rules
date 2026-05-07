@@ -41,6 +41,7 @@ includes:
 | `ForbidDatabaseManagerInActionsRule` | `forbidDatabaseManager.inAction` | Action constructors | Constructor parameter typed `DatabaseManager` is an error. Inject `ConnectionInterface` instead. |
 | `ForbidAbortHelperRule` | `forbidAbortHelper.abortUsed` | Function calls | `abort()`, `abort_if()`, `abort_unless()` are errors. Throw an explicit `HttpException` subclass instead. |
 | `LogRule` | `logRule.logModification` | `update()` / `delete()` calls | If the receiver type's class name contains `"Log"` or `"logs"` (case-insensitive), error. |
+| `EnforceResourceDataValidatorOptInRule` | `enforceResourceDataValidatorOptIn.missingValidatorCall` | Classes extending `App\Http\Resources\ResourceData` | If the class declares a non-empty `EAGER_LOAD_COUNT` / `EAGER_LOAD_SUM` constant but never calls `validateRelationsLoaded()` in any method, error. |
 
 ### `EnforceActionTransactionsRule` — write-method list
 
@@ -63,6 +64,17 @@ parameters:
 ```
 
 Each ignore should carry a comment with rationale. Future versions may add an explicit allow-list parameter — file an issue if you have a recurring need.
+
+### `EnforceResourceDataValidatorOptInRule` — configurable base class
+
+The rule scopes to classes extending `App\Http\Resources\ResourceData` by default. If a territory ships its abstract resource base under a different FQCN, override the `resourceDataBaseClass` parameter in `phpstan.neon`:
+
+```neon
+parameters:
+    resourceDataBaseClass: 'App\Resources\BaseResource'
+```
+
+Inheritance is matched via PHPStan reflection (FQCN ancestor traversal), not short-name matching — a class named `ResourceData` in an unrelated namespace will not be matched. Compliant call shapes are `self::validateRelationsLoaded($model)`, `static::validateRelationsLoaded($model)`, and `$this->validateRelationsLoaded($model)` — the production base method is `protected static`, but the instance form is also accepted for compatibility with the source-of-truth Pest arch test's permissive matcher. Empty-array constants (`EAGER_LOAD_COUNT = []`) do not fire — they are no-ops.
 
 ### Action namespace assumption
 
