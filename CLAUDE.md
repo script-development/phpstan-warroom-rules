@@ -23,7 +23,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 | `EnforceActionTransactionsRule` | ADR-0011 | `enforceActionTransactions.missingTransaction` |
 | `ForbidDatabaseManagerInActionsRule` | ADR-0021 §Why ConnectionInterface | `forbidDatabaseManager.inAction` |
 | `ForbidAbortHelperRule` | War-room §Explicit over implicit | `forbidAbortHelper.abortUsed` |
-| `LogRule` | ADR-0001 §Append-only | `logRule.logModification` |
+| `LogRule` | ADR-0001 §Append-only | `logRule.logModification` (covers instance `update`/`delete`/`forceDelete`/`forceDeleteQuietly`; static `Model::destroy()` / `Model::forceDestroy()` ship with v0.3.0 per `[Unreleased]`) |
 | `EnforceAuditSnapshotOnRetryRule` | ADR-0001 §Snapshot-on-Retry Safety | `enforceAuditSnapshotOnRetry.firstStatementMustResetState` |
 | `EnforceResourceDataValidatorOptInRule` | ADR-0009 §EAGER_LOAD validator opt-in | `enforceResourceDataValidatorOptIn.missingValidatorCall` |
 | `ConnectionTransactionReturnTypeExtension` | (type extension, no rule) | — |
@@ -42,6 +42,10 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 | Command | Purpose |
 |---|---|
 | `composer test` | Run PHPUnit tests against rule fixtures |
+| `composer test:coverage` | PHPUnit with clover coverage output (`build/logs/clover.xml`) |
+| `composer coverage:check` | Line-coverage threshold gate (`bin/coverage-check.php`) |
+| `composer mutation` | Run Infection mutation testing (developer-facing, `--threads=max --show-mutations`) |
+| `composer mutation:ci` | Run Infection with `--logger-github` for inline PR annotations + threshold gate |
 | `composer phpstan` | Self-analysis on the package's own source |
 | `composer format` | Pint write |
 | `composer format:check` | Pint check |
@@ -54,7 +58,11 @@ SemVer per ADR-0021:
 - **Minor** — new rules added, or new options without changing defaults.
 - **Patch** — bug fixes, false-positive narrowing, performance.
 
-Consuming territories pin `^1.0`. Any rule that would surface new errors in already-clean code waits for a major bump.
+**Pre-1.0 (`0.x`) convention:** within `0.x` the package treats minor bumps as breaking, because Composer's `^0.x` caret locks at minor. A v0.2.0 release does not propagate to consumers pinned `^0.1.0` — they must update their pin to `^0.2` (or a wider constraint that crosses minor). Current pins per consumer are tracked in `campaigns/phpstan-warroom-rules/2026-05-06-first-contact-wave.md` § Outcome.
+
+**Today (v0.x):** consuming territories pin `^0.{minor}` (e.g. `^0.2`). Each minor bump requires a coordinated consumer-side pin update. The CHANGELOG `[Unreleased]` block tracks each pending bump's audit demands.
+
+**At 1.0 (when stability target is met):** consuming territories pin `^1.0` and inherit minor + patch automatically. Any rule that would surface new errors in already-clean code waits for a major bump.
 
 ## Release process
 
@@ -62,6 +70,35 @@ Consuming territories pin `^1.0`. Any rule that would surface new errors in alre
 - Pull requests must update `CHANGELOG.md` under an `[Unreleased]` section.
 - A release PR moves `[Unreleased]` to a versioned heading and tags the merge commit (`v1.x.y`).
 - Packagist's webhook auto-sync picks up the tag and publishes the release; `release.yml` re-runs CI gates on the tagged commit and creates a GitHub release referencing the matching CHANGELOG entry.
+
+## War Room ADR Projections
+
+> Distilled operational rules from cross-project Architecture Decision Records.
+> Canonical full ADRs at [adrs.script.nl](https://adrs.script.nl). This section is owned by the war room — do not edit directly.
+> Last synced: 2026-05-08
+
+### Applicable
+
+- **ADR-0015 (ADR Governance)** — this section exists because ADR-0015 mandates it for non-BIO territories.
+- **ADR-0021 (Canonical PHPStan Rules Package)** — this territory is the implementation. Doctrine source: ADR-0021 §Doctrine source in docblock, §Identifier convention, §No territory-specific exceptions, §Action namespace assumption, §Versioning, §Release process. Self-quality contract documented above.
+
+### Non-applicable (the rules ship, the package does not consume them)
+
+- ADR-0001 (Audit Logging) — package distributes `LogRule` + `EnforceAuditSnapshotOnRetryRule`; does not itself maintain audit logs.
+- ADR-0002 (Cascade Deletion) — no application surface.
+- ADR-0009 (Unified ResourceData Pattern) — package distributes `EnforceResourceDataValidatorOptInRule` (Phase 2, `[Unreleased]`); does not itself ship API resources.
+- ADR-0011 (Action Class Architecture) — package distributes `EnforceActionTransactionsRule` + `ForbidDatabaseManagerInActionsRule`; itself has no Actions.
+- ADR-0012 (FormRequest → DTO) — no HTTP surface.
+- ADR-0014 (Domain-Driven Frontend) — no frontend.
+- ADR-0016 (Config Attribute Injection) — no Laravel container surface.
+- ADR-0017 (Page Integration Tests) — no pages.
+- ADR-0019 (Explicit Model Hydration) — no models. Phase 2 candidate `EnforceExplicitHydrationRule` will distribute this rule.
+- ADR-0020 (Input/Result DTO Split) — no DTOs.
+- ADR-0024 (Automated External Provisioning) — no provisioning surface.
+
+### War-room internal ADRs
+
+- ADR-0005 (Spy System) / ADR-0007 (Soldiers) / ADR-0010 (Squads) — these govern the war-room agent fleet that operates *on* this territory; not consumed by the package itself.
 
 ## What this territory does NOT do
 
