@@ -1,0 +1,9 @@
+# CODEOWNERS — phpstan-warroom-rules
+#
+# All changes to this repository require review from @script-development/phpstan-warroom-admins.
+# A separate rule-authors team is intentionally not split out today — the admins team and
+# the rule-design reviewer set are identical at the current shop size. Revisit if the
+# contributor base grows beyond the current 6 admins or if rule-design review becomes
+# a distinct concern from operational repo administration.
+
+* @script-development/phpstan-warroom-admins
