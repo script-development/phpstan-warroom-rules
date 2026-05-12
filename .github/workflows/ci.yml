@@ -14,10 +14,10 @@ jobs:
             matrix:
                 php: ['8.4', '8.5']
         steps:
-            - uses: actions/checkout@v6
+            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
             - name: Setup PHP ${{ matrix.php }}
-              uses: shivammathur/setup-php@v2
+              uses: shivammathur/setup-php@728c6c6b8cf02c2e48117716a91ee48313958a19 # v2
               with:
                   php-version: ${{ matrix.php }}
                   coverage: pcov
@@ -43,7 +43,7 @@ jobs:
 
             - name: Upload coverage report
               if: always()
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: clover-php-${{ matrix.php }}
                   path: build/logs/clover.xml
@@ -55,7 +55,7 @@ jobs:
 
             - name: Upload mutation report
               if: always()
-              uses: actions/upload-artifact@v7
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: infection-php-${{ matrix.php }}
                   path: build/logs/infection.*
