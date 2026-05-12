@@ -41,6 +41,7 @@ includes:
 | `ForbidDatabaseManagerInActionsRule` | `forbidDatabaseManager.inAction` | Action constructors | Constructor parameter typed `DatabaseManager` is an error. Inject `ConnectionInterface` instead. |
 | `ForbidAbortHelperRule` | `forbidAbortHelper.abortUsed` | Function calls | `abort()`, `abort_if()`, `abort_unless()` are errors. Throw an explicit `HttpException` subclass instead. |
 | `LogRule` | `logRule.logModification` | `update()` / `delete()` calls | If the receiver type's class name contains `"Log"` or `"logs"` (case-insensitive), error. |
+| `EnforceAuditSnapshotOnRetryRule` | `enforceAuditSnapshotOnRetry.firstStatementMustResetState` | `App\Actions\*` whose constructor injects an entity audit logger | The first statement inside `$connection->transaction(...)` must reset the model's in-memory state (`$model->refresh()`, fresh fetch, or fresh instantiation). Doctrine: ADR-0001 §Snapshot-on-Retry Safety. |
 | `EnforceResourceDataValidatorOptInRule` | `enforceResourceDataValidatorOptIn.missingValidatorCall` | Classes extending `App\Http\Resources\ResourceData` | If the class declares a non-empty `EAGER_LOAD_COUNT` / `EAGER_LOAD_SUM` constant but never calls `validateRelationsLoaded()` in any method, error. |
 
 ### `EnforceActionTransactionsRule` — write-method list
@@ -92,7 +93,7 @@ Semantic versioning:
 - **Minor** — a new rule is added, or a rule gains an option that doesn't change defaults.
 - **Patch** — bug fixes, false-positive suppression, performance improvements.
 
-Pin to a major version (`^1.0`).
+Pin to a 0.x minor version today (`^0.2`); future 1.0 release will allow `^1.0` pinning. See `CLAUDE.md` § Versioning for the 0.x caret-semantics rationale.
 
 ## License
 
