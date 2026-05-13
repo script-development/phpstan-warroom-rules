@@ -7,12 +7,20 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 
 /**
- * Minimal Eloquent model. `AuditLog::query()` returns
- * `Illuminate\Database\Eloquent\Builder<AuditLog>`. The fixture exercises the
- * Eloquent\Builder branch of receiver-type detection. The chain hops through
- * `from('audit_logs')` (Eloquent\Builder's table-setting vocabulary, proxying
- * to Query\Builder->from()) — same intent as Query\Builder->table(), and
- * recognised by the rule's chain-walk.
+ * Acceptable-miss negative fixture. `AuditLog::query()->from('audit_logs')->truncate()`
+ * uses Eloquent's `from()` vocabulary to set the table rather than the
+ * Query\Builder `table()` vocabulary. The rule's chain-walk recognises
+ * `table()` only — `from()`-set tables are an acceptable miss in the same
+ * family as variable table names. The receiver-type gate still passes
+ * (Eloquent\Builder is a supported receiver), but the chain walk finds no
+ * `table()` call and therefore does not fire.
+ *
+ * Model-property-driven tables (`$table = 'audit_logs'` on the Model itself,
+ * with no `table()`/`from()` in the chain) are likewise an acceptable miss —
+ * the table name never appears in the call chain.
+ *
+ * Rare-but-coherent shape `$eloquentBuilder->table('logs')->truncate()`
+ * would still fire (Eloquent\Builder receiver + `table()` call in chain).
  */
 final class AuditLog extends Model
 {

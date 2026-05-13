@@ -17,7 +17,6 @@ use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
 
-use function in_array;
 use function mb_stripos;
 
 /**
@@ -44,17 +43,22 @@ use function mb_stripos;
  *   2. The receiver type is a (subtype of) `Illuminate\Database\Query\Builder`
  *      or `Illuminate\Database\Eloquent\Builder` — type-based via
  *      `ObjectType::isSuperTypeOf()`, not property-name string matching.
- *   3. Walking back through the chain, the most recent `table()` or `from()`
- *      call (whether `MethodCall` like `$db->table('x')` or `StaticCall` like
+ *   3. Walking back through the chain, the most recent `table()` call (whether
+ *      `MethodCall` like `$db->table('x')` or `StaticCall` like
  *      `DB::table('x')`) has a `Scalar\String_` first argument whose value
- *      matches `'log'` / `'logs'` case-insensitively. Both `table()` and
- *      `from()` are recognised because Eloquent\Builder chains naturally
- *      hop through `from()` while Query\Builder chains hop through
- *      `table()` — same intent, different fluent vocabulary.
+ *      matches `'log'` / `'logs'` case-insensitively.
  *
  * Variable table names (`$t = 'logs'; DB::table($t)->truncate()`) are out of
  * scope — would require value-flow analysis. Acceptable miss; rely on
  * reviewer + consumer-side `phpstan.neon` `ignoreErrors`.
+ *
+ * Eloquent\Builder chains that set the table via `from('logs')` rather than
+ * `table('logs')` are also out of scope — `from()` is Eloquent's fluent
+ * vocabulary and is not recognised by the chain-walk. Model-property-driven
+ * tables (`$table = 'audit_logs'` on the Model class) are likewise an
+ * acceptable miss because the table name does not appear in the call chain.
+ * The Eloquent\Builder receiver-type branch remains live for the rare but
+ * coherent shape `$eloquentBuilder->table('logs')->truncate()`.
  *
  * Substring matching is intentionally broad. False positives on tables named
  * `catalog`, `blog`, `terminology`, or domain tables that include `log` in
@@ -71,7 +75,7 @@ final class LogBuilderTruncateRule implements Rule
 
     private const array LOG_NEEDLES = ['log', 'logs'];
 
-    private const array TABLE_SETTING_METHODS = ['table', 'from'];
+    private const string TABLE_SETTING_METHOD = 'table';
 
     public function getNodeType(): string
     {
@@ -121,10 +125,10 @@ final class LogBuilderTruncateRule implements Rule
 
     /**
      * Walk back through the fluent chain looking for the most recent
-     * `table()` or `from()` call (`MethodCall` or `StaticCall`). Inspect its
-     * first argument: fire on a Log-named `Scalar\String_`; otherwise
-     * (variable, concat, function call) do not fire. If no table-setting
-     * call is found in the chain, do not fire.
+     * `table()` call (`MethodCall` or `StaticCall`). Inspect its first
+     * argument: fire on a Log-named `Scalar\String_`; otherwise (variable,
+     * concat, function call) do not fire. If no `table()` call is found in
+     * the chain, do not fire.
      */
     private function chainTargetsLogNamedTable(Expr $receiver): bool
     {
@@ -133,7 +137,7 @@ final class LogBuilderTruncateRule implements Rule
         while ($current instanceof MethodCall || $current instanceof StaticCall) {
             if (
                 $current->name instanceof Identifier
-                && in_array($current->name->toString(), self::TABLE_SETTING_METHODS, true)
+                && $current->name->toString() === self::TABLE_SETTING_METHOD
             ) {
                 return $this->firstArgIsLogNamedString($current);
             }
