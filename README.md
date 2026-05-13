@@ -41,6 +41,7 @@ includes:
 | `ForbidDatabaseManagerInActionsRule` | `forbidDatabaseManager.inAction` | Action constructors | Constructor parameter typed `DatabaseManager` is an error. Inject `ConnectionInterface` instead. |
 | `ForbidAbortHelperRule` | `forbidAbortHelper.abortUsed` | Function calls | `abort()`, `abort_if()`, `abort_unless()` are errors. Throw an explicit `HttpException` subclass instead. |
 | `LogRule` | `logRule.logModification` | `update()` / `delete()` calls | If the receiver type's class name contains `"Log"` or `"logs"` (case-insensitive), error. |
+| `LogBuilderTruncateRule` | `logRule.logModification` | `Builder->truncate()` calls | If the fluent chain's most recent `table()` / `from()` call targets a Log-named table (string-literal argument matching `"log"` / `"logs"`, case-insensitive), error. Sibling rule to `LogRule`; shares the `logRule.logModification` identifier so a single `ignoreErrors` entry covers both. Doctrine: ADR-0001 §Append-only. |
 | `EnforceAuditSnapshotOnRetryRule` | `enforceAuditSnapshotOnRetry.firstStatementMustResetState` | `App\Actions\*` whose constructor injects an entity audit logger | The first statement inside `$connection->transaction(...)` must reset the model's in-memory state (`$model->refresh()`, fresh fetch, or fresh instantiation). Doctrine: ADR-0001 §Snapshot-on-Retry Safety. |
 | `EnforceResourceDataValidatorOptInRule` | `enforceResourceDataValidatorOptIn.missingValidatorCall` | Classes extending `App\Http\Resources\ResourceData` | If the class declares a non-empty `EAGER_LOAD_COUNT` / `EAGER_LOAD_SUM` constant but never calls `validateRelationsLoaded()` in any method, error. |
 
@@ -65,6 +66,8 @@ parameters:
 ```
 
 Each ignore should carry a comment with rationale. Future versions may add an explicit allow-list parameter — file an issue if you have a recurring need.
+
+`LogBuilderTruncateRule` shares the `logRule.logModification` identifier with `LogRule`. A single `ignoreErrors` entry keyed on `logRule.logModification` therefore covers both rules for the suppressed path.
 
 ### `EnforceResourceDataValidatorOptInRule` — configurable base class
 
