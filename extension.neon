@@ -22,6 +22,9 @@ services:
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\LogRule
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\LogBuilderTruncateRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceAuditSnapshotOnRetryRule
         tags: [phpstan.rules.rule]
     -

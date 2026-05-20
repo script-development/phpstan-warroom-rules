@@ -41,10 +41,13 @@ use function in_array;
  * name should be suppressed per-territory via phpstan.neon ignoreErrors,
  * scoped to the offending path.
  *
- * `DB::table('logs')->truncate()` is intentionally not covered — the receiver
- * type is `Illuminate\Database\Query\Builder` (no Log-named class reference),
- * the table name lives in a string argument, and matching that requires a
- * shape-specific rule that inspects the call chain. Tracked separately.
+ * `DB::table('logs')->truncate()` (and its
+ * `connection('...')->table('logs')->truncate()` /
+ * `$this->db->table('logs')->truncate()` variants) is covered by the sibling
+ * `LogBuilderTruncateRule`, which inspects the fluent chain for a `table()`
+ * call with a Log-named string-literal argument. Both rules share the
+ * `logRule.logModification` identifier so consumer `phpstan.neon`
+ * `ignoreErrors` entries cover the whole append-only doctrine with one entry.
  *
  * @implements Rule<CallLike>
  */
