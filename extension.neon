@@ -28,6 +28,9 @@ services:
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceAuditSnapshotOnRetryRule
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceAuditTransactionScopeRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceResourceDataValidatorOptInRule
         arguments:
             resourceDataBaseClass: %resourceDataBaseClass%
