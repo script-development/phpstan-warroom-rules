@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- **CI:** pinned `symfony/console` to `^7.2` in `require-dev`. `symfony/console` 8.x (v8.1.0, released 2026-05-29) breaks Infection 0.33.x's mutation runner — its DI container references `Symfony\Component\Console\Helper\QuestionHelper` as a service Symfony Console 8 no longer registers that way, so `composer mutation:ci` aborts with `Unknown service` and exits 1. Because the package's `composer.lock` is gitignored, CI resolves dependencies fresh on every run; `illuminate/*` v13 permits Symfony 8, so the resolver began pulling v8.1.0 and the mutation gate went red fleet-wide (PRs green on 2026-05-28 turned red on 2026-05-29 with no source change). The pin holds the dev toolchain at `symfony/console` v7.4.x — verified mutation gate green (Covered Code MSI 81% ≥ 75) — until Infection ships Symfony Console 8 support, at which point this constraint should be widened or removed. **Versioning:** none (dev-only test-infra; no consumer-facing surface).
+
 ## [0.3.0] — 2026-05-13
 
 **Release-as-a-whole: MAJOR** — collapses three rule-level contractual widenings into a single Major bump per ADR-0021 §Versioning. Each rule's pre-cascade audit returned 0 violators across all 5 consumer territories (kendo, entreezuil, emmie, ublgenie, brick-inventory-orchestrator), so the Major represents the contract change, not empirical violation count. Consumers upgrading from `^0.2` to `^0.3` accept the broader rule contracts whether or not their existing code trips them. **Phase A pin sweep (`^0.1.x` → `^0.2`) closed pre-release** — all four laggard consumers (kendo, entreezuil, emmie, BIO) bumped between 2026-05-06 and 2026-05-08 via independent dispatches; verified by 4-territory Medic wave 2026-05-13 (all no-op, all `composer phpstan` clean against `EnforceAuditSnapshotOnRetryRule`). Phase B pin sweep (`^0.2` → `^0.3`) follows post-tag as a separate war-room dispatch.
