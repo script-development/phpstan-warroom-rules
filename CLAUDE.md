@@ -27,6 +27,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 | `LogBuilderTruncateRule` | ADR-0001 §Append-only | `logRule.logModification` (shared with `LogRule`; covers `Builder->truncate()` on Log-named tables — ships with v0.3.0 per `[Unreleased]`) |
 | `EnforceAuditSnapshotOnRetryRule` | ADR-0001 §Snapshot-on-Retry Safety | `enforceAuditSnapshotOnRetry.firstStatementMustResetState` |
 | `EnforceAuditTransactionScopeRule` | ADR-0029 | `enforceAuditTransactionScope.nonTransactionalMutationInClosure` |
+| `ForbidEloquentMutationInControllersRule` | ADR-0011 + ADR-0019 | `forbidEloquentMutationInControllers.eloquentMutationInController` |
 | `EnforceResourceDataValidatorOptInRule` | ADR-0009 §EAGER_LOAD validator opt-in | `enforceResourceDataValidatorOptIn.missingValidatorCall` |
 | `ConnectionTransactionReturnTypeExtension` | (type extension, no rule) | — |
 
