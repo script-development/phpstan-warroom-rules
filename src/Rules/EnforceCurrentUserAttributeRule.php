@@ -14,25 +14,26 @@ use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
 use PHPStan\Analyser\Scope;
-use PHPStan\Reflection\ClassReflection;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
 
 use function sprintf;
+use function str_starts_with;
 
 /**
  * Flags Request::user() / Auth::user() / auth()->user() calls inside controller methods.
  * Use the #[\Illuminate\Container\Attributes\CurrentUser] container attribute on the
  * method parameter instead — eliminates the nullable-then-assert dance.
  *
- * Scoped to classes extending Illuminate\Routing\Controller. FormRequest descendants
- * are excluded by design — container-attribute injection does not apply to
- * FormRequest::rules() / toDto() / authorize() invocations. Middleware, services,
- * Actions, jobs, and console commands are likewise out of scope: each context has
- * its own canonical resolution path (constructor DI for Actions, authenticated
- * payload threading for jobs, etc.).
+ * Scoped to classes in the `App\Http\Controllers` namespace. FormRequest
+ * (`App\Http\Requests`) is excluded by design — container-attribute injection
+ * does not apply to FormRequest::rules() / toDto() / authorize() invocations.
+ * Middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs,
+ * and console commands are likewise out of scope: each context has its own
+ * canonical resolution path (constructor DI for Actions, authenticated payload
+ * threading for jobs, etc.).
  *
  * Detection (three call shapes branch in `processNode`):
  *   1. `MethodCall` — receiver type is a (subtype of) `Illuminate\Http\Request`
@@ -45,9 +46,15 @@ use function sprintf;
  *      and method name is `user`. FQCN comparison via `$scope->resolveName()`
  *      handles aliased imports.
  *
- * Containing-class gate (applied to all three branches): walk
- * `$scope->getClassReflection()` ancestry and fire only if the class extends
- * `Illuminate\Routing\Controller`. Out-of-scope classes return silently.
+ * Containing-class gate (applied to all three branches): the rule fires only
+ * when `$scope->getNamespace()` starts with `App\Http\Controllers`. This
+ * mirrors `ForbidEloquentMutationInControllersRule` and the canonical
+ * "controllers are identified by the `App\Http\Controllers` namespace"
+ * convention — consumer controllers are base-less `final` classes with no
+ * `extends Controller`, so an ancestry walk catches nothing. Out-of-scope
+ * namespaces (FormRequest in `App\Http\Requests`, middleware in
+ * `App\Http\Middleware`, Actions in `App\Actions`, jobs, services) return
+ * silently because their namespaces do not start with the controller prefix.
  *
  * Implementation note: `getNodeType()` returns `CallLike::class` so the rule
  * sees both `MethodCall` and `StaticCall` in a single registration — mirrors
@@ -61,7 +68,7 @@ final class EnforceCurrentUserAttributeRule implements Rule
 {
     private const string TARGET_METHOD = 'user';
 
-    private const string CONTROLLER_BASE_FQCN = 'Illuminate\Routing\Controller';
+    private const string CONTROLLER_NAMESPACE_PREFIX = 'App\Http\Controllers';
 
     private const string REQUEST_FQCN = Request::class;
 
@@ -91,23 +98,23 @@ final class EnforceCurrentUserAttributeRule implements Rule
 
     /**
      * Containing-class gate: the rule fires only inside methods of a class
-     * that extends `Illuminate\Routing\Controller`. FormRequest descendants,
-     * middleware, services, Actions, jobs, and console commands are silent
-     * because their class hierarchies do not include Controller.
+     * whose namespace starts with `App\Http\Controllers`. FormRequest
+     * (`App\Http\Requests`), middleware (`App\Http\Middleware`), services,
+     * Actions (`App\Actions`), jobs, and console commands are silent because
+     * their namespaces do not start with the controller prefix. Mirrors
+     * `ForbidEloquentMutationInControllersRule` — consumer controllers are
+     * base-less `final` classes, so an ancestry walk to a base Controller
+     * catches nothing.
      */
     private function insideControllerMethod(Scope $scope): bool
     {
-        $classReflection = $scope->getClassReflection();
+        $namespace = $scope->getNamespace();
 
-        if (!$classReflection instanceof ClassReflection) {
+        if ($namespace === null) {
             return false;
         }
 
-        if ($classReflection->getName() === self::CONTROLLER_BASE_FQCN) {
-            return false;
-        }
-
-        return $classReflection->isSubclassOf(self::CONTROLLER_BASE_FQCN);
+        return str_starts_with($namespace, self::CONTROLLER_NAMESPACE_PREFIX);
     }
 
     /**

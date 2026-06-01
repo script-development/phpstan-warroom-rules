@@ -74,6 +74,38 @@ final class EnforceCurrentUserAttributeRuleTest extends RuleTestCase
         );
     }
 
+    public function testFlagsRequestUserInBaselessFinalController(): void
+    {
+        // Regression proof for the namespace-gate fix (PR #26 blocker). A
+        // base-less `final` controller with NO `extends Controller` — the exact
+        // shape kendo / ublgenie / entreezuil ship. The prior ancestry gate
+        // (`isSubclassOf(Controller)`) matched zero such classes, so the rule
+        // was a silent no-op. The namespace gate must flag this.
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/RequestUserInBaselessController.php',
+            ],
+            [
+                [self::EXPECTED_REQUEST_USER, 18],
+            ],
+        );
+    }
+
+    public function testIgnoresCurrentUserAttributeInBaselessFinalController(): void
+    {
+        // Compliant base-less `final` controller — container-attribute injection,
+        // no body call. The rule must not fire even though the namespace gate
+        // now matches the class.
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/CurrentUserAttributeInBaselessController.php',
+            ],
+            [],
+        );
+    }
+
     public function testIgnoresCurrentUserAttribute(): void
     {
         $this->analyse(
