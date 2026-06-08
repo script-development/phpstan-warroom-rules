@@ -90,6 +90,10 @@ Inheritance is matched via PHPStan reflection (FQCN ancestor traversal), not sho
 
 `ConnectionTransactionReturnTypeExtension` is registered alongside the rules. It resolves the return type of `$connection->transaction(fn () => $foo)` to the closure's return type instead of `mixed`, enabling strict typing of transaction call sites.
 
+## Production dependencies
+
+The `illuminate/*` packages (`database`, `contracts`, `cache`, `filesystem`, `log`, `mail`) sit in `require`, not `require-dev`, on purpose. The rules and `ConnectionTransactionReturnTypeExtension` reflect against Illuminate contracts and classes (e.g. `Illuminate\Database\ConnectionInterface`, the cache/mail/queue facades the audit-scope rule reasons about) *at analysis time* — when a consumer runs PHPStan, this package's code resolves those symbols, so they are genuine analysis-time (runtime-for-the-extension) dependencies, not test-only tooling. Moving them to `require-dev` would omit them from a normal `composer require --dev` install and break consumers that analyse non-Laravel or partial trees where the Illuminate symbols are not otherwise present.
+
 ## Versioning
 
 Semantic versioning:
