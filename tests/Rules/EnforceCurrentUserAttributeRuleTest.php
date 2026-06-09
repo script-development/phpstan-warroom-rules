@@ -163,10 +163,10 @@ final class EnforceCurrentUserAttributeRuleTest extends RuleTestCase
 
     public function testIgnoresTopLevelCallOutsideAnyClass(): void
     {
-        // Top-level call outside any class — `$scope->getClassReflection()`
-        // returns null, the no-class-reflection gate must short-circuit.
+        // Top-level call outside any namespace — `$scope->getNamespace()`
+        // returns null, the null-namespace gate must short-circuit.
         // Kills the FalseValue mutant on `insideControllerMethod()`'s
-        // null-reflection branch.
+        // `getNamespace() === null` branch.
         $this->analyse(
             [
                 __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',

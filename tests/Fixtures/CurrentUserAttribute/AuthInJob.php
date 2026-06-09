@@ -9,8 +9,8 @@ use Illuminate\Support\Facades\Auth;
 final class AuthInJob
 {
     // Queue jobs run outside an HTTP request scope; authenticated user
-    // resolution by attribute does not apply. Not a Controller descendant —
-    // silent.
+    // resolution by attribute does not apply. The `App\Jobs` namespace does
+    // not start with the controller prefix — silent.
     public function handle(): ?object
     {
         return Auth::user();

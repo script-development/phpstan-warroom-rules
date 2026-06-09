@@ -8,7 +8,8 @@ use Illuminate\Support\Facades\Auth;
 
 final class AuthInMiddleware
 {
-    // Middleware does not extend Illuminate\Routing\Controller — silent.
+    // `App\Http\Middleware` namespace does not start with the controller
+    // prefix — silent.
     public function handle(): ?object
     {
         return Auth::user();

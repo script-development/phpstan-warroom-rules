@@ -4,7 +4,7 @@ declare(strict_types = 1);
 
 // Stub classes referenced by CurrentUserAttribute fixtures. The rule scopes
 // detection on:
-//   - PHPStan reflection (ancestor traversal to Illuminate\Routing\Controller)
+//   - Containing-class namespace prefix (`App\Http\Controllers` via `$scope->getNamespace()`)
 //   - Type-based receiver matching (Illuminate\Http\Request subtype)
 //   - Static-call FQCN resolution (Illuminate\Support\Facades\Auth)
 //   - AST-shape match (auth() helper FuncCall receiver)
