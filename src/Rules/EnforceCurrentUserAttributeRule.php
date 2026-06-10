@@ -188,7 +188,7 @@ final class EnforceCurrentUserAttributeRule implements Rule
             return false;
         }
 
-        return $node->var->name->toString() === 'auth';
+        return $node->var->name->toString() === 'auth' && $node->var->args === [];
     }
 
     private function buildError(string $callShape): IdentifierRuleError
