@@ -46,6 +46,7 @@ includes:
 | `EnforceAuditTransactionScopeRule` | `enforceAuditTransactionScope.nonTransactionalMutationInClosure` | `App\Actions\*` whose `execute()` calls `transaction(...)` with a literal closure | Mutating `StatefulGuard` / `Session` / `Cache` / `Bus` / `Queue` / `Mailer` / `Notification` / `Broadcaster` / `Filesystem` state (or their `Illuminate\Support\Facades\*` counterparts) inside the closure is an error. Reads (`Auth::user()`, `Session::get()`, `Cache::get()`) are permitted. Doctrine: ADR-0029 (Audit Row Durability Contract) §Decision rule 3. |
 | `ForbidEloquentMutationInControllersRule` | `forbidEloquentMutationInControllers.eloquentMutationInController` | `App\Http\Controllers\*` (including sub-namespaces) | Calling Eloquent persistence APIs (`save`, `update`, `delete`, `create`, `destroy`, `forceDelete`, `forceFill`, `push`, `restore`, `touch`, and their `*OrFail` / `*Quietly` / `*OrCreate` variants — 24-method blocklist) on `Illuminate\Database\Eloquent\Model` subclasses or `Illuminate\Database\Eloquent\Builder` chains is an error. Reads (`find`, `where`, `get`, `first`, `paginate`, `pluck`, `count`, `exists`, `query`) are permitted. Delegate mutations to an Action. Doctrine: ADR-0011 (Action Class Architecture) + ADR-0019 (Explicit Model Hydration). |
 | `EnforceResourceDataValidatorOptInRule` | `enforceResourceDataValidatorOptIn.missingValidatorCall` | Classes extending `App\Http\Resources\ResourceData` | If the class declares a non-empty `EAGER_LOAD_COUNT` / `EAGER_LOAD_SUM` constant but never calls `validateRelationsLoaded()` in any method, error. |
+| `EnforceFormRequestToDtoRule` | `enforceFormRequestToDto.missingToDtoMethod` | Concrete classes extending `Illuminate\Foundation\Http\FormRequest` | If the class neither declares nor inherits a `toDto()` method, error. Abstract intermediates (`BaseFormRequest`) are exempt. Hand Actions a typed DTO, not `$request->validated()` arrays. Doctrine: ADR-0012 (FormRequest → DTO Flow). |
 
 ### `EnforceActionTransactionsRule` — write-method list
 
@@ -81,6 +82,29 @@ parameters:
 ```
 
 Inheritance is matched via PHPStan reflection (FQCN ancestor traversal), not short-name matching — a class named `ResourceData` in an unrelated namespace will not be matched. Compliant call shapes are `self::validateRelationsLoaded($model)`, `static::validateRelationsLoaded($model)`, and `$this->validateRelationsLoaded($model)` — the production base method is `protected static`, but the instance form is also accepted for compatibility with the source-of-truth Pest arch test's permissive matcher. Empty-array constants (`EAGER_LOAD_COUNT = []`) do not fire — they are no-ops.
+
+### `EnforceFormRequestToDtoRule` — configurable base class + exemptions
+
+The rule scopes to concrete classes extending `Illuminate\Foundation\Http\FormRequest` by default. To narrow the contract to a territory-local base FQCN, override the `formRequestBaseClass` parameter in `phpstan.neon`:
+
+```neon
+parameters:
+    formRequestBaseClass: 'App\Http\Requests\BaseFormRequest'
+```
+
+Inheritance is matched via PHPStan reflection (FQCN ancestor traversal), not short-name matching. Abstract classes never fire — a per-territory abstract `BaseFormRequest` intermediate is exempt by shape, not by name. A `toDto()` declared on a parent class or provided by a trait satisfies the contract (mirroring the source-of-truth entreezuil Pest arch test's `method_exists()` matcher).
+
+Legitimately DTO-less requests (e.g. a `LoginRequest` whose auth flow calls `AuthManager::attempt()` directly, or read-only filter/query requests) are suppressed per territory via `phpstan.neon` — never by name inside the rule:
+
+```neon
+parameters:
+    ignoreErrors:
+        -
+            identifier: enforceFormRequestToDto.missingToDtoMethod
+            path: app/Http/Requests/LoginRequest.php
+```
+
+Each ignore should carry a comment with rationale.
 
 ### Action namespace assumption
 
