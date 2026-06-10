@@ -29,6 +29,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 | `EnforceAuditTransactionScopeRule` | ADR-0029 | `enforceAuditTransactionScope.nonTransactionalMutationInClosure` |
 | `ForbidEloquentMutationInControllersRule` | ADR-0011 + ADR-0019 | `forbidEloquentMutationInControllers.eloquentMutationInController` |
 | `EnforceResourceDataValidatorOptInRule` | ADR-0009 §EAGER_LOAD validator opt-in | `enforceResourceDataValidatorOptIn.missingValidatorCall` |
+| `EnforceCurrentUserAttributeRule` | War-room §Explicit over implicit | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` |
 | `ConnectionTransactionReturnTypeExtension` | (type extension, no rule) | — |
 
 Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snapshot-on-Retry Safety) was the first Phase 2 addition, promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). `EnforceResourceDataValidatorOptInRule` (ADR-0009 §EAGER_LOAD validator opt-in) is the second Phase 2 addition, promoted from kendo PR #1084 under war-room enforcement queue #55. `EnforceExplicitHydrationRule` (ADR-0019) is the next Phase 2 candidate.
