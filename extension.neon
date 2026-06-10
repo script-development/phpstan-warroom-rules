@@ -5,8 +5,15 @@ parameters:
     # `phpstan.neon` if a territory ships the base under a different FQCN.
     resourceDataBaseClass: 'App\\Http\\Resources\\ResourceData'
 
+    # `EnforceFormRequestToDtoRule`: FQCN of the FormRequest base class.
+    # Default matches the Laravel framework base every territory's requests
+    # ultimately extend. Override per consumer `phpstan.neon` to narrow the
+    # contract to a territory-local base FQCN.
+    formRequestBaseClass: 'Illuminate\\Foundation\\Http\\FormRequest'
+
 parametersSchema:
     resourceDataBaseClass: string()
+    formRequestBaseClass: string()
 
 services:
     -
@@ -37,6 +44,11 @@ services:
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceResourceDataValidatorOptInRule
         arguments:
             resourceDataBaseClass: %resourceDataBaseClass%
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceFormRequestToDtoRule
+        arguments:
+            formRequestBaseClass: %formRequestBaseClass%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
