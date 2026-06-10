@@ -51,5 +51,8 @@ services:
             formRequestBaseClass: %formRequestBaseClass%
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceCurrentUserAttributeRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
         tags: [phpstan.broker.dynamicMethodReturnTypeExtension]
