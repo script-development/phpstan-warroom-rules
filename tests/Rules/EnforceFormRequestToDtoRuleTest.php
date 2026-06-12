@@ -61,6 +61,71 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
         );
     }
 
+    public function testTraitProvidedToDtoIsNotFlagged(): void
+    {
+        // A concrete request whose toDto() arrives via a trait. The rule
+        // routes through PHPStan's hasNativeMethod(), which flattens
+        // trait-composed methods — pins the trait leg of the contract that
+        // the docblock, README, and CHANGELOG all promise but no fixture
+        // previously exercised.
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/TraitProvidedToDtoRequest.php',
+            ],
+            [],
+        );
+    }
+
+    public function testConcreteLeafExtendingAbstractBaseWithoutToDtoIsFlagged(): void
+    {
+        // The inverse of testCompliantInheritedToDtoIsNotFlagged: a concrete
+        // leaf extends the abstract intermediate `AbstractBaseRequest`, which
+        // declares no toDto() anywhere in the chain. Transitive-violation
+        // detection must fire at the leaf — proving the ancestor traversal
+        // catches omission through an intermediate abstract layer, not only
+        // direct framework-base extension.
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/AbstractBaseRequest.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/TransitiveViolatorRequest.php',
+            ],
+            [
+                [
+                    'App\Http\Requests\TransitiveViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    13,
+                ],
+            ],
+        );
+    }
+
+    public function testRuleResolvesFromExtensionNeonAndFires(): void
+    {
+        // End-to-end pin on the extension.neon registration path consumers
+        // actually use: resolve the rule from the PHPStan container so the
+        // shipped `formRequestBaseClass` default and the `%formRequestBaseClass%`
+        // argument wiring are exercised — NOT the PHP constructor default.
+        // A NEON quoting regression in the shipped default (e.g. the
+        // double-backslash single-quoted form) silently no-ops the rule while
+        // every direct-instantiation test stays green; this is the only gate
+        // that catches it.
+        $this->ruleOverride = self::getContainer()->getByType(EnforceFormRequestToDtoRule::class);
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/ViolatorRequest.php',
+            ],
+            [
+                [
+                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    9,
+                ],
+            ],
+        );
+    }
+
     public function testAbstractBaseWithoutToDtoIsNotFlagged(): void
     {
         // The per-territory `BaseFormRequest` shape: abstract, extends the
@@ -102,6 +167,20 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
                 ],
             ],
         );
+    }
+
+    /**
+     * Load the shipped extension.neon so testRuleResolvesFromExtensionNeonAndFires
+     * can pull the rule out of the container with its NEON-configured
+     * `formRequestBaseClass` parameter applied.
+     *
+     * @return array<int, string>
+     */
+    public static function getAdditionalConfigFiles(): array
+    {
+        return [
+            __DIR__ . '/../../extension.neon',
+        ];
     }
 
     protected function getRule(): Rule

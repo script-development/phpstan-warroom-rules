@@ -136,6 +136,45 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
         );
     }
 
+    public function testRuleResolvesFromExtensionNeonAndFires(): void
+    {
+        // End-to-end pin on the extension.neon registration path consumers
+        // actually use: resolve the rule from the PHPStan container so the
+        // shipped `resourceDataBaseClass` default and the
+        // `%resourceDataBaseClass%` argument wiring are exercised — NOT the PHP
+        // constructor default. The shipped default carried a NEON
+        // double-backslash quoting defect that silently no-op'd this rule for
+        // every default consumer since PR #20; this gate catches it.
+        $this->ruleOverride = self::getContainer()->getByType(EnforceResourceDataValidatorOptInRule::class);
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/ResourceDataValidatorOptIn/_stubs.php',
+                __DIR__ . '/../Fixtures/ResourceDataValidatorOptIn/ViolatorResource.php',
+            ],
+            [
+                [
+                    'App\Http\Resources\ViolatorResource declares EAGER_LOAD_COUNT but does not call validateRelationsLoaded() — silent-zero bug risk (ADR-0009 / war-room queue #55 / kendo PR #1084 opt-in invariant).',
+                    9,
+                ],
+            ],
+        );
+    }
+
+    /**
+     * Load the shipped extension.neon so testRuleResolvesFromExtensionNeonAndFires
+     * can pull the rule out of the container with its NEON-configured
+     * `resourceDataBaseClass` parameter applied.
+     *
+     * @return array<int, string>
+     */
+    public static function getAdditionalConfigFiles(): array
+    {
+        return [
+            __DIR__ . '/../../extension.neon',
+        ];
+    }
+
     protected function getRule(): Rule
     {
         return $this->ruleOverride ?? new EnforceResourceDataValidatorOptInRule;

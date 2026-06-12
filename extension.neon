@@ -3,13 +3,17 @@ parameters:
     # base class. Default matches the kendo / emmie / ublgenie / entreezuil
     # convention `App\Http\Resources\ResourceData`. Override per consumer
     # `phpstan.neon` if a territory ships the base under a different FQCN.
-    resourceDataBaseClass: 'App\\Http\\Resources\\ResourceData'
+    # NOTE: single backslashes — NEON only unescapes `\\` inside DOUBLE quotes;
+    # in single quotes (and unquoted) `\\` stays two literal characters, which
+    # decodes to a class name that matches nothing and silently no-ops the rule.
+    resourceDataBaseClass: 'App\Http\Resources\ResourceData'
 
     # `EnforceFormRequestToDtoRule`: FQCN of the FormRequest base class.
     # Default matches the Laravel framework base every territory's requests
     # ultimately extend. Override per consumer `phpstan.neon` to narrow the
-    # contract to a territory-local base FQCN.
-    formRequestBaseClass: 'Illuminate\\Foundation\\Http\\FormRequest'
+    # contract to a territory-local base FQCN. Single backslashes — see the
+    # NEON-quoting note above.
+    formRequestBaseClass: 'Illuminate\Foundation\Http\FormRequest'
 
 parametersSchema:
     resourceDataBaseClass: string()
