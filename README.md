@@ -107,6 +107,21 @@ parameters:
 
 Each ignore should carry a comment with rationale.
 
+### `EnforceCurrentUserAttributeRule` — false positives
+
+`#[\Illuminate\Container\Attributes\CurrentUser]` resolves the authenticated user at **method-entry DI time**. A controller method that resolves the user *after* `Auth::attempt()` succeeds — the canonical **login handler** on a `guest` / throttle-only route — cannot use the attribute: at method entry no user exists yet, so injection yields `null` and breaks login. The rule fires on any `Auth::user()` / `$request->user()` / `auth()->user()` inside the `App\Http\Controllers` namespace and **cannot see routes**, so it will flag these legitimate login handlers. Suppress per territory via `phpstan.neon` — never by name inside the rule:
+
+```neon
+parameters:
+    ignoreErrors:
+        -
+            identifier: enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser
+            # login handler: Auth::user() resolves after Auth::attempt() on a guest route
+            path: app/Http/Controllers/Auth/AuthenticatedSessionController.php
+```
+
+Confirmed cross-territory (n=2, 2026-06-15): entreezuil `AuthenticatedSessionController::store`, ublgenie `AuthController::store`. Each consumer adds this on its `^0.4` bump.
+
 ### Action namespace assumption
 
 `EnforceActionTransactionsRule` and `ForbidDatabaseManagerInActionsRule` only fire on classes whose namespace starts with `App\Actions`. This matches the Laravel convention used in every `script-development` territory. Territories using a different actions namespace should open a PR to make this configurable.
