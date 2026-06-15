@@ -80,7 +80,7 @@ SemVer per ADR-0021:
 
 > Distilled operational rules from cross-project Architecture Decision Records.
 > Canonical full ADRs at [adrs.script.nl](https://adrs.script.nl). This section is owned by the war room — do not edit directly.
-> Last synced: 2026-05-08
+> Last synced: 2026-06-15
 
 ### Applicable
 
@@ -89,17 +89,24 @@ SemVer per ADR-0021:
 
 ### Non-applicable (the rules ship, the package does not consume them)
 
-- ADR-0001 (Audit Logging) — package distributes `LogRule` + `EnforceAuditSnapshotOnRetryRule`; does not itself maintain audit logs.
+> Each bullet's rule→doctrine mapping is authoritative per the rule class's docblock "Doctrine source" line (ADR-0021 §Doctrine source in docblock).
+
+- ADR-0001 (Audit Logging) — package distributes `LogRule` + `LogBuilderTruncateRule` (both §Append-only) + `EnforceAuditSnapshotOnRetryRule` (§Snapshot-on-Retry Safety); does not itself maintain audit logs.
 - ADR-0002 (Cascade Deletion) — no application surface.
-- ADR-0009 (Unified ResourceData Pattern) — package distributes `EnforceResourceDataValidatorOptInRule` (Phase 2, `[Unreleased]`); does not itself ship API resources.
-- ADR-0011 (Action Class Architecture) — package distributes `EnforceActionTransactionsRule` + `ForbidDatabaseManagerInActionsRule`; itself has no Actions.
-- ADR-0012 (FormRequest → DTO) — no HTTP surface.
+- ADR-0009 (Unified ResourceData Pattern) — package distributes `EnforceResourceDataValidatorOptInRule` (§EAGER_LOAD validator opt-in, shipped in v0.3.0); does not itself ship API resources.
+- ADR-0011 (Action Class Architecture) — package distributes `EnforceActionTransactionsRule` + `ForbidDatabaseManagerInActionsRule`, and `ForbidEloquentMutationInControllersRule` (ADR-0011 + ADR-0019, `[Unreleased]`); itself has no Actions.
+- ADR-0012 (FormRequest → DTO) — package distributes `EnforceFormRequestToDtoRule` (§FormRequest → DTO Flow, `[Unreleased]`); itself has no HTTP surface.
 - ADR-0014 (Domain-Driven Frontend) — no frontend.
 - ADR-0016 (Config Attribute Injection) — no Laravel container surface.
 - ADR-0017 (Page Integration Tests) — no pages.
-- ADR-0019 (Explicit Model Hydration) — no models. Phase 2 candidate `EnforceExplicitHydrationRule` will distribute this rule.
+- ADR-0019 (Explicit Model Hydration) — package distributes `ForbidEloquentMutationInControllersRule` (ADR-0011 + ADR-0019, `[Unreleased]`) covering the controller mutation surface; itself has no models. (The earlier Phase-2 `EnforceExplicitHydrationRule` candidate has been subsumed by the controller-mutation rule for the controller surface; a broader application-wide hydration rule remains a future candidate.)
 - ADR-0020 (Input/Result DTO Split) — no DTOs.
 - ADR-0024 (Automated External Provisioning) — no provisioning surface.
+- ADR-0029 (Audit Row Durability Contract) — package distributes `EnforceAuditTransactionScopeRule` (§Decision rule 3 — flags non-transactional state mutations inside `transaction(...)` closures in `App\Actions\*`, `[Unreleased]`); itself maintains no audit rows.
+
+### War-room Architectural Principle rules (no published ADR)
+
+- **Explicit over implicit** — package distributes `ForbidAbortHelperRule` (bans `abort()` / `abort_if()` / `abort_unless()`; shipped) and `EnforceCurrentUserAttributeRule` (flags `Request::user()` / `Auth::user()` / `auth()->user()` in `App\Http\Controllers`, steering to the `#[CurrentUser]` container attribute per Architectural Principle #9; `[Unreleased]`). These enforce war-room §Architectural Principles, not a numbered ADR — their docblock "Doctrine source" line names the principle, not an ADR.
 
 ### War-room internal ADRs
 
