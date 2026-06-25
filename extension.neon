@@ -30,6 +30,12 @@ services:
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidAbortHelperRule
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidHttpExceptionInActionsRule
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidResourceWrappedInJsonResponseRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\LogRule
         tags: [phpstan.rules.rule]
     -

@@ -23,6 +23,8 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 | `EnforceActionTransactionsRule` | ADR-0011 | `enforceActionTransactions.missingTransaction` |
 | `ForbidDatabaseManagerInActionsRule` | ADR-0021 §Why ConnectionInterface | `forbidDatabaseManager.inAction` |
 | `ForbidAbortHelperRule` | War-room §Explicit over implicit | `forbidAbortHelper.abortUsed` |
+| `ForbidHttpExceptionInActionsRule` | War-room §Explicit over implicit + §FormRequest → DTO → Action | `forbidHttpExceptionInActions.httpExceptionInAction` (type-aware sibling of `ForbidAbortHelperRule`; bans throwing the `Symfony\…\HttpException` family from `App\Actions\*`. `Illuminate\Validation\ValidationException` out of scope. `[Unreleased]`) |
+| `ForbidResourceWrappedInJsonResponseRule` | War-room §Explicit over implicit + ADR-0009 | `forbidResourceWrappedInJsonResponse.resourceWrapped` (type-aware; bans wrapping a `JsonResource` in `response()->json()` / `new JsonResponse()` in `App\Http\Controllers\*`. Named-envelope nesting excluded. `[Unreleased]`) |
 | `LogRule` | ADR-0001 §Append-only | `logRule.logModification` (covers instance `update`/`delete`/`forceDelete`/`forceDeleteQuietly`; static `Model::destroy()` / `Model::forceDestroy()` ship with v0.3.0 per `[Unreleased]`) |
 | `LogBuilderTruncateRule` | ADR-0001 §Append-only | `logRule.logModification` (shared with `LogRule`; covers `Builder->truncate()` on Log-named tables — ships with v0.3.0 per `[Unreleased]`) |
 | `EnforceAuditSnapshotOnRetryRule` | ADR-0001 §Snapshot-on-Retry Safety | `enforceAuditSnapshotOnRetry.firstStatementMustResetState` |
@@ -93,7 +95,7 @@ SemVer per ADR-0021:
 
 - ADR-0001 (Audit Logging) — package distributes `LogRule` + `LogBuilderTruncateRule` (both §Append-only) + `EnforceAuditSnapshotOnRetryRule` (§Snapshot-on-Retry Safety); does not itself maintain audit logs.
 - ADR-0002 (Cascade Deletion) — no application surface.
-- ADR-0009 (Unified ResourceData Pattern) — package distributes `EnforceResourceDataValidatorOptInRule` (§EAGER_LOAD validator opt-in, shipped in v0.3.0); does not itself ship API resources.
+- ADR-0009 (Unified ResourceData Pattern) — package distributes `EnforceResourceDataValidatorOptInRule` (§EAGER_LOAD validator opt-in, shipped in v0.3.0) and `ForbidResourceWrappedInJsonResponseRule` (resources own their own response serialization — bans wrapping a `JsonResource` in `response()->json()` / `new JsonResponse()` inside controllers, `[Unreleased]`); does not itself ship API resources.
 - ADR-0011 (Action Class Architecture) — package distributes `EnforceActionTransactionsRule` + `ForbidDatabaseManagerInActionsRule`, and `ForbidEloquentMutationInControllersRule` (ADR-0011 + ADR-0019, `[Unreleased]`); itself has no Actions.
 - ADR-0012 (FormRequest → DTO) — package distributes `EnforceFormRequestToDtoRule` (§FormRequest → DTO Flow, `[Unreleased]`); itself has no HTTP surface.
 - ADR-0014 (Domain-Driven Frontend) — no frontend.
@@ -106,7 +108,7 @@ SemVer per ADR-0021:
 
 ### War-room Architectural Principle rules (no published ADR)
 
-- **Explicit over implicit** — package distributes `ForbidAbortHelperRule` (bans `abort()` / `abort_if()` / `abort_unless()`; shipped) and `EnforceCurrentUserAttributeRule` (flags `Request::user()` / `Auth::user()` / `auth()->user()` in `App\Http\Controllers`, steering to the `#[CurrentUser]` container attribute per Architectural Principle #9; `[Unreleased]`). These enforce war-room §Architectural Principles, not a numbered ADR — their docblock "Doctrine source" line names the principle, not an ADR.
+- **Explicit over implicit** — package distributes `ForbidAbortHelperRule` (bans `abort()` / `abort_if()` / `abort_unless()`; shipped), `EnforceCurrentUserAttributeRule` (flags `Request::user()` / `Auth::user()` / `auth()->user()` in `App\Http\Controllers`, steering to the `#[CurrentUser]` container attribute per Architectural Principle #9; `[Unreleased]`), `ForbidHttpExceptionInActionsRule` (type-aware sibling of `ForbidAbortHelperRule` — bans throwing the `Symfony\…\HttpException` family from `App\Actions\*`; HTTP status concerns belong to the HTTP layer per Principles #1 + #3; `ValidationException` deliberately out of scope; `[Unreleased]`), and `ForbidResourceWrappedInJsonResponseRule` (bans wrapping a `JsonResource` in `response()->json()` / `new JsonResponse()` inside controllers per Principle #1 + ADR-0009; `[Unreleased]`). These enforce war-room §Architectural Principles (the last two also touching numbered ADRs) — each rule's docblock "Doctrine source" line names its authority.
 
 ### War-room internal ADRs
 
