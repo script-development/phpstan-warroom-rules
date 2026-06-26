@@ -100,7 +100,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.5.0
+[0.4.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.4.0
 [0.3.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.3.0
 [0.2.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.2.0
 [0.1.1]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.1.1
