@@ -96,7 +96,9 @@ parameters:
 
 Inheritance is matched via PHPStan reflection (FQCN ancestor traversal), not short-name matching. Abstract classes never fire — a per-territory abstract `BaseFormRequest` intermediate is exempt by shape, not by name. A `toDto()` declared on a parent class or provided by a trait satisfies the contract (mirroring the source-of-truth entreezuil Pest arch test's `method_exists()` matcher).
 
-Legitimately DTO-less requests (e.g. a `LoginRequest` whose auth flow calls `AuthManager::attempt()` directly, or read-only filter/query requests) are suppressed per territory via `phpstan.neon` — never by name inside the rule:
+Legitimately DTO-less requests (e.g. a `LoginRequest` whose auth flow calls `AuthManager::attempt()` directly, or read-only filter/query requests) are suppressed per territory in one of two consumer-config-driven ways — never by name inside the rule.
+
+**Option A — per-file `ignoreErrors` (path-keyed):**
 
 ```neon
 parameters:
@@ -107,6 +109,34 @@ parameters:
 ```
 
 Each ignore should carry a comment with rationale.
+
+**Option B — `formRequestToDtoExemptClasses` (class-keyed):** a list of fully-qualified class names to skip, matched by **exact FQCN**. This is the class-keyed alternative to `ignoreErrors` — predictable across file moves, and it ports a retiring local arch test's exempt-class list into package config 1:1. Default empty ⇒ no exemptions.
+
+```neon
+parameters:
+    formRequestToDtoExemptClasses:
+        # login handler: auth flow calls Auth::attempt() directly, no Action DTO
+        - 'App\Http\Requests\Auth\LoginRequest'
+```
+
+A consumer-supplied FQCN list is *config*, not a rule-body literal — the "never by name inside the rule" convention is preserved.
+
+#### Retiring a local FormRequest→DTO arch test
+
+Where a territory already enforces "every concrete FormRequest exposes `toDto()`" via a local Pest arch test (e.g. entreezuil's `tests/Arch/FormRequestsTest.php`), this rule now duplicates that invariant. To retire the local test cleanly:
+
+1. Move the arch test's exempt-class list into `formRequestToDtoExemptClasses` as FQCNs. For entreezuil that is:
+   ```neon
+   parameters:
+       formRequestToDtoExemptClasses:
+           # framework Auth::attempt() path, no Action DTO
+           - 'App\Http\Requests\Auth\LoginRequest'
+           # intermediate base (make it `abstract` and it drops out entirely)
+           - 'App\Http\Requests\BaseFormRequest'
+   ```
+2. Delete the local arch test — the package rule (identifier `enforceFormRequestToDto.missingToDtoMethod`) is now the single enforcement authority.
+
+(Territory arch-test retirement is a separate follow-up dispatch, not part of shipping this option.)
 
 ### `EnforceCurrentUserAttributeRule` — false positives
 
