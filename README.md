@@ -123,7 +123,7 @@ A consumer-supplied FQCN list is *config*, not a rule-body literal — the "neve
 
 #### Retiring a local FormRequest→DTO arch test
 
-Where a territory already enforces "every concrete FormRequest exposes `toDto()`" via a local Pest arch test (e.g. entreezuil's `tests/Arch/FormRequestsTest.php`), this rule now duplicates that invariant. To retire the local test cleanly:
+Where a territory already enforces "every concrete FormRequest exposes `toDto()`" via a local Pest arch test (e.g. entreezuil's `backend/tests/Architecture/FormRequestsTest.php`), this rule now duplicates that invariant. To retire the local test cleanly:
 
 1. Move the arch test's exempt-class list into `formRequestToDtoExemptClasses` as FQCNs. For entreezuil that is:
    ```neon
