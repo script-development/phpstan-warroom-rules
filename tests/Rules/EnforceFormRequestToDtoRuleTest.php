@@ -169,6 +169,90 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
         );
     }
 
+    public function testViolatorWithEmptyExemptListIsFlagged(): void
+    {
+        // Regression: the new exemptClasses param defaults to empty; default
+        // behaviour must be unchanged (violator still fires).
+        $this->ruleOverride = new EnforceFormRequestToDtoRule(exemptClasses: []);
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/ViolatorRequest.php',
+            ],
+            [
+                [
+                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    9,
+                ],
+            ],
+        );
+    }
+
+    public function testExemptClassByFqcnIsNotFlagged(): void
+    {
+        // The violator's exact FQCN is in the exempt list — the class-keyed
+        // consumer exemption path. No error.
+        $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            exemptClasses: ['App\Http\Requests\ViolatorRequest'],
+        );
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/ViolatorRequest.php',
+            ],
+            [],
+        );
+    }
+
+    public function testExemptionIsPreciseNotGlobalOffSwitch(): void
+    {
+        // Exempting one FQCN must not silence a DIFFERENT non-exempt violator
+        // analysed in the same run — the exemption is precise, not a global
+        // off-switch.
+        $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            exemptClasses: ['App\Http\Requests\ViolatorRequest'],
+        );
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/ViolatorRequest.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/SecondViolatorRequest.php',
+            ],
+            [
+                [
+                    'App\Http\Requests\SecondViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    12,
+                ],
+            ],
+        );
+    }
+
+    public function testExemptMatchIsExactFqcnNotShortNameOrOtherNamespace(): void
+    {
+        // The match is exact-FQCN: neither the bare short name nor an
+        // unrelated-namespace class of the same short name exempts the real
+        // `App\Http\Requests\ViolatorRequest` — it must still fire.
+        $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            exemptClasses: ['ViolatorRequest', 'App\Other\ViolatorRequest'],
+        );
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/ViolatorRequest.php',
+            ],
+            [
+                [
+                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    9,
+                ],
+            ],
+        );
+    }
+
     /**
      * Load the shipped extension.neon so testRuleResolvesFromExtensionNeonAndFires
      * can pull the rule out of the container with its NEON-configured

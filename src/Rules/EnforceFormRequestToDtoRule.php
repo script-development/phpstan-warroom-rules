@@ -13,6 +13,7 @@ use PHPStan\Reflection\ClassReflection;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 
+use function in_array;
 use function sprintf;
 
 /**
@@ -47,8 +48,17 @@ use function sprintf;
  *
  * Legitimately DTO-less requests (entreezuil precedent: `LoginRequest`,
  * whose auth flow calls `AuthManager::attempt()` directly) are suppressed
- * per consumer `phpstan.neon` `ignoreErrors` keyed on the identifier —
- * never by name inside the rule, per the package convention.
+ * one of two ways, both consumer-config-driven — never by name inside the
+ * rule, per the package convention:
+ *   1. Per-file `phpstan.neon` `ignoreErrors` keyed on the identifier +
+ *      path (brittle to file moves).
+ *   2. The `formRequestToDtoExemptClasses` PHPStan parameter — a list of
+ *      fully-qualified class names to skip (matched by exact FQCN). This is
+ *      the class-keyed alternative to `ignoreErrors`, intended for porting a
+ *      retiring local arch test's FQCN exemption list into package config
+ *      1:1. A consumer-supplied FQCN list is *config*, not a rule-body
+ *      literal — no class name is ever hardcoded in this rule, so the
+ *      "never by name inside the rule" convention is preserved.
  *
  * Implementation note: the constructor default uses `FormRequest::class`
  * (compile-time constant, never autoloads) instead of an FQCN string
@@ -66,8 +76,15 @@ final class EnforceFormRequestToDtoRule implements Rule
 {
     private const string DTO_METHOD_NAME = 'toDto';
 
+    /**
+     * @param list<string> $exemptClasses fully-qualified class names to skip
+     *                                    (exact-FQCN match); the class-keyed
+     *                                    alternative to `ignoreErrors`,
+     *                                    supplied only from consumer config
+     */
     public function __construct(
         private string $formRequestBaseClass = FormRequest::class,
+        private array $exemptClasses = [],
     ) {}
 
     public function getNodeType(): string
@@ -94,6 +111,14 @@ final class EnforceFormRequestToDtoRule implements Rule
         }
 
         if ($classReflection->hasNativeMethod(self::DTO_METHOD_NAME)) {
+            return [];
+        }
+
+        // Class-keyed consumer exemption: exact-FQCN match against the
+        // configured list. Predictable (no short-name collisions), and it
+        // ports a retiring local arch test's exempt-class list 1:1. Names
+        // live in consumer config, never in this rule body.
+        if (in_array($classReflection->getName(), $this->exemptClasses, true)) {
             return [];
         }
 

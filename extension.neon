@@ -15,9 +15,18 @@ parameters:
     # NEON-quoting note above.
     formRequestBaseClass: 'Illuminate\Foundation\Http\FormRequest'
 
+    # `EnforceFormRequestToDtoRule`: list of fully-qualified class names to
+    # exempt from the `toDto()` contract (exact-FQCN match). The class-keyed
+    # alternative to per-file `ignoreErrors` — intended for porting a retiring
+    # local FormRequest→DTO arch test's exempt-class list into package config
+    # 1:1. Default empty ⇒ no exemptions, behaviour unchanged. Each FQCN uses
+    # single backslashes — see the NEON-quoting note above.
+    formRequestToDtoExemptClasses: []
+
 parametersSchema:
     resourceDataBaseClass: string()
     formRequestBaseClass: string()
+    formRequestToDtoExemptClasses: listOf(string())
 
 services:
     -
@@ -59,6 +68,7 @@ services:
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceFormRequestToDtoRule
         arguments:
             formRequestBaseClass: %formRequestBaseClass%
+            exemptClasses: %formRequestToDtoExemptClasses%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceCurrentUserAttributeRule
