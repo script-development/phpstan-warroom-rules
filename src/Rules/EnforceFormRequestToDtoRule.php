@@ -18,10 +18,12 @@ use function sprintf;
 
 /**
  * Enforces ADR-0012 §FormRequest → DTO Flow: every concrete `FormRequest`
- * subclass must define (or inherit) a `toDto()` method so validated input
- * crosses the HTTP boundary as a typed DTO, never as a raw validated array.
- * Without the method, controllers hand `$request->validated()` arrays to
- * Actions — untyped, key-renameable, and invisible to static analysis.
+ * subclass must define (or inherit) a `toDto()` method — or its ADR-0020
+ * bulk-list sibling `toDtos()` (one request → `list<…Data>`) — so validated
+ * input crosses the HTTP boundary as a typed DTO, never as a raw validated
+ * array. Without either method, controllers hand `$request->validated()`
+ * arrays to Actions — untyped, key-renameable, and invisible to static
+ * analysis.
  *
  * Doctrine source: ADR-0012 (FormRequest → DTO Flow). Promoted from
  * entreezuil's reflection-based Pest arch test
@@ -41,10 +43,13 @@ use function sprintf;
  * Detection (all three must hold):
  *   1. Class transitively extends the configured base class.
  *   2. Class is concrete (abstract intermediates are exempt).
- *   3. Class neither declares nor inherits a `toDto()` method — own
- *      declarations, parent-class declarations, and trait-provided methods
- *      all satisfy the contract (mirroring the source-of-truth Pest test's
- *      `method_exists()` matcher).
+ *   3. Class neither declares nor inherits a `toDto()` OR `toDtos()`
+ *      method — own declarations, parent-class declarations, and
+ *      trait-provided methods of EITHER name all satisfy the contract
+ *      (mirroring the source-of-truth Pest test's `method_exists()` matcher,
+ *      which already accepts both). `toDtos()` is the ADR-0020 bulk-list
+ *      convention (bulk-reorder requests convert to `list<…Data>`); the
+ *      singular check alone false-positived on every such request.
  *
  * Legitimately DTO-less requests (entreezuil precedent: `LoginRequest`,
  * whose auth flow calls `AuthManager::attempt()` directly) are suppressed
@@ -74,7 +79,18 @@ use function sprintf;
  */
 final class EnforceFormRequestToDtoRule implements Rule
 {
-    private const string DTO_METHOD_NAME = 'toDto';
+    /**
+     * The DTO-handoff contract is satisfied by either the singular `toDto()`
+     * (one request → one typed DTO) or the plural `toDtos()` (ADR-0020
+     * bulk-list pattern — one request → `list<…Data>`, e.g. a bulk-reorder
+     * request). A class declaring or inheriting EITHER satisfies the
+     * contract; only a class with NEITHER is flagged. Mirrors the
+     * source-of-truth Pest test (`FormRequestsTest`) which already accepts
+     * both method names.
+     *
+     * @var list<string>
+     */
+    private const array DTO_METHOD_NAMES = ['toDto', 'toDtos'];
 
     /**
      * @param list<string> $exemptClasses fully-qualified class names to skip
@@ -110,8 +126,10 @@ final class EnforceFormRequestToDtoRule implements Rule
             return [];
         }
 
-        if ($classReflection->hasNativeMethod(self::DTO_METHOD_NAME)) {
-            return [];
+        foreach (self::DTO_METHOD_NAMES as $method) {
+            if ($classReflection->hasNativeMethod($method)) {
+                return [];
+            }
         }
 
         // Class-keyed consumer exemption: exact-FQCN match against the
@@ -124,7 +142,7 @@ final class EnforceFormRequestToDtoRule implements Rule
 
         return [
             RuleErrorBuilder::message(sprintf(
-                '%s extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                '%s extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
                 $classReflection->getName(),
             ))
                 ->identifier('enforceFormRequestToDto.missingToDtoMethod')

@@ -6,6 +6,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-01
+
+**Release-as-a-whole: PATCH (false-positive narrowing — `^0.6` consumers inherit on a plain `composer update`, no pin bump).** Removes errors from previously-flagged code; adds none. Not a candidate-major.
+
+### Fixed
+
+- `EnforceFormRequestToDtoRule` — now accepts the plural `toDtos()` bulk-list convention, not only the singular `toDto()`. The rule checked a single `DTO_METHOD_NAME = 'toDto'` and false-positived on every FormRequest that converts its validated input to a `list<…Data>` via `toDtos()` — the canonical ADR-0020 bulk-reorder pattern (e.g. codebook's 5 bulk requests, kendo's `ReorderEpicsRequest`). A concrete FormRequest that declares or inherits **`toDto()` OR `toDtos()`** now satisfies the contract; only a class with **neither** is flagged (`DTO_METHOD_NAME` → `DTO_METHOD_NAMES = ['toDto', 'toDtos']`, pass if `hasNativeMethod()` is true for any). This realigns the Level-2 PHPStan rule with the Level-1 source-of-truth arch test (`FormRequestsTest`), which already accepts `toDtos()` and is green — the rule was stricter than the doctrine it encodes, contradicting the arch test it mirrors. The abstract-skip gate, the FormRequest-base inheritance gate, and the `formRequestToDtoExemptClasses` exemption param are unchanged. Error message updated to read `toDto()/toDtos()`. Regression-pinned by a new `CompliantToDtosRequest` fixture (defines only `toDtos(): array`, must not flag) alongside the existing neither-method positive case. **Versioning: PATCH per ADR-0021 §Versioning (false-positive narrowing — removes errors, adds none).** Seed: fleet survey 2026-07-01 (`origin/development`) — codebook (5 requests) + kendo (`ReorderEpicsRequest`, 1) define `toDtos()`; both were about to suppress this false positive per-consumer (the wrong level).
+
 ## [0.6.0] — 2026-07-01
 
 **Release-as-a-whole: backward-compatible MINOR** — one new optional PHPStan parameter (`formRequestToDtoExemptClasses`, default `[]`) on `EnforceFormRequestToDtoRule`. Default-empty ⇒ zero new errors in existing consumers; a consumer adopts on its own `^0.5 → ^0.6` pin bump. Seed: war-room enforcement queue #131 — a class-keyed exemption surface so a territory can retire a duplicate local `FormRequestsTest` arch test and consolidate its exempt list into package config.
