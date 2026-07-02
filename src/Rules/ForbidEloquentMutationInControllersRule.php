@@ -57,11 +57,15 @@ use function str_starts_with;
  *
  * Algorithm:
  *
- *   1. Namespace gate — class FQCN must start with `App\Http\Controllers`.
- *      Sub-namespaces (kendo's `App\Http\Controllers\Central\*`) pass naturally
- *      via `str_starts_with`. If a future consumer ships controllers under a
- *      divergent namespace, lift this into a `controllerNamespacePrefixes`
- *      parameter per the `EnforceResourceDataValidatorOptInRule` precedent.
+ *   1. Namespace gate — the class namespace must start with ANY of the
+ *      configured `controllerNamespacePrefixes` (default
+ *      `['App\Http\Controllers']`). Sub-namespaces (kendo's
+ *      `App\Http\Controllers\Central\*`) pass naturally via `str_starts_with`.
+ *      A consumer that ships controllers under a divergent namespace (e.g.
+ *      emmie's `App\Http\Client\Controllers` / `App\Http\Admin\Controllers`)
+ *      opts them in by adding the prefix to `controllerNamespacePrefixes` in
+ *      its `phpstan.neon` — mirrors the `formRequestBaseClass` /
+ *      `resourceDataBaseClass` parameter precedent.
  *   2. For every `ClassMethod` in the class node, recursively walk the method
  *      body collecting `MethodCall` and `StaticCall` nodes.
  *   3. **MethodCall:** resolve the receiver expression's type via
@@ -109,8 +113,6 @@ use function str_starts_with;
  */
 final class ForbidEloquentMutationInControllersRule implements Rule
 {
-    private const string CONTROLLER_NAMESPACE_PREFIX = 'App\Http\Controllers';
-
     /**
      * Eloquent persistence-API method names that mutate model or table state.
      * Reads are deliberately omitted — controllers reading Models is necessary
@@ -130,6 +132,23 @@ final class ForbidEloquentMutationInControllersRule implements Rule
         'touch', 'touchQuietly',
     ];
 
+    /**
+     * @param list<string> $controllerNamespacePrefixes namespace prefixes whose
+     *                                                  classes are treated as
+     *                                                  controllers (match via
+     *                                                  `str_starts_with`); the
+     *                                                  default reproduces the
+     *                                                  canonical
+     *                                                  `App\Http\Controllers`
+     *                                                  gate. Consumers with
+     *                                                  sub-namespaced
+     *                                                  controllers add their
+     *                                                  prefixes from config.
+     */
+    public function __construct(
+        private array $controllerNamespacePrefixes = ['App\Http\Controllers'],
+    ) {}
+
     public function getNodeType(): string
     {
         return Class_::class;
@@ -139,7 +158,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
     {
         $namespace = $scope->getNamespace();
 
-        if ($namespace === null || !str_starts_with($namespace, self::CONTROLLER_NAMESPACE_PREFIX)) {
+        if ($namespace === null || !$this->namespaceIsController($namespace)) {
             return [];
         }
 
@@ -156,6 +175,22 @@ final class ForbidEloquentMutationInControllersRule implements Rule
         }
 
         return $errors;
+    }
+
+    /**
+     * True when `$namespace` starts with ANY configured controller prefix.
+     * Sub-namespaces (`App\Http\Controllers\Central`) match the canonical
+     * `App\Http\Controllers` prefix naturally.
+     */
+    private function namespaceIsController(string $namespace): bool
+    {
+        foreach ($this->controllerNamespacePrefixes as $prefix) {
+            if (str_starts_with($namespace, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
