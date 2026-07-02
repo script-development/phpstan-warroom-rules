@@ -28,7 +28,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
                     9,
                 ],
             ],
@@ -41,6 +41,23 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
             [
                 __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
                 __DIR__ . '/../Fixtures/FormRequestToDto/CompliantToDtoRequest.php',
+            ],
+            [],
+        );
+    }
+
+    public function testCompliantToDtosBulkListIsNotFlagged(): void
+    {
+        // ADR-0020 bulk-list convention: the request defines only the plural
+        // `toDtos(): array` (one request → list<…Data>), no singular toDto().
+        // The rule must NOT flag it — accepting either method name is the fix
+        // for the false positive against every bulk-reorder request, and it
+        // matches the source-of-truth FormRequestsTest arch test, which
+        // already accepts toDtos().
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/CompliantToDtosRequest.php',
             ],
             [],
         );
@@ -93,7 +110,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Requests\TransitiveViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    'App\Http\Requests\TransitiveViolatorRequest extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
                     13,
                 ],
             ],
@@ -119,7 +136,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
                     9,
                 ],
             ],
@@ -162,7 +179,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/FormRequestToDto/UnrelatedShortNameCollision.php'],
             [
                 [
-                    'App\Unrelated\UnrelatedShortNameCollision extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    'App\Unrelated\UnrelatedShortNameCollision extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
                     12,
                 ],
             ],
@@ -182,7 +199,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
                     9,
                 ],
             ],
@@ -223,7 +240,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Requests\SecondViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    'App\Http\Requests\SecondViolatorRequest extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
                     12,
                 ],
             ],
@@ -246,7 +263,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                    'App\Http\Requests\ViolatorRequest extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
                     9,
                 ],
             ],
