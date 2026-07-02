@@ -45,10 +45,10 @@ includes:
 | `LogBuilderTruncateRule` | `logRule.logModification` | `Builder->truncate()` calls | If the fluent chain's most recent `table()` call targets a Log-named table (string-literal argument matching `"log"` / `"logs"`, case-insensitive), error. Sibling rule to `LogRule`; shares the `logRule.logModification` identifier so a single `ignoreErrors` entry covers both. Eloquent `from()` chains and Model-`$table`-property-driven tables are acceptable misses. Doctrine: ADR-0001 §Append-only. |
 | `EnforceAuditSnapshotOnRetryRule` | `enforceAuditSnapshotOnRetry.firstStatementMustResetState` | `App\Actions\*` whose constructor injects an entity audit logger | The first statement inside `$connection->transaction(...)` must reset the model's in-memory state (`$model->refresh()`, fresh fetch, or fresh instantiation). Doctrine: ADR-0001 §Snapshot-on-Retry Safety. |
 | `EnforceAuditTransactionScopeRule` | `enforceAuditTransactionScope.nonTransactionalMutationInClosure` | `App\Actions\*` whose `execute()` calls `transaction(...)` with a literal closure | Mutating `StatefulGuard` / `Session` / `Cache` / `Bus` / `Queue` / `Mailer` / `Notification` / `Broadcaster` / `Filesystem` state (or their `Illuminate\Support\Facades\*` counterparts) inside the closure is an error. Reads (`Auth::user()`, `Session::get()`, `Cache::get()`) are permitted. Doctrine: ADR-0029 (Audit Row Durability Contract) §Decision rule 3. |
-| `ForbidEloquentMutationInControllersRule` | `forbidEloquentMutationInControllers.eloquentMutationInController` | `App\Http\Controllers\*` (including sub-namespaces) | Calling Eloquent persistence APIs (`save`, `update`, `delete`, `create`, `destroy`, `forceDelete`, `forceFill`, `push`, `restore`, `touch`, and their `*OrFail` / `*Quietly` / `*OrCreate` variants — 24-method blocklist) on `Illuminate\Database\Eloquent\Model` subclasses or `Illuminate\Database\Eloquent\Builder` chains is an error. Reads (`find`, `where`, `get`, `first`, `paginate`, `pluck`, `count`, `exists`, `query`) are permitted. Delegate mutations to an Action. Doctrine: ADR-0011 (Action Class Architecture) + ADR-0019 (Explicit Model Hydration). |
+| `ForbidEloquentMutationInControllersRule` | `forbidEloquentMutationInControllers.eloquentMutationInController` | `App\Http\Controllers\*` (including sub-namespaces; configurable via `controllerNamespacePrefixes`) | Calling Eloquent persistence APIs (`save`, `update`, `delete`, `create`, `destroy`, `forceDelete`, `forceFill`, `push`, `restore`, `touch`, and their `*OrFail` / `*Quietly` / `*OrCreate` variants — 24-method blocklist) on `Illuminate\Database\Eloquent\Model` subclasses or `Illuminate\Database\Eloquent\Builder` chains is an error. Reads (`find`, `where`, `get`, `first`, `paginate`, `pluck`, `count`, `exists`, `query`) are permitted. Delegate mutations to an Action. Doctrine: ADR-0011 (Action Class Architecture) + ADR-0019 (Explicit Model Hydration). |
 | `EnforceResourceDataValidatorOptInRule` | `enforceResourceDataValidatorOptIn.missingValidatorCall` | Classes extending `App\Http\Resources\ResourceData` | If the class declares a non-empty `EAGER_LOAD_COUNT` / `EAGER_LOAD_SUM` constant but never calls `validateRelationsLoaded()` in any method, error. |
 | `EnforceFormRequestToDtoRule` | `enforceFormRequestToDto.missingToDtoMethod` | Concrete classes extending `Illuminate\Foundation\Http\FormRequest` | If the class neither declares nor inherits a `toDto()` method, error. Abstract intermediates (`BaseFormRequest`) are exempt. Hand Actions a typed DTO, not `$request->validated()` arrays. Doctrine: ADR-0012 (FormRequest → DTO Flow). |
-| `EnforceCurrentUserAttributeRule` | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` | `Request::user()` / `Auth::user()` / `auth()->user()` calls inside `App\Http\Controllers\*` classes (namespace prefix, incl. sub-namespaces) | Use `#[\Illuminate\Container\Attributes\CurrentUser] User $user` on the method parameter. Scope is decided by namespace, not class ancestry — a base-less `final` controller in `App\Http\Controllers` fires; FormRequests (`App\Http\Requests`), middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs, and console commands are silent because their namespaces do not start with the controller prefix (container-attribute injection does not apply to FormRequest methods regardless). |
+| `EnforceCurrentUserAttributeRule` | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` | `Request::user()` / `Auth::user()` / `auth()->user()` calls inside `App\Http\Controllers\*` classes (namespace prefix, incl. sub-namespaces; configurable via `controllerNamespacePrefixes`) | Use `#[\Illuminate\Container\Attributes\CurrentUser] User $user` on the method parameter. Scope is decided by namespace, not class ancestry — a base-less `final` controller in `App\Http\Controllers` fires; FormRequests (`App\Http\Requests`), middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs, and console commands are silent because their namespaces do not start with the controller prefix (container-attribute injection does not apply to FormRequest methods regardless). |
 
 ### `EnforceActionTransactionsRule` — write-method list
 
@@ -152,6 +152,32 @@ parameters:
 ```
 
 Confirmed cross-territory (n=2, 2026-06-15): entreezuil `AuthenticatedSessionController::store`, ublgenie `AuthController::store`. Each consumer adds this on its `^0.4` bump.
+
+### Configurable controller namespaces (`controllerNamespacePrefixes`)
+
+The three controller-scoped rules — `ForbidEloquentMutationInControllersRule`, `EnforceCurrentUserAttributeRule`, and `ForbidResourceWrappedInJsonResponseRule` — decide "is this class a controller?" by namespace prefix, not class ancestry (consumer controllers are base-less `final` classes with no `extends Controller`, so an ancestry walk catches nothing). The prefix set is the shared `controllerNamespacePrefixes` parameter, default `['App\Http\Controllers']`:
+
+```neon
+parameters:
+    controllerNamespacePrefixes:
+        - 'App\Http\Controllers'
+```
+
+A class is in scope when its namespace `str_starts_with` **any** listed prefix, so canonical sub-namespaces (kendo's `App\Http\Controllers\Central\*`) are covered by the default automatically. The default reproduces the prior hardcoded gate byte-for-byte — leave it unset and nothing changes.
+
+#### Covering sub-namespaced controllers
+
+A territory that ships controllers **outside** `App\Http\Controllers` — e.g. emmie's `App\Http\Client\Controllers` and `App\Http\Admin\Controllers` — opts them into both rules by listing their prefixes:
+
+```neon
+parameters:
+    controllerNamespacePrefixes:
+        - 'App\Http\Controllers'
+        - 'App\Http\Client\Controllers'
+        - 'App\Http\Admin\Controllers'
+```
+
+All three rules then flag inline Eloquent mutations, `Request::user()` / `Auth::user()` / `auth()->user()` calls, and `JsonResource`-wrapped JSON responses in those namespaces too. Prefixes are *config* — no consumer namespace is ever hardcoded in a rule body, preserving the "never by name inside the rule" convention. (Each backslash is single — NEON only unescapes `\\` inside double quotes; single-quoted `\\` stays two literal characters and would match nothing.)
 
 ### Action namespace assumption
 

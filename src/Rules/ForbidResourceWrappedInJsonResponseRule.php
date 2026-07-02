@@ -76,18 +76,38 @@ use function str_starts_with;
  * identifier `forbidResourceWrappedInJsonResponse.resourceWrapped`.
  *
  * Controller-namespace gate mirrors `ForbidEloquentMutationInControllersRule` /
- * `EnforceCurrentUserAttributeRule`: `App\Http\Controllers` prefix via
- * `$scope->getNamespace()` + `str_starts_with` (sub-namespaces pass naturally).
+ * `EnforceCurrentUserAttributeRule`: the class namespace must start with ANY of
+ * the configured `controllerNamespacePrefixes` (default
+ * `['App\Http\Controllers']`, reproducing the prior hardcoded gate byte-for-
+ * byte; sub-namespaces pass naturally via `str_starts_with`). A consumer that
+ * ships controllers under a divergent namespace (e.g. emmie's
+ * `App\Http\Client\Controllers` / `App\Http\Admin\Controllers`) opts them in by
+ * adding the prefix to `controllerNamespacePrefixes` in its `phpstan.neon`.
  *
  * @implements Rule<Node>
  */
 final class ForbidResourceWrappedInJsonResponseRule implements Rule
 {
-    private const string CONTROLLER_NAMESPACE_PREFIX = 'App\Http\Controllers';
-
     private const string JSON_RESOURCE_CLASS = JsonResource::class;
 
     private const string JSON_RESPONSE_CLASS = JsonResponse::class;
+
+    /**
+     * @param list<string> $controllerNamespacePrefixes namespace prefixes whose
+     *                                                  classes are treated as
+     *                                                  controllers (match via
+     *                                                  `str_starts_with`); the
+     *                                                  default reproduces the
+     *                                                  canonical
+     *                                                  `App\Http\Controllers`
+     *                                                  gate. Consumers with
+     *                                                  sub-namespaced
+     *                                                  controllers add their
+     *                                                  prefixes from config.
+     */
+    public function __construct(
+        private array $controllerNamespacePrefixes = ['App\Http\Controllers'],
+    ) {}
 
     public function getNodeType(): string
     {
@@ -98,7 +118,7 @@ final class ForbidResourceWrappedInJsonResponseRule implements Rule
     {
         $namespace = $scope->getNamespace();
 
-        if ($namespace === null || !str_starts_with($namespace, self::CONTROLLER_NAMESPACE_PREFIX)) {
+        if ($namespace === null || !$this->namespaceIsController($namespace)) {
             return [];
         }
 
@@ -115,6 +135,22 @@ final class ForbidResourceWrappedInJsonResponseRule implements Rule
         }
 
         return [$this->buildError($node)];
+    }
+
+    /**
+     * True when `$namespace` starts with ANY configured controller prefix.
+     * Sub-namespaces (`App\Http\Controllers\Central`) match the canonical
+     * `App\Http\Controllers` prefix naturally.
+     */
+    private function namespaceIsController(string $namespace): bool
+    {
+        foreach ($this->controllerNamespacePrefixes as $prefix) {
+            if (str_starts_with($namespace, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
