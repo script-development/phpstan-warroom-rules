@@ -75,9 +75,12 @@ use function str_starts_with;
  * class name is ever hardcoded in this rule body, preserving the package's
  * "never by name inside the rule" convention. A consumer whose audit models use
  * a different suffix (e.g. a channel-log family) or namespace overrides the
- * parameters; a genuine non-audit false positive (e.g. a `$timestamps = false`
- * model with no `UPDATED_AT = null`) is suppressed per-file via `ignoreErrors`
- * keyed on the specific identifier.
+ * parameters. A model that disables timestamps wholesale
+ * (`public $timestamps = false;`) never writes `updated_at` at all and is
+ * recognised natively as satisfying the updated_at protection — no
+ * `ignoreErrors` suppression needed; a remaining genuine non-audit false
+ * positive is suppressed per-file via `ignoreErrors` keyed on the specific
+ * identifier.
  *
  * @implements Rule<InClassNode>
  */
@@ -156,7 +159,7 @@ final class EnforceAuditModelProtectionsRule implements Rule
         if (!$this->updatedAtIsDisabled($classReflection)) {
             $errors[] = $this->buildError(
                 sprintf(
-                    '%s is an audit model but does not disable updated_at — an audit row is written once and never mutated. Declare `public const UPDATED_AT = null;`. See ADR-0001 §Append-only.',
+                    '%s is an audit model but does not disable updated_at — an audit row is written once and never mutated. Declare `public const UPDATED_AT = null;` (or disable timestamps wholesale with `public $timestamps = false;`). See ADR-0001 §Append-only.',
                     $name,
                 ),
                 'enforceAuditModelProtections.updatedAtNotDisabled',
@@ -220,18 +223,31 @@ final class EnforceAuditModelProtectionsRule implements Rule
      * (defensive — not reachable for a real Model subtype) is treated as
      * not-disabled.
      *
-     * Reads the literal constant value via native reflection (consumed inline —
-     * no generic-typed parameter, so the `ReflectionClass<object>` invariance
-     * trap does not apply). PHPStan's `ClassConstantReflection::getValueType()`
-     * does not reliably resolve an untyped `= null` literal to a `NullType` in
-     * the fixture analysis environment, so the native literal value is the
+     * A model that disables timestamps wholesale (`public $timestamps = false;`
+     * — the framework base declares `public $timestamps = true`) never writes
+     * `updated_at` either, so it satisfies the protection natively rather than
+     * needing a per-file `ignoreErrors` suppression. Both reads use the default
+     * property/constant value, matching Eloquent's own decision points
+     * (`usesTimestamps()` / `getUpdatedAtColumn()`).
+     *
+     * Reads the literal values via native reflection (consumed inline — no
+     * generic-typed parameter, so the `ReflectionClass<object>` invariance trap
+     * does not apply). PHPStan's `ClassConstantReflection::getValueType()` does
+     * not reliably resolve an untyped `= null` literal to a `NullType` in the
+     * fixture analysis environment, so the native literal value is the
      * dependable read.
      */
     private function updatedAtIsDisabled(ClassReflection $classReflection): bool
     {
         $native = $classReflection->getNativeReflection();
 
-        return $native->hasConstant('UPDATED_AT') && $native->getConstant('UPDATED_AT') === null;
+        if ($native->hasConstant('UPDATED_AT') && $native->getConstant('UPDATED_AT') === null) {
+            return true;
+        }
+
+        $defaults = $native->getDefaultProperties();
+
+        return ($defaults['timestamps'] ?? true) === false;
     }
 
     private function buildError(string $message, string $identifier, int $line): IdentifierRuleError

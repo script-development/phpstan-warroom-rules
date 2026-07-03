@@ -19,7 +19,7 @@ final class EnforceAuditModelProtectionsRuleTest extends RuleTestCase
 
     private const string SOFT_DELETES = '%s is an audit model but uses the SoftDeletes trait — audit logs are append-only and must never be soft-deleted. Remove SoftDeletes. See ADR-0001 §Append-only.';
 
-    private const string UPDATED_AT = '%s is an audit model but does not disable updated_at — an audit row is written once and never mutated. Declare `public const UPDATED_AT = null;`. See ADR-0001 §Append-only.';
+    private const string UPDATED_AT = '%s is an audit model but does not disable updated_at — an audit row is written once and never mutated. Declare `public const UPDATED_AT = null;` (or disable timestamps wholesale with `public $timestamps = false;`). See ADR-0001 §Append-only.';
 
     /**
      * Override hook: when set, `getRule()` returns this instance instead of the
@@ -33,6 +33,17 @@ final class EnforceAuditModelProtectionsRuleTest extends RuleTestCase
         // the canonical compliant shape. Discovered by both signals, fires nothing.
         $this->analyse(
             [__DIR__ . '/../Fixtures/AuditModelProtections/CleanAuditLog.php'],
+            [],
+        );
+    }
+
+    public function testTimestamplessAuditModelIsNotFlagged(): void
+    {
+        // Disables timestamps WHOLESALE (`public $timestamps = false;`) instead
+        // of `const UPDATED_AT = null` — updated_at is never written, so the
+        // protection is satisfied natively (no ignoreErrors suppression needed).
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AuditModelProtections/TimestamplessAuditLog.php'],
             [],
         );
     }
@@ -269,15 +280,27 @@ final class EnforceAuditModelProtectionsRuleTest extends RuleTestCase
         // default. A NEON quoting regression in a shipped default (e.g. the
         // double-backslash single-quoted form) silently no-ops discovery while
         // every direct-instantiation test stays green; this is the only gate
-        // that catches it.
+        // that catches it. The two fixtures each isolate ONE signal —
+        // ScatteredAuditLog matches only the suffix default, AuthEventLog only
+        // the namespace default — so a quoting regression in EITHER shipped
+        // parameter fails this test on its own; a dual-matched fixture
+        // (FactoryAuditLog) would let a broken namespace default hide behind
+        // the still-working suffix signal.
         $this->ruleOverride = self::getContainer()->getByType(EnforceAuditModelProtectionsRule::class);
 
         $this->analyse(
-            [__DIR__ . '/../Fixtures/AuditModelProtections/FactoryAuditLog.php'],
+            [
+                __DIR__ . '/../Fixtures/AuditModelProtections/ScatteredAuditLog.php',
+                __DIR__ . '/../Fixtures/AuditModelProtections/AuthEventLog.php',
+            ],
             [
                 [
-                    sprintf(self::HAS_FACTORY, 'App\Models\Audit\FactoryAuditLog'),
-                    15,
+                    sprintf(self::HAS_FACTORY, 'App\Models\ScatteredAuditLog'),
+                    18,
+                ],
+                [
+                    sprintf(self::HAS_FACTORY, 'App\Models\Audit\AuthEventLog'),
+                    18,
                 ],
             ],
         );

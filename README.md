@@ -212,19 +212,19 @@ Configuration expresses **patterns**, never enumerated class names — no consum
 |---|---|
 | `enforceAuditModelProtections.hasFactoryForbidden` | the model uses `HasFactory` (transitively — an inherited trait on an abstract base counts). A factory is a direct-insert path that bypasses the hash-chained audit writer. |
 | `enforceAuditModelProtections.softDeletesForbidden` | the model uses `SoftDeletes`. Audit rows are append-only and never removed. |
-| `enforceAuditModelProtections.updatedAtNotDisabled` | the model does not declare `public const UPDATED_AT = null`. The framework `Model` base sets `UPDATED_AT = 'updated_at'`, so a model that never overrides it keeps a mutable timestamp — an audit row is written once and never mutated. |
+| `enforceAuditModelProtections.updatedAtNotDisabled` | the model does not declare `public const UPDATED_AT = null`. The framework `Model` base sets `UPDATED_AT = 'updated_at'`, so a model that never overrides it keeps a mutable timestamp — an audit row is written once and never mutated. A model that disables timestamps wholesale (`public $timestamps = false;`) never writes `updated_at` at all and is recognised natively as compliant. |
 
 Abstract intermediates (`abstract class BaseAuditLog`) are exempt — the concrete leaf carries any inherited violation.
 
-**Migrating off the local arch test** — move the arch test's model-discovery convention into the parameters above, delete the local `HasFactory` / `SoftDeletes` / `updated_at` model checks, and the package rule becomes the single enforcement authority. (The append-only `update()` / `delete()` ban on `*Log` classes is a separate concern already covered by `LogRule`.) A genuine non-audit false positive — e.g. a `$timestamps = false` model with no `UPDATED_AT = null` — is suppressed per-file via `ignoreErrors` keyed on the specific identifier, with a rationale comment:
+**Migrating off the local arch test** — move the arch test's model-discovery convention into the parameters above, delete the local `HasFactory` / `SoftDeletes` / `updated_at` model checks, and the package rule becomes the single enforcement authority. (The append-only `update()` / `delete()` ban on `*Log` classes is a separate concern already covered by `LogRule`.) A `$timestamps = false` model needs no suppression — the rule recognises disabled-wholesale timestamps natively. A remaining genuine non-audit false positive is suppressed per-file via `ignoreErrors` keyed on the specific identifier, with a rationale comment:
 
 ```neon
 parameters:
     ignoreErrors:
         -
-            identifier: enforceAuditModelProtections.updatedAtNotDisabled
-            # timestamps disabled entirely; no updated_at column to null out
-            path: app/Models/Audit/SomeTimestampFreeLog.php
+            identifier: enforceAuditModelProtections.hasFactoryForbidden
+            # seeded read-model projection, not an audit record; factory is test-only
+            path: app/Models/Audit/SomeProjectionLog.php
 ```
 
 ### Action namespace assumption
