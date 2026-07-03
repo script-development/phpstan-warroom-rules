@@ -27,9 +27,15 @@ use function str_starts_with;
  * Use the #[\Illuminate\Container\Attributes\CurrentUser] container attribute on the
  * method parameter instead — eliminates the nullable-then-assert dance.
  *
- * Scoped to classes in the `App\Http\Controllers` namespace. FormRequest
- * (`App\Http\Requests`) is excluded by design — container-attribute injection
- * does not apply to FormRequest::rules() / toDto() / authorize() invocations.
+ * Scoped to classes whose namespace starts with ANY of the configured
+ * `controllerNamespacePrefixes` (default `['App\Http\Controllers']`). A
+ * consumer that ships controllers under a divergent namespace (e.g. emmie's
+ * `App\Http\Client\Controllers` / `App\Http\Admin\Controllers`) opts them in
+ * by adding the prefix to `controllerNamespacePrefixes` in its `phpstan.neon`
+ * — mirrors the `formRequestBaseClass` / `resourceDataBaseClass` parameter
+ * precedent. FormRequest (`App\Http\Requests`) is excluded by design —
+ * container-attribute injection does not apply to FormRequest::rules() /
+ * toDto() / authorize() invocations.
  * Middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs,
  * and console commands are likewise out of scope: each context has its own
  * canonical resolution path (constructor DI for Actions, authenticated payload
@@ -47,7 +53,8 @@ use function str_starts_with;
  *      handles aliased imports.
  *
  * Containing-class gate (applied to all three branches): the rule fires only
- * when `$scope->getNamespace()` starts with `App\Http\Controllers`. This
+ * when `$scope->getNamespace()` starts with a configured controller prefix
+ * (default `App\Http\Controllers`). This
  * mirrors `ForbidEloquentMutationInControllersRule` and the canonical
  * "controllers are identified by the `App\Http\Controllers` namespace"
  * convention — consumer controllers are base-less `final` classes with no
@@ -68,11 +75,26 @@ final class EnforceCurrentUserAttributeRule implements Rule
 {
     private const string TARGET_METHOD = 'user';
 
-    private const string CONTROLLER_NAMESPACE_PREFIX = 'App\Http\Controllers';
-
     private const string REQUEST_FQCN = Request::class;
 
     private const string AUTH_FACADE_FQCN = Auth::class;
+
+    /**
+     * @param list<string> $controllerNamespacePrefixes namespace prefixes whose
+     *                                                  classes are treated as
+     *                                                  controllers (match via
+     *                                                  `str_starts_with`); the
+     *                                                  default reproduces the
+     *                                                  canonical
+     *                                                  `App\Http\Controllers`
+     *                                                  gate. Consumers with
+     *                                                  sub-namespaced
+     *                                                  controllers add their
+     *                                                  prefixes from config.
+     */
+    public function __construct(
+        private array $controllerNamespacePrefixes = ['App\Http\Controllers'],
+    ) {}
 
     public function getNodeType(): string
     {
@@ -114,7 +136,13 @@ final class EnforceCurrentUserAttributeRule implements Rule
             return false;
         }
 
-        return str_starts_with($namespace, self::CONTROLLER_NAMESPACE_PREFIX);
+        foreach ($this->controllerNamespacePrefixes as $prefix) {
+            if (str_starts_with($namespace, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

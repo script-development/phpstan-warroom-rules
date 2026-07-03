@@ -19,6 +19,13 @@ final class EnforceCurrentUserAttributeRuleTest extends RuleTestCase
 
     private const string EXPECTED_AUTH_HELPER = 'Authenticated-user resolution in controller methods uses the #[CurrentUser] container attribute. Add `#[\Illuminate\Container\Attributes\CurrentUser] User $user` to the method signature instead of calling auth()->user() inside the body.';
 
+    /**
+     * Override hook: when set, `getRule()` returns this instance instead of
+     * the default. Lets a single test reconfigure the
+     * `controllerNamespacePrefixes` parameter.
+     */
+    private ?Rule $ruleOverride = null;
+
     public function testFlagsRequestUserInController(): void
     {
         $this->analyse(
@@ -176,8 +183,82 @@ final class EnforceCurrentUserAttributeRuleTest extends RuleTestCase
         );
     }
 
+    public function testSubNamespacedControllerIsCleanUnderDefaultConfig(): void
+    {
+        // emmie's `App\Http\Client\Controllers` namespace does NOT start with
+        // the default `App\Http\Controllers` prefix, so `$request->user()` is
+        // invisible to the default gate — no error. This pins the "zero
+        // behaviour change at the default" invariant: the sub-namespace stays
+        // out of scope unless a consumer opts it in.
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/SubNamespacedClientController.php',
+            ],
+            [],
+        );
+    }
+
+    public function testSubNamespacedControllerFlaggedWhenPrefixConfigured(): void
+    {
+        // Re-run the same fixture with the sub-namespace added to
+        // `controllerNamespacePrefixes` — `$request->user()` must now fire.
+        // Proves the parameter brings a divergent controller namespace into
+        // scope (the emmie opt-in path).
+        $this->ruleOverride = new EnforceCurrentUserAttributeRule(
+            ['App\Http\Controllers', 'App\Http\Client\Controllers'],
+        );
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/SubNamespacedClientController.php',
+            ],
+            [
+                [self::EXPECTED_REQUEST_USER, 19],
+            ],
+        );
+    }
+
+    public function testRuleResolvesFromExtensionNeonAndFiresOnDefaultPrefix(): void
+    {
+        // End-to-end pin on the extension.neon registration path consumers
+        // actually use: resolve the rule from the PHPStan container so the
+        // shipped `controllerNamespacePrefixes` default and the
+        // `%controllerNamespacePrefixes%` argument wiring are exercised — NOT
+        // the PHP constructor default. A NEON quoting regression in the shipped
+        // default would silently no-op the rule for every default consumer;
+        // this gate catches it by asserting a canonical `App\Http\Controllers`
+        // controller still flags under the shipped default.
+        $this->ruleOverride = self::getContainer()->getByType(EnforceCurrentUserAttributeRule::class);
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/RequestUserInController.php',
+            ],
+            [
+                [self::EXPECTED_REQUEST_USER, 14],
+            ],
+        );
+    }
+
+    /**
+     * Load the shipped extension.neon so testRuleResolvesFromExtensionNeonAndFires*
+     * can pull the rule out of the container with its NEON-configured
+     * `controllerNamespacePrefixes` parameter applied.
+     *
+     * @return array<int, string>
+     */
+    public static function getAdditionalConfigFiles(): array
+    {
+        return [
+            __DIR__ . '/../../extension.neon',
+        ];
+    }
+
     protected function getRule(): Rule
     {
-        return new EnforceCurrentUserAttributeRule;
+        return $this->ruleOverride ?? new EnforceCurrentUserAttributeRule;
     }
 }

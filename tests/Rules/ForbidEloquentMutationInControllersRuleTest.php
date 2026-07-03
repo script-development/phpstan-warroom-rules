@@ -15,6 +15,13 @@ use function sprintf;
  */
 final class ForbidEloquentMutationInControllersRuleTest extends RuleTestCase
 {
+    /**
+     * Override hook: when set, `getRule()` returns this instance instead of
+     * the default. Lets a single test reconfigure the
+     * `controllerNamespacePrefixes` parameter.
+     */
+    private ?Rule $ruleOverride = null;
+
     public function testCompliantReadOnlyController(): void
     {
         $this->analyse(
@@ -185,9 +192,87 @@ final class ForbidEloquentMutationInControllersRuleTest extends RuleTestCase
         );
     }
 
+    public function testSubNamespacedControllerIsCleanUnderDefaultConfig(): void
+    {
+        // emmie's `App\Http\Client\Controllers` namespace does NOT start with
+        // the default `App\Http\Controllers` prefix, so the Eloquent mutation
+        // is invisible to the default gate — no error. This pins the
+        // "zero behaviour change at the default" invariant: the sub-namespace
+        // stays out of scope unless a consumer opts it in.
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/_stubs.php',
+                __DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/SubNamespacedClientController.php',
+            ],
+            [],
+        );
+    }
+
+    public function testSubNamespacedControllerFlaggedWhenPrefixConfigured(): void
+    {
+        // Re-run the same fixture with the sub-namespace added to
+        // `controllerNamespacePrefixes` — the mutation must now fire. Proves
+        // the parameter brings a divergent controller namespace into scope
+        // (the emmie opt-in path).
+        $this->ruleOverride = new ForbidEloquentMutationInControllersRule(
+            ['App\Http\Controllers', 'App\Http\Client\Controllers'],
+        );
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/_stubs.php',
+                __DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/SubNamespacedClientController.php',
+            ],
+            [
+                [
+                    $this->message('App\Http\Client\Controllers\SubNamespacedClientController', 'save', 'User'),
+                    22,
+                ],
+            ],
+        );
+    }
+
+    public function testRuleResolvesFromExtensionNeonAndFiresOnDefaultPrefix(): void
+    {
+        // End-to-end pin on the extension.neon registration path consumers
+        // actually use: resolve the rule from the PHPStan container so the
+        // shipped `controllerNamespacePrefixes` default and the
+        // `%controllerNamespacePrefixes%` argument wiring are exercised — NOT
+        // the PHP constructor default. A NEON quoting regression in the shipped
+        // default (e.g. the double-backslash single-quoted form) would silently
+        // no-op the rule for every default consumer; this gate catches it by
+        // asserting the kendo `App\Http\Controllers\Central\*` sub-namespace
+        // still flags under the shipped default.
+        $this->ruleOverride = self::getContainer()->getByType(ForbidEloquentMutationInControllersRule::class);
+
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/ViolationKendoCentralSubnamespace.php'],
+            [
+                [
+                    $this->message('App\Http\Controllers\Central\IssueController', 'save', 'Post'),
+                    21,
+                ],
+            ],
+        );
+    }
+
+    /**
+     * Load the shipped extension.neon so testRuleResolvesFromExtensionNeonAndFires*
+     * can pull the rule out of the container with its NEON-configured
+     * `controllerNamespacePrefixes` parameter applied.
+     *
+     * @return array<int, string>
+     */
+    public static function getAdditionalConfigFiles(): array
+    {
+        return [
+            __DIR__ . '/../../extension.neon',
+        ];
+    }
+
     protected function getRule(): Rule
     {
-        return new ForbidEloquentMutationInControllersRule;
+        return $this->ruleOverride ?? new ForbidEloquentMutationInControllersRule;
     }
 
     private function message(string $classFqcn, string $method, string $receiverShortName): string
