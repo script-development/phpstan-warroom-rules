@@ -36,12 +36,30 @@ parameters:
     # above.
     controllerNamespacePrefixes:
         - 'App\Http\Controllers'
+    # `EnforceAuditModelProtectionsRule`: how an audit-log model is recognised
+    # by SHAPE (a denylist-inversion — no hand-maintained model list). A model
+    # is an audit record if its FQCN sits under one of these namespace prefixes
+    # OR its short name ends with one of the `auditModelNameSuffixes` below. The
+    # namespace default matches the entreezuil / ublgenie `App\Models\Audit\*`
+    # convention (incl. channel logs like `AuthEventLog`); the suffix default
+    # matches the kendo `*AuditLog` models scattered across `App\Models` +
+    # `App\Models\Central`. Override per consumer to add a channel-log family.
+    # Each prefix uses single backslashes — see the NEON-quoting note above.
+    auditModelNamespacePrefixes:
+        - 'App\Models\Audit'
+
+    # `EnforceAuditModelProtectionsRule`: class short-name suffixes that mark a
+    # model as an audit record (union with the namespace prefixes above).
+    auditModelNameSuffixes:
+        - 'AuditLog'
 
 parametersSchema:
     resourceDataBaseClass: string()
     formRequestBaseClass: string()
     formRequestToDtoExemptClasses: listOf(string())
     controllerNamespacePrefixes: listOf(string())
+    auditModelNamespacePrefixes: listOf(string())
+    auditModelNameSuffixes: listOf(string())
 
 services:
     -
@@ -93,6 +111,12 @@ services:
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceCurrentUserAttributeRule
         arguments:
             controllerNamespacePrefixes: %controllerNamespacePrefixes%
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceAuditModelProtectionsRule
+        arguments:
+            auditModelNamespacePrefixes: %auditModelNamespacePrefixes%
+            auditModelNameSuffixes: %auditModelNameSuffixes%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension

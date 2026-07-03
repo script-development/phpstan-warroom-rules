@@ -49,6 +49,8 @@ includes:
 | `EnforceResourceDataValidatorOptInRule` | `enforceResourceDataValidatorOptIn.missingValidatorCall` | Classes extending `App\Http\Resources\ResourceData` | If the class declares a non-empty `EAGER_LOAD_COUNT` / `EAGER_LOAD_SUM` constant but never calls `validateRelationsLoaded()` in any method, error. |
 | `EnforceFormRequestToDtoRule` | `enforceFormRequestToDto.missingToDtoMethod` | Concrete classes extending `Illuminate\Foundation\Http\FormRequest` | If the class neither declares nor inherits a `toDto()` method, error. Abstract intermediates (`BaseFormRequest`) are exempt. Hand Actions a typed DTO, not `$request->validated()` arrays. Doctrine: ADR-0012 (FormRequest → DTO Flow). |
 | `EnforceCurrentUserAttributeRule` | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` | `Request::user()` / `Auth::user()` / `auth()->user()` calls inside `App\Http\Controllers\*` classes (namespace prefix, incl. sub-namespaces; configurable via `controllerNamespacePrefixes`) | Use `#[\Illuminate\Container\Attributes\CurrentUser] User $user` on the method parameter. Scope is decided by namespace, not class ancestry — a base-less `final` controller in `App\Http\Controllers` fires; FormRequests (`App\Http\Requests`), middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs, and console commands are silent because their namespaces do not start with the controller prefix (container-attribute injection does not apply to FormRequest methods regardless). |
+| `EnforceCurrentUserAttributeRule` | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` | `Request::user()` / `Auth::user()` / `auth()->user()` calls inside `App\Http\Controllers\*` classes (namespace prefix, incl. sub-namespaces) | Use `#[\Illuminate\Container\Attributes\CurrentUser] User $user` on the method parameter. Scope is decided by namespace, not class ancestry — a base-less `final` controller in `App\Http\Controllers` fires; FormRequests (`App\Http\Requests`), middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs, and console commands are silent because their namespaces do not start with the controller prefix (container-attribute injection does not apply to FormRequest methods regardless). |
+| `EnforceAuditModelProtectionsRule` | `enforceAuditModelProtections.hasFactoryForbidden` / `.softDeletesForbidden` / `.updatedAtNotDisabled` | Eloquent models recognised as audit records by SHAPE — short name ends with a configured suffix (default `AuditLog`) OR FQCN sits under a configured namespace (default `App\Models\Audit`) | Three append-only protections, each firing independently: using `HasFactory` (a factory is a direct-insert path bypassing the hash-chained writer), using `SoftDeletes` (audit rows are never removed), or not disabling `updated_at` (an audit row is written once and never mutated — declare `public const UPDATED_AT = null;`) is an error. Discovery is by pattern, never a hand-maintained class list — a denylist inversion, so a newly-added audit model cannot escape the protections by omission. Abstract intermediates are exempt (their concrete leaves carry inherited violations). Non-model classes named `*AuditLog` are excluded by the Eloquent `Model` type gate. Doctrine: ADR-0001 §Append-only. |
 
 ### `EnforceActionTransactionsRule` — write-method list
 
@@ -178,6 +180,52 @@ parameters:
 ```
 
 All three rules then flag inline Eloquent mutations, `Request::user()` / `Auth::user()` / `auth()->user()` calls, and `JsonResource`-wrapped JSON responses in those namespaces too. Prefixes are *config* — no consumer namespace is ever hardcoded in a rule body, preserving the "never by name inside the rule" convention. (Each backslash is single — NEON only unescapes `\\` inside double quotes; single-quoted `\\` stays two literal characters and would match nothing.)
+### `EnforceAuditModelProtectionsRule` — configurable discovery (denylist inversion)
+
+This rule is the **inverse** of an allowlist arch test. The Pest predecessors it supersedes (kendo `tests/Arch/AuditTest.php`, entreezuil `tests/Architecture/AuditTest.php`, ublgenie `tests/Arch/AuditTest.php`) enumerate audit models — by a hand-maintained FQCN list or a namespace directory sweep — and assert each lacks `HasFactory` / `SoftDeletes` / a mutable `updated_at`. A hand-maintained list silently exempts every future audit model added outside it. This rule scans for the audit-model *shape* and flags any that lacks a protection, so nothing escapes by being forgotten.
+
+**Discovery** — an Eloquent `Model` subclass is an audit record if its short name ends with any configured suffix **OR** its FQCN sits under any configured namespace prefix. The two signals are a union covering both fleet strategies. Defaults:
+
+```neon
+parameters:
+    auditModelNamespacePrefixes:
+        - 'App\Models\Audit'   # entreezuil / ublgenie convention (incl. channel logs: AuthEventLog, SmsEventLog)
+    auditModelNameSuffixes:
+        - 'AuditLog'           # kendo *AuditLog models, scattered across App\Models + App\Models\Central
+```
+
+A consumer whose audit models use a different family widens either list — for example, to bring a kendo-style channel-log pair (`AiOutboundLog`, `AiMcpLog`) into scope alongside the `*AuditLog` entity models:
+
+```neon
+parameters:
+    auditModelNameSuffixes:
+        - 'AuditLog'
+        - 'OutboundLog'
+        - 'McpLog'
+```
+
+Configuration expresses **patterns**, never enumerated class names — no consumer class name is ever hardcoded in the rule body, and a non-model class named `*AuditLog` (a DTO, a service) is excluded by the Eloquent `Model` type gate.
+
+**Protections** — three checks fire independently (a model missing several yields several errors at the class line):
+
+| Identifier | Fires when |
+|---|---|
+| `enforceAuditModelProtections.hasFactoryForbidden` | the model uses `HasFactory` (transitively — an inherited trait on an abstract base counts). A factory is a direct-insert path that bypasses the hash-chained audit writer. |
+| `enforceAuditModelProtections.softDeletesForbidden` | the model uses `SoftDeletes`. Audit rows are append-only and never removed. |
+| `enforceAuditModelProtections.updatedAtNotDisabled` | the model does not declare `public const UPDATED_AT = null`. The framework `Model` base sets `UPDATED_AT = 'updated_at'`, so a model that never overrides it keeps a mutable timestamp — an audit row is written once and never mutated. |
+
+Abstract intermediates (`abstract class BaseAuditLog`) are exempt — the concrete leaf carries any inherited violation.
+
+**Migrating off the local arch test** — move the arch test's model-discovery convention into the parameters above, delete the local `HasFactory` / `SoftDeletes` / `updated_at` model checks, and the package rule becomes the single enforcement authority. (The append-only `update()` / `delete()` ban on `*Log` classes is a separate concern already covered by `LogRule`.) A genuine non-audit false positive — e.g. a `$timestamps = false` model with no `UPDATED_AT = null` — is suppressed per-file via `ignoreErrors` keyed on the specific identifier, with a rationale comment:
+
+```neon
+parameters:
+    ignoreErrors:
+        -
+            identifier: enforceAuditModelProtections.updatedAtNotDisabled
+            # timestamps disabled entirely; no updated_at column to null out
+            path: app/Models/Audit/SomeTimestampFreeLog.php
+```
 
 ### Action namespace assumption
 
