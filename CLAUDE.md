@@ -33,6 +33,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 | `EnforceResourceDataValidatorOptInRule` | ADR-0009 §EAGER_LOAD validator opt-in | `enforceResourceDataValidatorOptIn.missingValidatorCall` |
 | `EnforceFormRequestToDtoRule` | ADR-0012 §FormRequest → DTO Flow | `enforceFormRequestToDto.missingToDtoMethod` |
 | `EnforceCurrentUserAttributeRule` | War-room §Explicit over implicit | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` |
+| `EnforceAuditModelProtectionsRule` | ADR-0001 §Append-only | `enforceAuditModelProtections.hasFactoryForbidden` / `.softDeletesForbidden` / `.updatedAtNotDisabled` (denylist-inversion; discovers audit models by shape — `auditModelNameSuffixes` default `AuditLog` OR `auditModelNamespacePrefixes` default `App\Models\Audit` — and flags `HasFactory` / `SoftDeletes` / missing `const UPDATED_AT = null`. `[Unreleased]`) |
 | `ConnectionTransactionReturnTypeExtension` | (type extension, no rule) | — |
 
 Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snapshot-on-Retry Safety) was the first Phase 2 addition, promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). `EnforceResourceDataValidatorOptInRule` (ADR-0009 §EAGER_LOAD validator opt-in) is the second Phase 2 addition, promoted from kendo PR #1084 under war-room enforcement queue #55. `EnforceFormRequestToDtoRule` (ADR-0012) is the third Phase 2 addition, promoted from entreezuil's `tests/Arch/FormRequestsTest.php` under the same queue #55 (instance 2). `EnforceExplicitHydrationRule` (ADR-0019) is the next Phase 2 candidate.
@@ -93,7 +94,7 @@ SemVer per ADR-0021:
 
 > Each bullet's rule→doctrine mapping is authoritative per the rule class's docblock "Doctrine source" line (ADR-0021 §Doctrine source in docblock).
 
-- ADR-0001 (Audit Logging) — package distributes `LogRule` + `LogBuilderTruncateRule` (both §Append-only) + `EnforceAuditSnapshotOnRetryRule` (§Snapshot-on-Retry Safety); does not itself maintain audit logs.
+- ADR-0001 (Audit Logging) — package distributes `LogRule` + `LogBuilderTruncateRule` (both §Append-only), `EnforceAuditSnapshotOnRetryRule` (§Snapshot-on-Retry Safety), and `EnforceAuditModelProtectionsRule` (§Append-only — flags audit-log models, discovered by shape, that use `HasFactory` / `SoftDeletes` or fail to disable `updated_at`; a denylist inversion of the consumer-side audit-model arch tests, `[Unreleased]`); does not itself maintain audit logs.
 - ADR-0002 (Cascade Deletion) — no application surface.
 - ADR-0009 (Unified ResourceData Pattern) — package distributes `EnforceResourceDataValidatorOptInRule` (§EAGER_LOAD validator opt-in, shipped in v0.3.0) and `ForbidResourceWrappedInJsonResponseRule` (resources own their own response serialization — bans wrapping a `JsonResource` in `response()->json()` / `new JsonResponse()` inside controllers, `[Unreleased]`); does not itself ship API resources.
 - ADR-0011 (Action Class Architecture) — package distributes `EnforceActionTransactionsRule` + `ForbidDatabaseManagerInActionsRule`, and `ForbidEloquentMutationInControllersRule` (ADR-0011 + ADR-0019, `[Unreleased]`); itself has no Actions.
