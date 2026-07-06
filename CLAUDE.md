@@ -34,6 +34,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 | `EnforceFormRequestToDtoRule` | ADR-0012 §FormRequest → DTO Flow | `enforceFormRequestToDto.missingToDtoMethod` |
 | `EnforceCurrentUserAttributeRule` | War-room §Explicit over implicit | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` |
 | `EnforceAuditModelProtectionsRule` | ADR-0001 §Append-only | `enforceAuditModelProtections.hasFactoryForbidden` / `.softDeletesForbidden` / `.updatedAtNotDisabled` (denylist-inversion; discovers audit models by shape — `auditModelNameSuffixes` default `AuditLog` OR `auditModelNamespacePrefixes` default `App\Models\Audit` — and flags `HasFactory` / `SoftDeletes` / missing `const UPDATED_AT = null`. `[Unreleased]`) |
+| `EnforceActionResultDtoRule` | ADR-0020 + ADR-0011 | `enforceActionResultDto.arrayReturnFromExecute` (signature-only; flags an `array` / `?array` / `array\|Dto` union / `iterable` native return type on `App\Actions\*` `execute()`. Phpdoc-only `@return array{...}` is a deliberate miss; no `list<T>` carve-out. Seed kendo PR #1653. `[Unreleased]`) |
 | `ConnectionTransactionReturnTypeExtension` | (type extension, no rule) | — |
 
 Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snapshot-on-Retry Safety) was the first Phase 2 addition, promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). `EnforceResourceDataValidatorOptInRule` (ADR-0009 §EAGER_LOAD validator opt-in) is the second Phase 2 addition, promoted from kendo PR #1084 under war-room enforcement queue #55. `EnforceFormRequestToDtoRule` (ADR-0012) is the third Phase 2 addition, promoted from entreezuil's `tests/Arch/FormRequestsTest.php` under the same queue #55 (instance 2). `EnforceExplicitHydrationRule` (ADR-0019) is the next Phase 2 candidate.
@@ -103,7 +104,7 @@ SemVer per ADR-0021:
 - ADR-0016 (Config Attribute Injection) — no Laravel container surface.
 - ADR-0017 (Page Integration Tests) — no pages.
 - ADR-0019 (Explicit Model Hydration) — package distributes `ForbidEloquentMutationInControllersRule` (ADR-0011 + ADR-0019, `[Unreleased]`) covering the controller mutation surface; itself has no models. (The earlier Phase-2 `EnforceExplicitHydrationRule` candidate has been subsumed by the controller-mutation rule for the controller surface; a broader application-wide hydration rule remains a future candidate.)
-- ADR-0020 (Input/Result DTO Split) — no DTOs.
+- ADR-0020 (Input/Result DTO Split) — package distributes `EnforceActionResultDtoRule` (bans an `array` native return type on `App\Actions\*` `execute()` — a compound result is a Result DTO, not a bag of string keys; ADR-0020 + ADR-0011, `[Unreleased]`); itself has no DTOs.
 - ADR-0024 (Automated External Provisioning) — no provisioning surface.
 - ADR-0029 (Audit Row Durability Contract) — package distributes `EnforceAuditTransactionScopeRule` (§Decision rule 3 — flags non-transactional state mutations inside `transaction(...)` closures in `App\Actions\*`, `[Unreleased]`); itself maintains no audit rows.
 
