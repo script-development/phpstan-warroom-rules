@@ -13,6 +13,12 @@ use ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceActionResultDtoRule;
  */
 final class EnforceActionResultDtoRuleTest extends RuleTestCase
 {
+    /**
+     * Override hook: when set, `getRule()` returns this instance instead of the
+     * default. Lets the container-resolved test swap in the NEON-wired rule.
+     */
+    private ?Rule $ruleOverride = null;
+
     public function testFlagsBareArrayReturn(): void
     {
         $this->analyse(
@@ -129,8 +135,45 @@ final class EnforceActionResultDtoRuleTest extends RuleTestCase
         );
     }
 
+    public function testRuleResolvesFromExtensionNeonAndFires(): void
+    {
+        // End-to-end pin on the extension.neon registration path consumers
+        // actually use: resolve the rule from the PHPStan container so the
+        // shipped `class` + `tags: [phpstan.rules.rule]` wiring is exercised —
+        // NOT the PHP constructor. A dropped/mistyped `tags` line would silently
+        // un-register the rule while self-CI (which builds it via `new`) stays
+        // green — the NEON no-op class the package's history records (the v0.3
+        // EnforceResourceDataValidatorOptInRule double-backslash defect). The
+        // rule takes no constructor args, so there is no %parameter% quoting to
+        // regress, but the registration itself must still be pinned.
+        $this->ruleOverride = self::getContainer()->getByType(EnforceActionResultDtoRule::class);
+
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ActionResultDto/BareArrayReturn.php'],
+            [
+                [
+                    'Action BareArrayReturn::execute() must not return array — return a Result DTO instead (ADR-0020 Input/Result DTO Split).',
+                    15,
+                ],
+            ],
+        );
+    }
+
+    /**
+     * Load the shipped extension.neon so the container-resolved test can pull
+     * the rule out through its actual registration.
+     *
+     * @return array<int, string>
+     */
+    public static function getAdditionalConfigFiles(): array
+    {
+        return [
+            __DIR__ . '/../../extension.neon',
+        ];
+    }
+
     protected function getRule(): Rule
     {
-        return new EnforceActionResultDtoRule;
+        return $this->ruleOverride ?? new EnforceActionResultDtoRule;
     }
 }

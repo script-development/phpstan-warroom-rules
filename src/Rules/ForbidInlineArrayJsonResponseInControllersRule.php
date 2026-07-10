@@ -88,6 +88,29 @@ use function str_starts_with;
  *     string, not an array payload; a separate (rare) idiom left uncovered.
  *   - Non-array payloads of any kind (the type gate passes them).
  *
+ * Rollout position — the rule discovers violations by PAYLOAD SHAPE, and does
+ * NOT distinguish a domain-resource shape (the seed: `{secret, qr_code}`,
+ * `{enabled, has_recovery_codes}`) from a single-key status/ack payload
+ * (`['message' => 'Webhook received']`, `['message' => 'Invalid or expired
+ * exchange token.']`). Both are array payloads; both fire. This is a deliberate
+ * disposition, not an oversight: the noise is accepted as the cost of the
+ * discovery-by-shape approach (consistent with the denylist-inversion posture of
+ * `EnforceAuditModelProtectionsRule`). The two escape hatches considered were
+ * rejected:
+ *   - a key-count threshold ("fire only above N keys") punches a false-negative
+ *     hole — a genuine single-field resource (`{token: ...}`) would silently pass;
+ *   - an ack/error-shape allowlist is territory-specific config, which the
+ *     package convention forbids hardcoding in a rule body (ADR-0021
+ *     §No territory-specific exceptions).
+ * Both violation classes remediate the same way: a dedicated fleet-wide
+ * `MessageResponse` / `ErrorResponse` `JsonResponse` subclass (cheap, reusable —
+ * the sanctioned escape hatch a subclass already is), or baseline-suppress the
+ * throwaway acks during the standing SUPPRESS-ONLY / baseline-absorb rollout.
+ * Consumers sizing adoption should SEPARATE the ack-noise class from the
+ * resource-shape class — the raw call-site count (kendo: ~33 sites / 18
+ * controllers) conflates the two and overstates the genuine ADR-0009
+ * remediation surface.
+ *
  * Controller-namespace gate mirrors `ForbidResourceWrappedInJsonResponseRule` /
  * `ForbidEloquentMutationInControllersRule` / `EnforceCurrentUserAttributeRule`:
  * the class namespace must start with ANY configured prefix (default
