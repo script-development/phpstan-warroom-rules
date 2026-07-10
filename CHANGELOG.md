@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-10
+
 **Release-as-a-whole: candidate MAJOR** — two entries. The shared optional `controllerNamespacePrefixes` parameter is a backward-compatible MINOR on its own (default reproduces the prior hardcoded gate byte-for-byte — see its bullet); the new `EnforceAuditModelProtectionsRule` is the candidate-MAJOR driver (it surfaces new errors in any consumer with an unprotected audit model — see its bullet), so the release as a whole classifies as candidate MAJOR. Per the pre-1.0 caret convention `^0.6` excludes the next minor, so tagging auto-adopts nobody — each consumer adopts on its own pin-bump PR. Seeds: war-room WR-0283 / WR-0275 DayUpdate pilot (controller prefixes); kendo Quartermaster M13 F-1 + war-room enforcement queue #46 (audit rule).
 
 ### Added
