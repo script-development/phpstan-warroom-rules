@@ -63,6 +63,9 @@ parametersSchema:
 
 services:
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceActionResultDtoRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceActionTransactionsRule
         tags: [phpstan.rules.rule]
     -
@@ -76,6 +79,11 @@ services:
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidResourceWrappedInJsonResponseRule
+        arguments:
+            controllerNamespacePrefixes: %controllerNamespacePrefixes%
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidInlineArrayJsonResponseInControllersRule
         arguments:
             controllerNamespacePrefixes: %controllerNamespacePrefixes%
         tags: [phpstan.rules.rule]
