@@ -61,3 +61,18 @@ jobs:
                   path: build/logs/infection.*
                   retention-days: 14
                   if-no-files-found: ignore
+
+    # Aggregate tracked by the town-crier trial (TC-0069); intended as the single
+    # required check (the matrix legs stop being individually required). A `needs`
+    # on a matrix job waits for every leg.
+    ci-passed:
+        name: ci-passed
+        runs-on: ubuntu-latest
+        needs: [check]
+        if: always()
+        steps:
+            - name: Verify all matrix legs passed
+              if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+              run: |
+                  echo "One or more CI lanes did not pass."
+                  exit 1
