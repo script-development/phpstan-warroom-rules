@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-07-13
+
 **Release-as-a-whole: candidate MAJOR** — two entries. Both `EnforceActionResultDtoRule` (war-room enforcement queue #136) and `ForbidInlineArrayJsonResponseInControllersRule` (queue #137) surface new errors in already-clean consumer code (an `array`-returning `execute()`; an inline-array `JsonResponse` in a controller — see their bullets), so the release as a whole classifies as candidate MAJOR. Per the pre-1.0 caret convention `^0.7` excludes the next minor, so tagging auto-adopts nobody — each consumer adopts on its own pin-bump PR. Seed: kendo PR #1653 (KD-0220 central-user 2FA — queue #136 + #137).
 
 ### Added
