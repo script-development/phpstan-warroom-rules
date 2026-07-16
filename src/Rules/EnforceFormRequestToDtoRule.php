@@ -10,6 +10,7 @@ use PhpParser\Node\Stmt\Class_;
 use PHPStan\Analyser\Scope;
 use PHPStan\Node\InClassNode;
 use PHPStan\Reflection\ClassReflection;
+use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 
@@ -99,6 +100,7 @@ final class EnforceFormRequestToDtoRule implements Rule
      *                                    supplied only from consumer config
      */
     public function __construct(
+        private ReflectionProvider $reflectionProvider,
         private string $formRequestBaseClass = FormRequest::class,
         private array $exemptClasses = [],
     ) {}
@@ -157,9 +159,26 @@ final class EnforceFormRequestToDtoRule implements Rule
      * abstract layers and namespace-relative `extends` clauses. Short-name
      * collisions in unrelated namespaces do not match, and the base class
      * itself is not a subclass of itself.
+     *
+     * Resolves the configured base FQCN to a `ClassReflection` and calls
+     * `isSubclassOfClass()` (the non-deprecated form; `isSubclassOf(string)`
+     * is `@deprecated` in PHPStan 2.2+ and removed in 3.x). When the base
+     * class is absent from the analysed tree (`hasClass()` false) the method
+     * returns `false` — reproducing the deprecated string form's own no-op
+     * exactly (its body is `if (!hasClass($fqcn)) return false;`). This is the
+     * load-bearing "consumers analysing non-Laravel trees are unaffected"
+     * guarantee: a tree with no `Illuminate\Foundation\Http\FormRequest`
+     * (the default base is stub-only, not a standalone Composer package)
+     * never fires the rule.
      */
     private function extendsFormRequestBase(ClassReflection $classReflection): bool
     {
-        return $classReflection->isSubclassOf($this->formRequestBaseClass);
+        if (!$this->reflectionProvider->hasClass($this->formRequestBaseClass)) {
+            return false;
+        }
+
+        return $classReflection->isSubclassOfClass(
+            $this->reflectionProvider->getClass($this->formRequestBaseClass),
+        );
     }
 }

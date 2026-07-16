@@ -231,7 +231,10 @@ final class EnforceAuditModelProtectionsRuleTest extends RuleTestCase
         // Configure `auditModelNameSuffixes: ['Trail']` — the model now matches
         // and its HasFactory violation fires. Proves the suffix parameter is
         // honoured end-to-end (default namespace prefixes retained).
-        $this->ruleOverride = new EnforceAuditModelProtectionsRule(auditModelNameSuffixes: ['Trail']);
+        $this->ruleOverride = new EnforceAuditModelProtectionsRule(
+            $this->createReflectionProvider(),
+            auditModelNameSuffixes: ['Trail'],
+        );
 
         $this->analyse(
             [__DIR__ . '/../Fixtures/AuditModelProtections/LifecycleTrail.php'],
@@ -258,7 +261,10 @@ final class EnforceAuditModelProtectionsRuleTest extends RuleTestCase
         // Configure `auditModelNamespacePrefixes: ['App\Ledger']` — the model now
         // matches and its HasFactory violation fires. Proves the namespace-prefix
         // parameter is honoured end-to-end (default suffixes retained).
-        $this->ruleOverride = new EnforceAuditModelProtectionsRule(auditModelNamespacePrefixes: ['App\Ledger']);
+        $this->ruleOverride = new EnforceAuditModelProtectionsRule(
+            $this->createReflectionProvider(),
+            auditModelNamespacePrefixes: ['App\Ledger'],
+        );
 
         $this->analyse(
             [__DIR__ . '/../Fixtures/AuditModelProtections/PaymentRecord.php'],
@@ -306,6 +312,25 @@ final class EnforceAuditModelProtectionsRuleTest extends RuleTestCase
         );
     }
 
+    public function testBaseModelResolutionIsNoOpForNonModelClass(): void
+    {
+        // The unknown-base no-op path for the migrated `isSubclassOfClass()`
+        // resolution (queue #112). `App\Support\FakeAuditLog` matches the
+        // `AuditLog` suffix signal but is NOT a subtype of Eloquent `Model`, so
+        // the migrated Model-resolution gate resolves `Model` (always present —
+        // this package requires `illuminate/database`), finds FakeAuditLog is
+        // not a subclass, and silently no-ops — reproducing the deprecated
+        // `isSubclassOf(Model::class)` false return exactly. The complementary
+        // `hasClass(Model::class)` false sub-branch (a genuinely Model-absent
+        // tree) mirrors the deprecated method body 1:1 but is unreachable in
+        // this package's analysis env because `Model` is a hard vendor
+        // dependency; the reachable no-op is this not-a-subclass path.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AuditModelProtections/FakeAuditLog.php'],
+            [],
+        );
+    }
+
     /**
      * Load the shipped extension.neon so testRuleResolvesFromExtensionNeonAndFires
      * can pull the rule out of the container with its NEON-configured discovery
@@ -322,6 +347,6 @@ final class EnforceAuditModelProtectionsRuleTest extends RuleTestCase
 
     protected function getRule(): Rule
     {
-        return $this->ruleOverride ?? new EnforceAuditModelProtectionsRule;
+        return $this->ruleOverride ?? new EnforceAuditModelProtectionsRule($this->createReflectionProvider());
     }
 }

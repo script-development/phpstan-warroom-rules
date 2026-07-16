@@ -173,7 +173,10 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
         // Re-run the same fixture with the parameter overridden to point at
         // the alternative base FQCN — must now fire. Proves the
         // `formRequestBaseClass` parameter is honored end-to-end.
-        $this->ruleOverride = new EnforceFormRequestToDtoRule('App\Unrelated\FormRequest');
+        $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            $this->createReflectionProvider(),
+            'App\Unrelated\FormRequest',
+        );
 
         $this->analyse(
             [__DIR__ . '/../Fixtures/FormRequestToDto/UnrelatedShortNameCollision.php'],
@@ -190,7 +193,10 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
     {
         // Regression: the new exemptClasses param defaults to empty; default
         // behaviour must be unchanged (violator still fires).
-        $this->ruleOverride = new EnforceFormRequestToDtoRule(exemptClasses: []);
+        $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            $this->createReflectionProvider(),
+            exemptClasses: [],
+        );
 
         $this->analyse(
             [
@@ -211,6 +217,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
         // The violator's exact FQCN is in the exempt list — the class-keyed
         // consumer exemption path. No error.
         $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            $this->createReflectionProvider(),
             exemptClasses: ['App\Http\Requests\ViolatorRequest'],
         );
 
@@ -229,6 +236,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
         // analysed in the same run — the exemption is precise, not a global
         // off-switch.
         $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            $this->createReflectionProvider(),
             exemptClasses: ['App\Http\Requests\ViolatorRequest'],
         );
 
@@ -253,6 +261,7 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
         // unrelated-namespace class of the same short name exempts the real
         // `App\Http\Requests\ViolatorRequest` — it must still fire.
         $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            $this->createReflectionProvider(),
             exemptClasses: ['ViolatorRequest', 'App\Other\ViolatorRequest'],
         );
 
@@ -267,6 +276,38 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
                     9,
                 ],
             ],
+        );
+    }
+
+    public function testBaseClassAbsentFromTreeIsNoOp(): void
+    {
+        // The unknown-base-class no-op (queue #112). The rule is configured with
+        // a base FQCN that is absent from every analysed tree. The violator
+        // fixture structurally extends the (stubbed) real FormRequest base, but
+        // because the CONFIGURED base `App\Absent\NonExistentFormRequestBase`
+        // does not exist, the migrated `isSubclassOfClass()` resolution path
+        // takes the `hasClass()`-false branch and silently no-ops — reproducing
+        // the deprecated `isSubclassOf(string)` false return exactly (its body:
+        // `if (!hasClass($fqcn)) return false;`). This is the load-bearing
+        // "consumers analysing non-Laravel trees are unaffected" guarantee: a
+        // tree lacking the configured base never fires the rule.
+        //
+        // A bogus-base FQCN is used rather than omitting the framework stub:
+        // RuleTestCase analyses share ONE PHP process, so a stub required by an
+        // earlier test leaks `Illuminate\Foundation\Http\FormRequest` into
+        // runtime reflection for every later test, making "omit the stub"
+        // order-dependent and unsound. An always-absent FQCN is deterministic.
+        $this->ruleOverride = new EnforceFormRequestToDtoRule(
+            $this->createReflectionProvider(),
+            'App\Absent\NonExistentFormRequestBase',
+        );
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FormRequestToDto/_stubs.php',
+                __DIR__ . '/../Fixtures/FormRequestToDto/ViolatorRequest.php',
+            ],
+            [],
         );
     }
 
@@ -286,6 +327,6 @@ final class EnforceFormRequestToDtoRuleTest extends RuleTestCase
 
     protected function getRule(): Rule
     {
-        return $this->ruleOverride ?? new EnforceFormRequestToDtoRule;
+        return $this->ruleOverride ?? new EnforceFormRequestToDtoRule($this->createReflectionProvider());
     }
 }

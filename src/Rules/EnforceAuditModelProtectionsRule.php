@@ -12,6 +12,7 @@ use PhpParser\Node\Stmt\Class_;
 use PHPStan\Analyser\Scope;
 use PHPStan\Node\InClassNode;
 use PHPStan\Reflection\ClassReflection;
+use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
@@ -97,6 +98,7 @@ final class EnforceAuditModelProtectionsRule implements Rule
      *                                                  `AuditLog`)
      */
     public function __construct(
+        private ReflectionProvider $reflectionProvider,
         private array $auditModelNamespacePrefixes = ['App\Models\Audit'],
         private array $auditModelNameSuffixes = ['AuditLog'],
     ) {}
@@ -127,7 +129,23 @@ final class EnforceAuditModelProtectionsRule implements Rule
         // Type gate: a class merely NAMED like an audit log (a DTO, a service,
         // an enum) is not an audit model. Only Eloquent models carry the
         // trait / timestamp surface these protections govern.
-        if (!$classReflection->isSubclassOf(Model::class)) {
+        //
+        // Resolves `Model` to a `ClassReflection` and calls
+        // `isSubclassOfClass()` (the non-deprecated form; `isSubclassOf(string)`
+        // is `@deprecated` in PHPStan 2.2+ and removed in 3.x). The two guards
+        // reproduce the deprecated string form's body exactly
+        // (`if (!hasClass($fqcn)) return false; return isSubclassOfClass(...)`),
+        // preserving the no-op: a `Model`-absent tree, or a class that is not a
+        // Model subtype, silently does not fire (the non-Laravel-consumer
+        // guarantee). The `hasClass` guard is belt-and-suspenders — this
+        // package requires `illuminate/database`, so `Model` is resolvable in
+        // every real consumer env, and the reachable no-op is the
+        // not-a-subclass branch below.
+        if (!$this->reflectionProvider->hasClass(Model::class)) {
+            return [];
+        }
+
+        if (!$classReflection->isSubclassOfClass($this->reflectionProvider->getClass(Model::class))) {
             return [];
         }
 
