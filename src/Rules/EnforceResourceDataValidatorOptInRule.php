@@ -15,6 +15,7 @@ use PhpParser\Node\Stmt\ClassMethod;
 use PHPStan\Analyser\Scope;
 use PHPStan\Node\InClassNode;
 use PHPStan\Reflection\ClassReflection;
+use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 
@@ -76,6 +77,7 @@ final class EnforceResourceDataValidatorOptInRule implements Rule
     private const string VALIDATOR_METHOD_NAME = 'validateRelationsLoaded';
 
     public function __construct(
+        private ReflectionProvider $reflectionProvider,
         private string $resourceDataBaseClass = 'App\Http\Resources\ResourceData',
     ) {}
 
@@ -129,6 +131,16 @@ final class EnforceResourceDataValidatorOptInRule implements Rule
      * configured base FQCN. Uses PHPStan reflection — handles intermediate
      * abstract layers and namespace-relative `extends` clauses. Short-name
      * collisions in unrelated namespaces do not match.
+     *
+     * Resolves the configured base FQCN to a `ClassReflection` and calls
+     * `isSubclassOfClass()` (the non-deprecated form; `isSubclassOf(string)`
+     * is `@deprecated` in PHPStan 2.2+ and removed in 3.x). When the base
+     * class is absent from the analysed tree (`hasClass()` false) the method
+     * returns `false` — reproducing the deprecated string form's own no-op
+     * exactly (its body is `if (!hasClass($fqcn)) return false;`). This is the
+     * load-bearing "consumers analysing non-Laravel trees are unaffected"
+     * guarantee: a tree with no `App\Http\Resources\ResourceData` never fires
+     * the rule.
      */
     private function extendsResourceDataBase(ClassReflection $classReflection): bool
     {
@@ -136,7 +148,13 @@ final class EnforceResourceDataValidatorOptInRule implements Rule
             return false;
         }
 
-        return $classReflection->isSubclassOf($this->resourceDataBaseClass);
+        if (!$this->reflectionProvider->hasClass($this->resourceDataBaseClass)) {
+            return false;
+        }
+
+        return $classReflection->isSubclassOfClass(
+            $this->reflectionProvider->getClass($this->resourceDataBaseClass),
+        );
     }
 
     /**

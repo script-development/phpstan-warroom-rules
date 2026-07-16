@@ -123,7 +123,10 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
         // Re-run the same fixture with the parameter overridden to point at
         // the alternative base FQCN — must now fire. Proves the
         // `resourceDataBaseClass` parameter is honored end-to-end.
-        $this->ruleOverride = new EnforceResourceDataValidatorOptInRule('App\Unrelated\ResourceData');
+        $this->ruleOverride = new EnforceResourceDataValidatorOptInRule(
+            $this->createReflectionProvider(),
+            'App\Unrelated\ResourceData',
+        );
 
         $this->analyse(
             [__DIR__ . '/../Fixtures/ResourceDataValidatorOptIn/UnrelatedShortNameCollision.php'],
@@ -161,6 +164,38 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
         );
     }
 
+    public function testBaseClassAbsentFromTreeIsNoOp(): void
+    {
+        // The unknown-base-class no-op (queue #112). The rule is configured with
+        // a base FQCN that is absent from every analysed tree. The violator
+        // fixture structurally extends the (stubbed) real ResourceData base, but
+        // because the CONFIGURED base `App\Absent\NonExistentResourceDataBase`
+        // does not exist, the migrated `isSubclassOfClass()` resolution path
+        // takes the `hasClass()`-false branch and silently no-ops — reproducing
+        // the deprecated `isSubclassOf(string)` false return exactly (its body:
+        // `if (!hasClass($fqcn)) return false;`). This is the load-bearing
+        // "consumers analysing non-Laravel trees are unaffected" guarantee: a
+        // tree lacking the configured base never fires the rule.
+        //
+        // A bogus-base FQCN is used rather than omitting the stub: RuleTestCase
+        // analyses share ONE PHP process, so a stub required by an earlier test
+        // leaks `App\Http\Resources\ResourceData` into runtime reflection for
+        // every later test, making "omit the stub" order-dependent and unsound.
+        // An always-absent FQCN is deterministic.
+        $this->ruleOverride = new EnforceResourceDataValidatorOptInRule(
+            $this->createReflectionProvider(),
+            'App\Absent\NonExistentResourceDataBase',
+        );
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/ResourceDataValidatorOptIn/_stubs.php',
+                __DIR__ . '/../Fixtures/ResourceDataValidatorOptIn/ViolatorResource.php',
+            ],
+            [],
+        );
+    }
+
     /**
      * Load the shipped extension.neon so testRuleResolvesFromExtensionNeonAndFires
      * can pull the rule out of the container with its NEON-configured
@@ -177,6 +212,6 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
 
     protected function getRule(): Rule
     {
-        return $this->ruleOverride ?? new EnforceResourceDataValidatorOptInRule;
+        return $this->ruleOverride ?? new EnforceResourceDataValidatorOptInRule($this->createReflectionProvider());
     }
 }
