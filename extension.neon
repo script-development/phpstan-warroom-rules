@@ -127,5 +127,8 @@ services:
             auditModelNameSuffixes: %auditModelNameSuffixes%
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidUntimedHttpClientRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
         tags: [phpstan.broker.dynamicMethodReturnTypeExtension]
