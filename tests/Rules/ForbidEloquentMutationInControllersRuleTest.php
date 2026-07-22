@@ -192,6 +192,62 @@ final class ForbidEloquentMutationInControllersRuleTest extends RuleTestCase
         );
     }
 
+    public function testViolationLocalVarNewSave(): void
+    {
+        // Blind-spot regression: receiver born inside the method body
+        // (`$user = new User; $user->save();`). The prior `Class_`-scope walk
+        // resolved `$user` to `mixed` and never fired.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/ViolationLocalVarNewSave.php'],
+            [
+                [
+                    $this->message('App\Http\Controllers\ViolationLocalVarNewSave', 'save', 'User'),
+                    17,
+                ],
+            ],
+        );
+    }
+
+    public function testViolationLocalVarFirstOrFailDelete(): void
+    {
+        // Blind-spot regression: `Post::where(...)->firstOrFail()` hydrates a
+        // Post into a method-local var, then `$post->delete()`.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/ViolationLocalVarFirstOrFailDelete.php'],
+            [
+                [
+                    $this->message('App\Http\Controllers\ViolationLocalVarFirstOrFailDelete', 'delete', 'Post'),
+                    20,
+                ],
+            ],
+        );
+    }
+
+    public function testViolationLocalVarBuilderUpdate(): void
+    {
+        // Blind-spot regression: a Builder held in a method-local var, distinct
+        // from the inline `User::query()->...->update()` chain.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/ViolationLocalVarBuilderUpdate.php'],
+            [
+                [
+                    $this->message('App\Http\Controllers\ViolationLocalVarBuilderUpdate', 'update', 'Builder'),
+                    19,
+                ],
+            ],
+        );
+    }
+
+    public function testCompliantLocalVarNonModel(): void
+    {
+        // Type gate still discriminates under flow scope: a local var of a
+        // NON-Model class calling `save()` / `delete()` stays clean.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/CompliantLocalVarNonModel.php'],
+            [],
+        );
+    }
+
     public function testSubNamespacedControllerIsCleanUnderDefaultConfig(): void
     {
         // emmie's `App\Http\Client\Controllers` namespace does NOT start with
