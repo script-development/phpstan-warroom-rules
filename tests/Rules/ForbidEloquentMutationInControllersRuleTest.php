@@ -248,6 +248,38 @@ final class ForbidEloquentMutationInControllersRuleTest extends RuleTestCase
         );
     }
 
+    public function testViolationNullsafeDelete(): void
+    {
+        // `NullsafeMethodCall` gap: `$post?->delete()` on a `?Post` receiver.
+        // The nullsafe branch + `removeNull` gate fires where a MethodCall-only
+        // match (or a naive branch without null-strip) would miss it.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/ViolationNullsafeDelete.php'],
+            [
+                [
+                    $this->message('App\Http\Controllers\ViolationNullsafeDelete', 'delete', 'Post'),
+                    18,
+                ],
+            ],
+        );
+    }
+
+    public function testViolationInTraitFile(): void
+    {
+        // Trait coverage: a mutation inside a trait declared in a controllers
+        // namespace fires (per-node registration reaches trait bodies), and the
+        // message names the USING class.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/ViolationInTraitFile.php'],
+            [
+                [
+                    $this->message('App\Http\Controllers\ViolationInTraitFile', 'save', 'User'),
+                    18,
+                ],
+            ],
+        );
+    }
+
     public function testSubNamespacedControllerIsCleanUnderDefaultConfig(): void
     {
         // emmie's `App\Http\Client\Controllers` namespace does NOT start with

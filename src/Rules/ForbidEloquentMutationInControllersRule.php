@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Model;
 use PhpParser\Node;
 use PhpParser\Node\Expr\CallLike;
 use PhpParser\Node\Expr\MethodCall;
+use PhpParser\Node\Expr\NullsafeMethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
@@ -18,6 +19,7 @@ use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
+use PHPStan\Type\TypeCombinator;
 
 use function in_array;
 use function mb_strrpos;
@@ -63,13 +65,20 @@ use function str_starts_with;
  *      opts them in by adding the prefix to `controllerNamespacePrefixes` in
  *      its `phpstan.neon` — mirrors the `formRequestBaseClass` /
  *      `resourceDataBaseClass` parameter precedent.
- *   2. **MethodCall:** resolve the receiver expression's type via
- *      `$scope->getType($node->var)`. Fire if the type is a subtype of
+ *   2. **MethodCall / NullsafeMethodCall:** resolve the receiver expression's
+ *      type via `$scope->getType($node->var)`, then strip null via
+ *      `TypeCombinator::removeNull()`. Fire if the result is a subtype of
  *      `Illuminate\Database\Eloquent\Model` OR a subtype of
  *      `Illuminate\Database\Eloquent\Builder` (the generic parameter is not
  *      unwrapped — `ObjectType::isSuperTypeOf()` handles `Builder<User>` as a
  *      subtype of the unparameterized `Builder` cleanly without brittle
- *      generic introspection). Method name must be in the blocklist.
+ *      generic introspection). Method name must be in the blocklist. The
+ *      null-strip is load-bearing for the nullsafe shape
+ *      (`$m = ...->first(); $m?->delete();`): a `Post|null` receiver is only a
+ *      `maybe()` supertype of `Model`, never `yes()`, so without it the nullsafe
+ *      case (and a plain `->delete()` on a `?Model`) never fires. A nullable
+ *      Model receiver carries the same audit-bypass risk, so the strip is
+ *      unconditional across both instance-call shapes.
  *   3. **StaticCall:** resolve the class name via `$scope->resolveName()`. Fire
  *      if the FQCN is a Model subclass and the method name is in the blocklist.
  *      The class-name resolution path covers `User::create([...])`,
@@ -88,9 +97,23 @@ use function str_starts_with;
  * receivers typed from a method signature (typed parameters) matched. Per-node
  * registration closes that blind spot: PHPStan supplies the flow scope, so
  * local-variable receivers resolve to their real Model / Builder types. The
- * containing-controller FQCN for the message comes from
- * `$scope->getClassReflection()?->getName()` at the call site (non-null once the
- * namespace gate has passed, since the gate implies an in-class scope).
+ * `CallLike` registration hands the rule `MethodCall`, `NullsafeMethodCall`, and
+ * `StaticCall` nodes (plus `New_` / `FuncCall`, which fall through to no-op); the
+ * `NullsafeMethodCall` branch closes the `$m?->delete()` gap, which a
+ * MethodCall-only match would miss (`NullsafeMethodCall` is a SIBLING of
+ * `MethodCall` under `CallLike`, not a subclass). The containing-controller FQCN
+ * for the message comes from `$scope->getClassReflection()?->getName()` at the
+ * call site (non-null once the namespace gate has passed, since the gate implies
+ * an in-class scope).
+ *
+ * Trait coverage: per-node registration also reaches trait bodies — a mutation
+ * inside a trait declared in a controllers namespace (e.g.
+ * `App\Http\Controllers\Concerns\*`) fires, and the message names the USING
+ * class, because PHPStan analyses a trait through each using class and the
+ * call-site `$scope->getClassReflection()` resolves to that using class (the
+ * namespace gate reads the file's namespace). The old `Class_`-scope walk
+ * structurally never ran on a trait file (a trait file has no `Class_` node), so
+ * this is new-but-intended coverage.
  *
  * Method-name blocklist — full ADR-0011 + ADR-0019 mutation surface (24 entries):
  *
@@ -175,7 +198,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
         $modelType = new ObjectType(Model::class);
         $builderType = new ObjectType(EloquentBuilder::class);
 
-        if ($node instanceof MethodCall) {
+        if ($node instanceof MethodCall || $node instanceof NullsafeMethodCall) {
             $violation = $this->checkInstanceCall($node, $scope, $modelType, $builderType);
         } elseif ($node instanceof StaticCall) {
             $violation = $this->checkStaticCall($node, $scope, $modelType);
@@ -216,15 +239,23 @@ final class ForbidEloquentMutationInControllersRule implements Rule
     }
 
     /**
-     * Match `$model->mutation(...)` or `$builder->mutation(...)`. Receiver type
-     * must be a subtype of `Illuminate\Database\Eloquent\Model` OR
+     * Match `$model->mutation(...)` or `$builder->mutation(...)` (plain or
+     * nullsafe). Receiver type must be a subtype of
+     * `Illuminate\Database\Eloquent\Model` OR
      * `Illuminate\Database\Eloquent\Builder`; method name must be in the
      * blocklist.
      *
-     * @return array{type: string, method: string, node: MethodCall}|null
+     * Null is stripped from the receiver type before the gate:
+     * `ObjectType::isSuperTypeOf(Post|null)` is `maybe()`, not `yes()`, so a
+     * nullable Model receiver — the typical `$m = ...->first(); $m?->delete();`
+     * shape, but also a plain `->delete()` on a `?Post` — would otherwise slip
+     * through. A nullable Model receiver carries the same audit-bypass risk, so
+     * `removeNull` is applied unconditionally for both call shapes.
+     *
+     * @return array{type: string, method: string, node: MethodCall|NullsafeMethodCall}|null
      */
     private function checkInstanceCall(
-        MethodCall $node,
+        MethodCall|NullsafeMethodCall $node,
         Scope $scope,
         ObjectType $modelType,
         ObjectType $builderType,
@@ -239,7 +270,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
             return null;
         }
 
-        $receiverType = $scope->getType($node->var);
+        $receiverType = TypeCombinator::removeNull($scope->getType($node->var));
 
         $receiverFqcn = $this->matchedReceiverFqcn($receiverType, $modelType, $builderType);
 
@@ -307,7 +338,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
     }
 
     /**
-     * @param array{type: string, method: string, node: MethodCall|StaticCall} $violation
+     * @param array{type: string, method: string, node: MethodCall|NullsafeMethodCall|StaticCall} $violation
      */
     private function buildError(string $classFqcn, array $violation): IdentifierRuleError
     {
