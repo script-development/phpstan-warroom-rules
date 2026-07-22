@@ -264,6 +264,22 @@ final class ForbidEloquentMutationInControllersRuleTest extends RuleTestCase
         );
     }
 
+    public function testViolationPlainNullableDelete(): void
+    {
+        // Pins the `removeNull` path: a plain `->delete()` (no `?->`) on a
+        // nullable `?Post` receiver. `Post|null` is only a `maybe()` Model
+        // supertype, so without the null-strip the gate never fires.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/ForbidEloquentMutationInControllers/ViolationPlainNullableDelete.php'],
+            [
+                [
+                    $this->message('App\Http\Controllers\ViolationPlainNullableDelete', 'delete', 'Post'),
+                    17,
+                ],
+            ],
+        );
+    }
+
     public function testViolationInTraitFile(): void
     {
         // Trait coverage: a mutation inside a trait declared in a controllers
