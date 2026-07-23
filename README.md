@@ -48,6 +48,7 @@ includes:
 | `EnforceAuditTransactionScopeRule` | `enforceAuditTransactionScope.nonTransactionalMutationInClosure` | `App\Actions\*` whose `execute()` calls `transaction(...)` with a literal closure | Mutating `StatefulGuard` / `Session` / `Cache` / `Bus` / `Queue` / `Mailer` / `Notification` / `Broadcaster` / `Filesystem` state (or their `Illuminate\Support\Facades\*` counterparts) inside the closure is an error. Reads (`Auth::user()`, `Session::get()`, `Cache::get()`) are permitted. Doctrine: ADR-0029 (Audit Row Durability Contract) §Decision rule 3. |
 | `ForbidEloquentMutationInControllersRule` | `forbidEloquentMutationInControllers.eloquentMutationInController` | `App\Http\Controllers\*` (including sub-namespaces; configurable via `controllerNamespacePrefixes`) | Calling Eloquent persistence APIs (`save`, `update`, `delete`, `create`, `destroy`, `forceDelete`, `forceFill`, `push`, `restore`, `touch`, and their `*OrFail` / `*Quietly` / `*OrCreate` variants — 24-method blocklist) on `Illuminate\Database\Eloquent\Model` subclasses or `Illuminate\Database\Eloquent\Builder` chains is an error. Reads (`find`, `where`, `get`, `first`, `paginate`, `pluck`, `count`, `exists`, `query`) are permitted. Delegate mutations to an Action. Doctrine: ADR-0011 (Action Class Architecture) + ADR-0019 (Explicit Model Hydration). |
 | `ForbidInlineArrayJsonResponseInControllersRule` | `forbidInlineArrayJsonResponseInControllers.arrayPayload` | `App\Http\Controllers\*` (including sub-namespaces; configurable via `controllerNamespacePrefixes`) | Constructing the base `Illuminate\Http\JsonResponse` — exact-FQCN, **NOT subclasses** — or its `response()->json(...)` factory twin with an **array** payload is an error. Type-aware: fires when the first argument's resolved type `isArray()->yes()`, catching both inline literals (`new JsonResponse(['enabled' => …])`) and array-typed variables (`new JsonResponse($result)` — the same violation laundered through a variable). Passes on Resource / DTO / `JsonSerializable` / mixed / unknown payloads, `null` (`new JsonResponse(null, 204)`), no-args, and any JsonResponse **subclass** (`NoContentResponse`, … — the compliant fix; matching by supertype would criminalize it). Response shapes belong to a Resource/ResourceData or a dedicated JsonResponse subclass. Deliberate miss: `JsonResponse::fromJsonString(...)`. Sibling/inverse of `ForbidResourceWrappedInJsonResponseRule` (same JsonResponse × payload boundary, opposite direction — that rule fires on a Resource payload, this one on an array). Doctrine: ADR-0009 (Unified ResourceData Pattern). Seed: kendo PR #1653. |
+| `ForbidRawExceptionMessageInResponseRule` | `forbidRawExceptionMessageInResponse.rawMessageInResponse` | Calls to a configured client-facing response sink (default `Laravel\Mcp\Response::error`; add more via `rawExceptionMessageSinks`) | Passing a raw `Throwable::getMessage()` — directly or via string concat (`'x: ' . $e->getMessage()`) — or the `Throwable` itself into a response sink is an error: it leaks internal detail (stack traces, SQL, file paths) to the API client. Log the raw message server-side (`Log::` / `report()`) and return a stable, app-authored message. **Type-aware:** only a `getMessage()` on an actual `\Throwable` receiver fires (`$validator->getMessage()` is silent). **Never flags** server-side logging — `Log::` / `logger()->` / PSR `LoggerInterface` log-level calls and `report()` are the remediation, not the leak. Exempt a proven-safe app-authored message per exception CLASS via `safeMessageExceptionClasses` (arch-test-pinned; message only — the Throwable itself still fires) or per call site with a `// @leak-safe: <rationale>` comment on/above the sink line. Doctrine: war-room §Explicit over implicit (#1); information-disclosure hardening. |
 | `EnforceResourceDataValidatorOptInRule` | `enforceResourceDataValidatorOptIn.missingValidatorCall` | Classes extending `App\Http\Resources\ResourceData` | If the class declares a non-empty `EAGER_LOAD_COUNT` / `EAGER_LOAD_SUM` constant but never calls `validateRelationsLoaded()` in any method, error. |
 | `EnforceFormRequestToDtoRule` | `enforceFormRequestToDto.missingToDtoMethod` | Concrete classes extending `Illuminate\Foundation\Http\FormRequest` | If the class neither declares nor inherits a `toDto()` method, error. Abstract intermediates (`BaseFormRequest`) are exempt. Hand Actions a typed DTO, not `$request->validated()` arrays. Doctrine: ADR-0012 (FormRequest → DTO Flow). |
 | `EnforceCurrentUserAttributeRule` | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` | `Request::user()` / `Auth::user()` / `auth()->user()` calls inside `App\Http\Controllers\*` classes (namespace prefix, incl. sub-namespaces; configurable via `controllerNamespacePrefixes`) | Use `#[\Illuminate\Container\Attributes\CurrentUser] User $user` on the method parameter. Scope is decided by namespace, not class ancestry — a base-less `final` controller in `App\Http\Controllers` fires; FormRequests (`App\Http\Requests`), middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs, and console commands are silent because their namespaces do not start with the controller prefix (container-attribute injection does not apply to FormRequest methods regardless). |
@@ -228,6 +229,47 @@ parameters:
             # seeded read-model projection, not an audit record; factory is test-only
             path: app/Models/Audit/SomeProjectionLog.php
 ```
+
+### `ForbidRawExceptionMessageInResponseRule` — configurable sinks + `@leak-safe` exemption
+
+The rule flags a raw `Throwable::getMessage()` (or the `Throwable` itself) reaching a **client-facing response sink** — an information-disclosure leak. The built-in default sink `Laravel\Mcp\Response::error` is always armed; a consumer adds more (a persist-error setter, a `MarkInvoiceFailed` Action) via the `rawExceptionMessageSinks` parameter — a list of `FQCN::method` signatures, default `[]`:
+
+```neon
+parameters:
+    rawExceptionMessageSinks:
+        # single backslashes — NEON keeps them literal outside double quotes
+        - 'App\Support\InvoiceLog::recordError'
+        - 'App\Actions\Invoice\MarkInvoiceFailed::execute'
+```
+
+A signature matches BOTH call forms — a static call whose resolved class equals the FQCN, and an instance call whose receiver is a subtype of the FQCN — so an injected persist sink is caught without a rule change.
+
+**Server-side logging is never flagged** — `Log::`, `logger()->`, PSR `LoggerInterface` log-level calls, and `report()` are the remediation. Log the raw message; return a stable, app-authored message to the client:
+
+```php
+} catch (\Throwable $e) {
+    logger()->error('invoice.show failed', ['exception' => $e->getMessage()]); // fine — server-side
+    return Response::error('Could not load the invoice.');                      // fine — app-authored
+    // return Response::error('Failed: ' . $e->getMessage());                   // ERROR — raw leak
+}
+```
+
+**Exempting a proven-safe exception CLASS** — when a domain exception's message discipline is proven app-authored (the codebook `DependentModelRelationException` shape, pinned by an arch test in the consuming territory), list it in `safeMessageExceptionClasses` (default `[]`) instead of annotating every call site. Type-aware — subtypes inherit the allowance; the exemption covers the **message only** (passing the Throwable itself still fires: `__toString` carries class, file, and trace regardless of message discipline). List a class here only when an arch test pins its message discipline — config without the pin is a hole, not an exemption:
+
+```neon
+parameters:
+    safeMessageExceptionClasses:
+        - 'App\Exceptions\DependentModelRelationException'
+```
+
+**Exempting a proven-safe call site** — when the exception message is app-authored and carries no raw payload but a class-level listing does not fit (the codebook `SendCodyReportAction` shape), mark it with a `// @leak-safe: <rationale>` comment on the sink line or in the comment block directly above it:
+
+```php
+// @leak-safe: SendCodyReportException carries only an app-authored, payload-free message
+return Response::error('Report failed: ' . $e->getMessage());
+```
+
+The standard PHPStan inline-ignore on `forbidRawExceptionMessageInResponse.rawMessageInResponse` is the alternative. `getTraceAsString()` / `__toString()` and a Throwable laundered through a formatter call are deliberate v1 misses.
 
 ### Action namespace assumption
 

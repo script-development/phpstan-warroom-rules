@@ -53,6 +53,20 @@ parameters:
     auditModelNameSuffixes:
         - 'AuditLog'
 
+    # `ForbidRawExceptionMessageInResponseRule`: ADDITIONAL client-facing sink
+    # signatures, each in `FQCN::method` form, that must not receive a raw
+    # `Throwable::getMessage()` (or the Throwable itself). These are ADDED to the
+    # always-armed built-in default sink `Laravel\Mcp\Response::error`; the
+    # default is empty so the rule is safe to adopt with only the MCP shape
+    # armed. A signature matches BOTH call forms — a static call whose resolved
+    # class equals the FQCN, and an instance call whose receiver is a subtype of
+    # the FQCN — so a consumer names its persist-error sink (an invoice-log
+    # setter, a MarkInvoiceFailed Action) here without a rule change. Logger /
+    # report() calls are excluded structurally and never need listing. Each FQCN
+    # uses single backslashes — see the NEON-quoting note above.
+    rawExceptionMessageSinks: []
+    safeMessageExceptionClasses: []
+
 parametersSchema:
     resourceDataBaseClass: string()
     formRequestBaseClass: string()
@@ -60,6 +74,8 @@ parametersSchema:
     controllerNamespacePrefixes: listOf(string())
     auditModelNamespacePrefixes: listOf(string())
     auditModelNameSuffixes: listOf(string())
+    rawExceptionMessageSinks: listOf(string())
+    safeMessageExceptionClasses: listOf(string())
 
 services:
     -
@@ -125,6 +141,12 @@ services:
         arguments:
             auditModelNamespacePrefixes: %auditModelNamespacePrefixes%
             auditModelNameSuffixes: %auditModelNameSuffixes%
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidRawExceptionMessageInResponseRule
+        arguments:
+            rawExceptionMessageSinks: %rawExceptionMessageSinks%
+            safeMessageExceptionClasses: %safeMessageExceptionClasses%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
