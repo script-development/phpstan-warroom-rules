@@ -143,6 +143,9 @@ services:
             auditModelNameSuffixes: %auditModelNameSuffixes%
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidUntimedHttpClientRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidRawExceptionMessageInResponseRule
         arguments:
             rawExceptionMessageSinks: %rawExceptionMessageSinks%
