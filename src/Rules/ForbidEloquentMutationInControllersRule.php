@@ -7,22 +7,20 @@ namespace ScriptDevelopment\PhpstanWarroomRules\Rules;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Model;
 use PhpParser\Node;
+use PhpParser\Node\Expr\CallLike;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
-use PhpParser\Node\Stmt\Class_;
-use PhpParser\Node\Stmt\ClassMethod;
 use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
+use PHPStan\Type\TypeCombinator;
 
-use function array_filter;
 use function in_array;
-use function is_array;
 use function mb_strrpos;
 use function mb_substr;
 use function sprintf;
@@ -66,21 +64,61 @@ use function str_starts_with;
  *      opts them in by adding the prefix to `controllerNamespacePrefixes` in
  *      its `phpstan.neon` — mirrors the `formRequestBaseClass` /
  *      `resourceDataBaseClass` parameter precedent.
- *   2. For every `ClassMethod` in the class node, recursively walk the method
- *      body collecting `MethodCall` and `StaticCall` nodes.
- *   3. **MethodCall:** resolve the receiver expression's type via
- *      `$scope->getType($node->var)`. Fire if the type is a subtype of
+ *   2. **MethodCall:** resolve the receiver expression's type via
+ *      `$scope->getType($node->var)`, then strip null via
+ *      `TypeCombinator::removeNull()`. Fire if the result is a subtype of
  *      `Illuminate\Database\Eloquent\Model` OR a subtype of
  *      `Illuminate\Database\Eloquent\Builder` (the generic parameter is not
  *      unwrapped — `ObjectType::isSuperTypeOf()` handles `Builder<User>` as a
  *      subtype of the unparameterized `Builder` cleanly without brittle
- *      generic introspection). Method name must be in the blocklist.
- *   4. **StaticCall:** resolve the class name via `$scope->resolveName()`. Fire
+ *      generic introspection). Method name must be in the blocklist. The
+ *      null-strip is load-bearing for a plain `->delete()` on a nullable
+ *      `?Model` receiver: `Post|null` is only a `maybe()` supertype of `Model`,
+ *      never `yes()`, so without it that shape never fires. Nullsafe `?->`
+ *      calls are covered here too — see the implementation note below.
+ *   3. **StaticCall:** resolve the class name via `$scope->resolveName()`. Fire
  *      if the FQCN is a Model subclass and the method name is in the blocklist.
  *      The class-name resolution path covers `User::create([...])`,
  *      `User::destroy($id)`, `User::updateOrCreate(...)`. Class-name expressions
  *      that are not a literal `Name` node (`$class::create(...)`) are out of
  *      scope.
+ *
+ * Implementation note: `getNodeType()` returns `CallLike::class` so PHPStan
+ * hands each call node a method-level flow scope — mirrors `LogRule` /
+ * `EnforceCurrentUserAttributeRule`. An earlier revision registered on `Class_`
+ * and walked each method body manually, resolving receiver types against the
+ * CLASS-entry scope; that scope carries no flow-derived knowledge of
+ * method-local variables, so receivers born inside the body
+ * (`$m = new Model; $m->save();`, `$m = Model::where(...)->firstOrFail(); $m->delete();`,
+ * a `Builder` held in a local var) resolved to `mixed` and NEVER fired — only
+ * receivers typed from a method signature (typed parameters) matched. Per-node
+ * registration closes that blind spot: PHPStan supplies the flow scope, so
+ * local-variable receivers resolve to their real Model / Builder types. The
+ * `CallLike` registration hands the rule `MethodCall` and `StaticCall` nodes
+ * (plus `New_` / `FuncCall`, which fall through to no-op). The containing-
+ * controller FQCN for the message comes from
+ * `$scope->getClassReflection()?->getName()` at the call site (non-null once the
+ * namespace gate has passed, since the gate implies an in-class scope).
+ *
+ * Nullsafe calls: `$m?->delete()` is NOT matched via a `NullsafeMethodCall`
+ * branch. PHPStan's `NodeScopeResolver` emits, for every `?->` call, a synthetic
+ * `MethodCall` node (attribute `virtualNullsafeMethodCall === true`) analysed
+ * under the non-null assumption, so the plain `MethodCall` branch already fires
+ * once on nullsafe calls with the receiver already null-narrowed. Registering a
+ * SEPARATE `NullsafeMethodCall` branch double-reports (CI-proven: the real
+ * `NullsafeMethodCall` node AND its synthetic `MethodCall` twin both fire) — so
+ * there is deliberately no such branch. `removeNull` therefore earns its keep on
+ * the DISTINCT plain-call-on-nullable shape (`$m = ...->first(); $m->delete();`
+ * where `$m` is `?Model`), not the nullsafe form.
+ *
+ * Trait coverage: per-node registration also reaches trait bodies — a mutation
+ * inside a trait declared in a controllers namespace (e.g.
+ * `App\Http\Controllers\Concerns\*`) fires, and the message names the USING
+ * class, because PHPStan analyses a trait through each using class and the
+ * call-site `$scope->getClassReflection()` resolves to that using class (the
+ * namespace gate reads the file's namespace). The old `Class_`-scope walk
+ * structurally never ran on a trait file (a trait file has no `Class_` node), so
+ * this is new-but-intended coverage.
  *
  * Method-name blocklist — full ADR-0011 + ADR-0019 mutation surface (24 entries):
  *
@@ -109,7 +147,7 @@ use function str_starts_with;
  *   - Dynamic method names (`$method = 'save'; $model->{$method}()`) — would
  *     need value-flow analysis. Acceptable miss; rely on reviewer.
  *
- * @implements Rule<Class_>
+ * @implements Rule<CallLike>
  */
 final class ForbidEloquentMutationInControllersRule implements Rule
 {
@@ -151,7 +189,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
 
     public function getNodeType(): string
     {
-        return Class_::class;
+        return CallLike::class;
     }
 
     public function processNode(Node $node, Scope $scope): array
@@ -162,19 +200,31 @@ final class ForbidEloquentMutationInControllersRule implements Rule
             return [];
         }
 
-        $classFqcn = $this->resolveClassFqcn($node, $namespace);
         $modelType = new ObjectType(Model::class);
         $builderType = new ObjectType(EloquentBuilder::class);
 
-        $errors = [];
-
-        foreach ($node->getMethods() as $method) {
-            foreach ($this->collectViolations($method, $scope, $modelType, $builderType) as $violation) {
-                $errors[] = $this->buildError($classFqcn, $violation);
-            }
+        if ($node instanceof MethodCall) {
+            $violation = $this->checkInstanceCall($node, $scope, $modelType, $builderType);
+        } elseif ($node instanceof StaticCall) {
+            $violation = $this->checkStaticCall($node, $scope, $modelType);
+        } else {
+            return [];
         }
 
-        return $errors;
+        if ($violation === null) {
+            return [];
+        }
+
+        // At a call-site scope the class reflection resolves (the namespace gate
+        // already implies an in-class scope). Guard defensively — a call outside
+        // any class yields no controller FQCN, so there is nothing to report.
+        $classReflection = $scope->getClassReflection();
+
+        if ($classReflection === null) {
+            return [];
+        }
+
+        return [$this->buildError($classReflection->getName(), $violation)];
     }
 
     /**
@@ -194,51 +244,19 @@ final class ForbidEloquentMutationInControllersRule implements Rule
     }
 
     /**
-     * @return list<array{type: string, method: string, node: MethodCall|StaticCall}>
-     */
-    private function collectViolations(
-        ClassMethod $method,
-        Scope $scope,
-        ObjectType $modelType,
-        ObjectType $builderType,
-    ): array {
-        $violations = [];
-
-        if ($method->stmts === null) {
-            return $violations;
-        }
-
-        $this->walkNodes(
-            $method->stmts,
-            function(Node $node) use (&$violations, $scope, $modelType, $builderType): void {
-                if ($node instanceof MethodCall) {
-                    $violation = $this->checkInstanceCall($node, $scope, $modelType, $builderType);
-
-                    if ($violation !== null) {
-                        $violations[] = $violation;
-                    }
-
-                    return;
-                }
-
-                if ($node instanceof StaticCall) {
-                    $violation = $this->checkStaticCall($node, $scope, $modelType);
-
-                    if ($violation !== null) {
-                        $violations[] = $violation;
-                    }
-                }
-            },
-        );
-
-        return $violations;
-    }
-
-    /**
      * Match `$model->mutation(...)` or `$builder->mutation(...)`. Receiver type
      * must be a subtype of `Illuminate\Database\Eloquent\Model` OR
      * `Illuminate\Database\Eloquent\Builder`; method name must be in the
      * blocklist.
+     *
+     * Null is stripped from the receiver type before the gate:
+     * `ObjectType::isSuperTypeOf(Post|null)` is `maybe()`, not `yes()`, so a
+     * plain `->delete()` on a nullable `?Post` receiver would otherwise slip
+     * through. A nullable Model receiver carries the same audit-bypass risk.
+     * (The nullsafe `$m?->delete()` form is handled separately — PHPStan feeds a
+     * synthetic non-null-narrowed `MethodCall` node for it, see the class
+     * docblock — so `removeNull`'s live surface is the plain-call-on-nullable
+     * shape.)
      *
      * @return array{type: string, method: string, node: MethodCall}|null
      */
@@ -258,7 +276,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
             return null;
         }
 
-        $receiverType = $scope->getType($node->var);
+        $receiverType = TypeCombinator::removeNull($scope->getType($node->var));
 
         $receiverFqcn = $this->matchedReceiverFqcn($receiverType, $modelType, $builderType);
 
@@ -343,20 +361,6 @@ final class ForbidEloquentMutationInControllersRule implements Rule
             ->build();
     }
 
-    /**
-     * Resolve the fully-qualified class name from the AST node + namespace.
-     * Avoids depending on `$scope->getClassReflection()`, which can return
-     * null during fixture-mode analysis where the class isn't autoloadable.
-     */
-    private function resolveClassFqcn(Class_ $node, string $namespace): string
-    {
-        if ($node->name === null) {
-            return $namespace;
-        }
-
-        return $namespace . '\\' . $node->name->toString();
-    }
-
     private function shortName(string $fqcn): string
     {
         $pos = mb_strrpos($fqcn, '\\');
@@ -366,40 +370,5 @@ final class ForbidEloquentMutationInControllersRule implements Rule
         }
 
         return mb_substr($fqcn, $pos + 1);
-    }
-
-    /**
-     * Recursively walk a list of nodes, invoking `$callback` on each one.
-     * Mirrors `EnforceActionTransactionsRule::walkNodes()` /
-     * `EnforceAuditSnapshotOnRetryRule::walkNodes()` /
-     * `EnforceAuditTransactionScopeRule::walkNodes()` /
-     * `EnforceResourceDataValidatorOptInRule::walkNodes()` for parity —
-     * re-evaluate at v1.0 once the four-way duplication trigger is acted
-     * on (Standing Concern #29).
-     *
-     * @param array<int|string, Node|null> $nodes
-     */
-    private function walkNodes(array $nodes, callable $callback): void
-    {
-        foreach ($nodes as $node) {
-            if (!$node instanceof Node) {
-                continue;
-            }
-
-            $callback($node);
-
-            foreach ($node->getSubNodeNames() as $name) {
-                $subNode = $node->{$name};
-
-                if ($subNode instanceof Node) {
-                    $this->walkNodes([$subNode], $callback);
-                } elseif (is_array($subNode)) {
-                    $this->walkNodes(
-                        array_filter($subNode, static fn(mixed $item): bool => $item instanceof Node),
-                        $callback,
-                    );
-                }
-            }
-        }
     }
 }
