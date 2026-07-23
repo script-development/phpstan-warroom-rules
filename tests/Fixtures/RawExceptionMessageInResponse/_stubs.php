@@ -105,3 +105,11 @@ namespace {
         function report(Throwable $throwable): void {}
     }
 }
+
+namespace App\Exceptions {
+    // A domain exception whose message discipline the consuming territory pins
+    // as app-authored (the codebook DeleteChapterTool /
+    // DependentModelRelationException shape) — the fixture target for the
+    // `safeMessageExceptionClasses` allowlist.
+    class DependentModelRelationException extends \RuntimeException {}
+}

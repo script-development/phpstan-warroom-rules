@@ -11,6 +11,7 @@ use PhpParser\Node\Expr\BinaryOp\Concat;
 use PhpParser\Node\Expr\CallLike;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\MethodCall;
+use PhpParser\Node\Expr\NullsafeMethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
@@ -18,8 +19,10 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
+use PHPStan\Type\NeverType;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
+use PHPStan\Type\TypeCombinator;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -83,12 +86,25 @@ use function str_starts_with;
  *     sink matching, so a consumer that adds a broad sink can never turn a
  *     logger into a false positive.
  *
- * Exemption: a `// @leak-safe: <rationale>` comment on the sink call line (or
- * in the contiguous comment block directly above it) suppresses the rule for a
- * proven-safe case — an app-authored exception message carrying no raw payload
- * (the codebook `SendCodyReportAction` shape). The standard PHPStan inline-
- * ignore mechanism on the identifier
- * `forbidRawExceptionMessageInResponse.rawMessageInResponse` is the alternative.
+ * Exemptions, narrowest first:
+ *
+ *   - `safeMessageExceptionClasses` (config, the CLASS-level path): exception
+ *     FQCNs whose messages are proven app-authored (the codebook
+ *     `DependentModelRelationException` shape — its message discipline is
+ *     pinned by an arch test in the consuming territory). A `getMessage()`
+ *     whose receiver is a subtype of a listed class never fires, so a
+ *     prove-safe class needs ONE config line, not an annotation at every call
+ *     site. The allowlist covers the MESSAGE only — passing the Throwable
+ *     itself into a sink still fires (`__toString` carries class, file, and
+ *     trace regardless of message discipline). List a class here only when the
+ *     consuming territory pins its message discipline with an arch test;
+ *     config without the pin is a hole, not an exemption.
+ *   - `// @leak-safe: <rationale>` comment on the sink call line (or in the
+ *     contiguous comment block directly above it) — the per-call-site path for
+ *     a proven-safe case the class-level list cannot express (the codebook
+ *     `SendCodyReportAction` shape). The standard PHPStan inline-ignore on the
+ *     identifier `forbidRawExceptionMessageInResponse.rawMessageInResponse` is
+ *     the alternative.
  *
  * Out of scope (deliberately, for v1):
  *
@@ -99,6 +115,11 @@ use function str_starts_with;
  *     (`Response::error($this->format($e))`) — the type at the sink boundary is
  *     the formatter's return, not a Throwable; a false negative is accepted
  *     (ADR-0021 posture: false negatives acceptable, false positives are not).
+ *   - Plain local-variable extraction (`$msg = $e->getMessage();
+ *     Response::error($msg);`) — the mundane sibling of the formatter gap: the
+ *     type at the sink is `string`, the provenance is gone. Same accepted-
+ *     false-negative posture; closing it needs data-flow tracking, not a
+ *     wider matcher.
  *
  * @implements Rule<CallLike>
  */
@@ -133,17 +154,26 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
     private array $sinks;
 
     /**
-     * @param list<string> $rawExceptionMessageSinks additional client-facing
-     *                                               sink signatures in
-     *                                               `FQCN::method` form (e.g. a
-     *                                               consumer's persist-error
-     *                                               setter). Merged with the
-     *                                               built-in `Response::error`
-     *                                               default; empty by default so
-     *                                               the rule is safe to adopt.
+     * @param list<string> $rawExceptionMessageSinks    additional client-facing
+     *                                                  sink signatures in
+     *                                                  `FQCN::method` form (e.g. a
+     *                                                  consumer's persist-error
+     *                                                  setter). Merged with the
+     *                                                  built-in `Response::error`
+     *                                                  default; empty by default so
+     *                                                  the rule is safe to adopt.
+     * @param list<string> $safeMessageExceptionClasses exception FQCNs whose
+     *                                                  messages are proven
+     *                                                  app-authored (arch-test-
+     *                                                  pinned in the consuming
+     *                                                  territory) — their
+     *                                                  `getMessage()` is exempt;
+     *                                                  the Throwable itself never
+     *                                                  is. Empty by default.
      */
     public function __construct(
         array $rawExceptionMessageSinks = [],
+        private readonly array $safeMessageExceptionClasses = [],
     ) {
         $this->sinks = [];
 
@@ -263,14 +293,55 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
 
     private function isThrowableGetMessageCall(Expr $expr, Scope $scope): bool
     {
-        return $expr instanceof MethodCall
-            && $expr->name instanceof Identifier
-            && $expr->name->toString() === 'getMessage'
-            && $this->typeIsThrowable($scope->getType($expr->var));
+        // NullsafeMethodCall is a distinct node — `$e?->getMessage()` leaks
+        // exactly as its unconditional sibling does when `$e` is non-null.
+        if (!$expr instanceof MethodCall && !$expr instanceof NullsafeMethodCall) {
+            return false;
+        }
+
+        if (!$expr->name instanceof Identifier || $expr->name->toString() !== 'getMessage') {
+            return false;
+        }
+
+        $receiverType = $scope->getType($expr->var);
+
+        return $this->typeIsThrowable($receiverType)
+            && !$this->isSafeMessageException($receiverType);
+    }
+
+    /**
+     * True when the receiver's type is a subtype of a configured
+     * safe-message exception class — its `getMessage()` is proven
+     * app-authored, so the message (and ONLY the message) is exempt.
+     */
+    private function isSafeMessageException(Type $type): bool
+    {
+        $type = TypeCombinator::removeNull($type);
+
+        if ($type instanceof NeverType) {
+            return false;
+        }
+
+        foreach ($this->safeMessageExceptionClasses as $class) {
+            if ((new ObjectType($class))->isSuperTypeOf($type)->yes()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function typeIsThrowable(Type $type): bool
     {
+        // Strip null so a nullsafe receiver (`$e?->getMessage()` — the receiver
+        // types as `Throwable|null` inside the NullsafeMethodCall) still
+        // resolves; a pure-null type (NeverType after the strip) never is one.
+        $type = TypeCombinator::removeNull($type);
+
+        if ($type instanceof NeverType) {
+            return false;
+        }
+
         return (new ObjectType(self::THROWABLE))->isSuperTypeOf($type)->yes();
     }
 
@@ -382,7 +453,8 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
             . 'Passing Throwable::getMessage() (or the Throwable itself) to a response leaks internal detail '
             . '(stack-trace fragments, SQL, file paths) to the API client. Log the raw message server-side '
             . '(Log::/report()) and return a stable, app-authored message. '
-            . 'Suppress a proven-safe app-authored message with a `// @leak-safe: <rationale>` comment on the sink line.',
+            . 'Suppress a proven-safe app-authored message with a `// @leak-safe: <rationale>` comment on the sink line, '
+            . 'or list an arch-test-pinned exception class in `safeMessageExceptionClasses`.',
         )
             ->identifier('forbidRawExceptionMessageInResponse.rawMessageInResponse')
             ->line($node->getStartLine())

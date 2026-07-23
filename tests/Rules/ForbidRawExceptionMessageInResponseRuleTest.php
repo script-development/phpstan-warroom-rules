@@ -17,7 +17,8 @@ final class ForbidRawExceptionMessageInResponseRuleTest extends RuleTestCase
         . 'Passing Throwable::getMessage() (or the Throwable itself) to a response leaks internal detail '
         . '(stack-trace fragments, SQL, file paths) to the API client. Log the raw message server-side '
         . '(Log::/report()) and return a stable, app-authored message. '
-        . 'Suppress a proven-safe app-authored message with a `// @leak-safe: <rationale>` comment on the sink line.';
+        . 'Suppress a proven-safe app-authored message with a `// @leak-safe: <rationale>` comment on the sink line, '
+        . 'or list an arch-test-pinned exception class in `safeMessageExceptionClasses`.';
 
     private const string STUBS = __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/_stubs.php';
 
@@ -170,6 +171,58 @@ final class ForbidRawExceptionMessageInResponseRuleTest extends RuleTestCase
         $this->analyse(
             [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/LeakSafeSameLineExempted.php'],
             [],
+        );
+    }
+
+    public function testFlagsNullsafeGetMessageIntoResponseError(): void
+    {
+        // `$e?->getMessage()` is a NullsafeMethodCall — a distinct AST node the
+        // MethodCall-only matcher missed (the #59 review's Nit). Same leak.
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/NullsafeGetMessage.php'],
+            [[self::MESSAGE, 17]],
+        );
+    }
+
+    public function testFlagsSafeMessageExceptionUnderDefaultConfig(): void
+    {
+        // No allowlist configured — a prove-safe class is still an exception
+        // like any other. Pins "empty param = no class-level exemption".
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/SafeMessageExceptionPassthrough.php'],
+            [[self::MESSAGE, 18]],
+        );
+    }
+
+    public function testIgnoresConfiguredSafeMessageExceptionGetMessage(): void
+    {
+        // The #59 review's Major: the rule's own motivating example (codebook
+        // DeleteChapterTool passing DependentModelRelationException::getMessage(),
+        // arch-test-pinned app-authored) needed a config-level exemption, not a
+        // per-call-site annotation. Type-aware: subtypes inherit the allowance.
+        $this->ruleOverride = new ForbidRawExceptionMessageInResponseRule(
+            [],
+            ['App\Exceptions\DependentModelRelationException'],
+        );
+
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/SafeMessageExceptionPassthrough.php'],
+            [],
+        );
+    }
+
+    public function testSafeMessageExceptionDoesNotExemptTheThrowableItself(): void
+    {
+        // The allowlist covers the MESSAGE only — the Throwable stringifies
+        // with class, file, and trace regardless of message discipline.
+        $this->ruleOverride = new ForbidRawExceptionMessageInResponseRule(
+            [],
+            ['App\Exceptions\DependentModelRelationException'],
+        );
+
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/SafeMessageExceptionThrowableItself.php'],
+            [[self::MESSAGE, 17]],
         );
     }
 

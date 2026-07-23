@@ -65,6 +65,7 @@ parameters:
     # report() calls are excluded structurally and never need listing. Each FQCN
     # uses single backslashes — see the NEON-quoting note above.
     rawExceptionMessageSinks: []
+    safeMessageExceptionClasses: []
 
 parametersSchema:
     resourceDataBaseClass: string()
@@ -74,6 +75,7 @@ parametersSchema:
     auditModelNamespacePrefixes: listOf(string())
     auditModelNameSuffixes: listOf(string())
     rawExceptionMessageSinks: listOf(string())
+    safeMessageExceptionClasses: listOf(string())
 
 services:
     -
@@ -144,6 +146,7 @@ services:
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidRawExceptionMessageInResponseRule
         arguments:
             rawExceptionMessageSinks: %rawExceptionMessageSinks%
+            safeMessageExceptionClasses: %safeMessageExceptionClasses%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
