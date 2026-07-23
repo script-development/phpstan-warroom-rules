@@ -7,13 +7,11 @@ namespace ScriptDevelopment\PhpstanWarroomRules\Rules;
 use Illuminate\Http\Client\Factory;
 use Illuminate\Support\Facades\Http;
 use PhpParser\Node;
-use PhpParser\Node\Expr\Array_;
 use PhpParser\Node\Expr\CallLike;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
-use PhpParser\Node\Scalar\String_;
 use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
@@ -39,9 +37,14 @@ use function mb_strtolower;
  *      so the alias (`$http` / `$httpClient` / `$client`) is irrelevant.
  *
  * A timeout is considered present when the visible chain contains a
- * `->timeout(...)` call OR a `->withOptions([... 'timeout' => ... ])` carrying
- * a `'timeout'` key. `connectTimeout()` alone is NOT sufficient — it bounds the
- * handshake, not the response, so a hung server still stalls the caller;
+ * `->timeout(...)` call OR a `->withOptions(...)` whose options provably carry
+ * a `'timeout'` key. The options check is TYPE-aware, not AST-literal: a
+ * variable holding a literal array resolves to a constant array type and is
+ * seen through; an options expression whose type is NOT a constant array (a
+ * computed array, a helper/config() return) is treated as POSSIBLY timed and
+ * the chain DECLINES — absence is unprovable, and a false positive is the one
+ * unacceptable outcome. `connectTimeout()` alone is NOT sufficient — it bounds
+ * the handshake, not the response, so a hung server still stalls the caller;
  * Doctrine #8 wants the request timeout.
  *
  * Doctrine source: war-room §Architectural Principles #8 — Explicit timeouts
@@ -67,6 +70,14 @@ use function mb_strtolower;
  *     `setConfig([...])` — invisible to any HTTP-client scan; flagging them
  *     would be a false positive.
  *   - Timeouts configured at a DI binding (a provider binds a pre-timed client).
+ *   - `->withOptions($computed)` where the options type is not a constant
+ *     array — the key set is unknowable statically (see above).
+ *   - Chain members outside the known `PendingRequest` builder surface — a
+ *     `Macroable` extension (`Http::github()->get(...)`, or an intermediate
+ *     `->github()`) may return a PRE-TIMED request, so an unknown method
+ *     anywhere in the chain (root or intermediate) declines. `when()` /
+ *     `unless()` decline for the same reason: their closures can set the
+ *     timeout invisibly.
  *
  * These exclusions are the deliberate consequence of biasing a first-cut rule
  * toward zero false positives (a false positive reddens a compliant consumer's
@@ -84,10 +95,37 @@ final class ForbidUntimedHttpClientRule implements Rule
 {
     private const string HTTP_FACADE = Http::class;
 
+    /**
+     * Literal FQCN, not `Factory::class` — `illuminate/http` is not in this
+     * package's own dev tree (only `illuminate/support` is), so a class-const
+     * fetch is a `class.notFound` under self-analysis. `ObjectType` takes the
+     * string happily; in a consumer tree without Laravel the anchor simply
+     * never matches (correct: nothing to enforce). Same pattern as the
+     * sibling rule's `DEFAULT_SINK`.
+     */
     private const string CLIENT_FACTORY = Factory::class;
 
     /** Terminal HTTP send verbs on the facade / factory / `PendingRequest`. */
     private const array SEND_VERBS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'send'];
+
+    /**
+     * The known `PendingRequest` fluent-builder surface (lowercased). A chain
+     * member OUTSIDE this set — a Macroable extension, or `when()`/`unless()`
+     * whose closures are opaque — may have set the timeout internally, so the
+     * chain declines rather than risk a false positive. A genuine builder
+     * missing from this list costs only a false negative (ADR-0021 posture).
+     */
+    private const array KNOWN_BUILDERS = [
+        'accept', 'acceptjson', 'asform', 'asjson', 'asmultipart', 'async', 'attach',
+        'baseurl', 'beforesending', 'bodyformat', 'connecttimeout', 'contenttype',
+        'dd', 'dump', 'maxredirects', 'replaceheaders', 'retry', 'sink',
+        'throw', 'throwif', 'throwunless', 'timeout',
+        'withbasicauth', 'withbody', 'withcookies', 'withdigestauth',
+        'withheader', 'withheaders', 'withmiddleware', 'withoptions',
+        'withqueryparameters', 'withrequestmiddleware', 'withresponsemiddleware',
+        'withtoken', 'withurlparameters', 'withuseragent',
+        'withoutredirecting', 'withoutverifying',
+    ];
 
     public function getNodeType(): string
     {
@@ -139,7 +177,14 @@ final class ForbidUntimedHttpClientRule implements Rule
         $cursor = $node->var;
 
         while ($cursor instanceof MethodCall) {
-            if ($this->declaresTimeout($cursor)) {
+            if ($this->declaresTimeout($cursor, $scope)) {
+                return [];
+            }
+
+            // An unknown chain member — a Macroable extension (`->github()`)
+            // or anything outside the known builder surface — may have set the
+            // timeout internally. DECLINE, never a false positive.
+            if (!$this->isKnownBuilder($cursor->name)) {
                 return [];
             }
 
@@ -153,7 +198,17 @@ final class ForbidUntimedHttpClientRule implements Rule
                 return [];
             }
 
-            return $this->declaresTimeout($cursor) ? [] : [$this->buildError($node)];
+            if ($this->declaresTimeout($cursor, $scope)) {
+                return [];
+            }
+
+            // Same macro guard at the static root — `Http::github()->get(...)`
+            // may be a macro returning a pre-timed request.
+            if (!$this->isKnownBuilder($cursor->name)) {
+                return [];
+            }
+
+            return [$this->buildError($node)];
         }
 
         // Chain root is an expression (property / variable). It anchors ONLY if
@@ -168,11 +223,11 @@ final class ForbidUntimedHttpClientRule implements Rule
     }
 
     /**
-     * True when a builder call in the chain establishes a request timeout:
-     * a `->timeout(...)` method, or a `->withOptions([... 'timeout' => ...])`
-     * carrying the option key.
+     * True when a builder call in the chain establishes (or MAY establish) a
+     * request timeout: a `->timeout(...)` method, or a `->withOptions(...)`
+     * whose options are not provably timeout-free.
      */
-    private function declaresTimeout(MethodCall|StaticCall $call): bool
+    private function declaresTimeout(MethodCall|StaticCall $call, Scope $scope): bool
     {
         $name = $this->methodName($call->name);
 
@@ -181,27 +236,58 @@ final class ForbidUntimedHttpClientRule implements Rule
         }
 
         if ($name === 'withoptions') {
-            return $this->argArrayHasTimeoutKey($call);
+            return $this->withOptionsMayCarryTimeout($call, $scope);
         }
 
         return false;
     }
 
-    private function argArrayHasTimeoutKey(MethodCall|StaticCall $call): bool
+    /**
+     * Tri-state collapse over the `withOptions()` argument, by TYPE:
+     *
+     *   - constant array type carrying a `'timeout'` key (any union variant) —
+     *     timed, chain is compliant;
+     *   - constant array type(s) all provably WITHOUT the key — untimed, the
+     *     chain stays a candidate;
+     *   - anything else (a computed array, a helper/config() return, unknown) —
+     *     POSSIBLY timed, so the chain declines: absence is unprovable and a
+     *     false positive is the one unacceptable outcome (ADR-0021).
+     *
+     * The type path subsumes the old literal-`Array_` AST check (a literal
+     * resolves to a constant array type) and additionally sees through a
+     * variable holding a literal array.
+     */
+    private function withOptionsMayCarryTimeout(MethodCall|StaticCall $call, Scope $scope): bool
     {
         $first = $call->getArgs()[0]->value ?? null;
 
-        if (!$first instanceof Array_) {
+        if ($first === null) {
+            // `withOptions()` with no argument adds nothing to the request.
             return false;
         }
 
-        foreach ($first->items as $item) {
-            if ($item->key instanceof String_ && mb_strtolower($item->key->value) === 'timeout') {
-                return true;
+        $constantArrays = $scope->getType($first)->getConstantArrays();
+
+        if ($constantArrays === []) {
+            return true;
+        }
+
+        foreach ($constantArrays as $constantArray) {
+            foreach ($constantArray->getKeyTypes() as $keyType) {
+                foreach ($keyType->getConstantStrings() as $keyString) {
+                    if (mb_strtolower($keyString->getValue()) === 'timeout') {
+                        return true;
+                    }
+                }
             }
         }
 
         return false;
+    }
+
+    private function isKnownBuilder(mixed $name): bool
+    {
+        return in_array($this->methodName($name), self::KNOWN_BUILDERS, true);
     }
 
     private function isClientFactory(Type $type): bool

@@ -116,6 +116,55 @@ final class ForbidUntimedHttpClientRuleTest extends RuleTestCase
         );
     }
 
+    public function testDeclinesComputedWithOptions(): void
+    {
+        // The #57 review's Major: a computed options array (helper return) is
+        // not a constant array type — absence of 'timeout' is unprovable, so
+        // the chain DECLINES instead of false-positive flagging.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/UntimedHttpClient/DeclinedWithOptionsComputed.php'],
+            [],
+        );
+    }
+
+    public function testFlagsWithOptionsVariableProvablyWithoutTimeout(): void
+    {
+        // The type path sees through a variable holding a literal array — a
+        // provably timeout-free options set still fires (a widening over the
+        // old inline-Array_-only check).
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/UntimedHttpClient/ViolationWithOptionsVariableNoTimeout.php'],
+            [[self::MESSAGE, 19]],
+        );
+    }
+
+    public function testIgnoresWithOptionsVariableWithTimeout(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/UntimedHttpClient/CompliantWithOptionsVariableTimeout.php'],
+            [],
+        );
+    }
+
+    public function testDeclinesMacroStaticRoot(): void
+    {
+        // The #57 review's Minor: `Http::github()` — a Macroable entry outside
+        // the known builder surface — may return a pre-timed request. Declines.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/UntimedHttpClient/DeclinedMacroStaticRoot.php'],
+            [],
+        );
+    }
+
+    public function testDeclinesMacroMidChain(): void
+    {
+        // Same guard for an intermediate member — PendingRequest is Macroable.
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/UntimedHttpClient/DeclinedMacroMidChain.php'],
+            [],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new ForbidUntimedHttpClientRule;
