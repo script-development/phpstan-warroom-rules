@@ -14,6 +14,9 @@ declare(strict_types = 1);
 //     never fire.
 //   - `LeafReader::required()` — a non-nullable `string` return, so there is no
 //     failure signal to hide; must never fire.
+//   - `ConfigLookup::get()` — a lookup, not a boundary reader: its only `mixed`
+//     parameter is OPTIONAL (the caller's own default), so it is not handed
+//     unvalidated external data; must never fire.
 //   - `Application\Support\ImposterReader` — sits under a namespace that only
 //     LOOKS like the configured `App\` prefix; pins the namespace-boundary match.
 //
@@ -71,6 +74,22 @@ namespace App\Support {
         public function reader(mixed $leaf): ?self
         {
             return \is_string($leaf) ? $this : null;
+        }
+    }
+
+    // Nullable-scalar return like a narrowing helper, but its only `mixed`
+    // parameter is OPTIONAL — the caller's own default, not external data. A
+    // lookup, not a boundary reader; `?? ''` on it is idiomatic and must never
+    // fire.
+    final class ConfigLookup
+    {
+        public function get(string $key, mixed $default = null): ?string
+        {
+            if ($key !== '') {
+                return $key;
+            }
+
+            return \is_string($default) ? $default : null;
         }
     }
 }

@@ -45,13 +45,19 @@ use function var_export;
  * A sentinel fallback converts that failure signal into a plausible-looking
  * value. The value then gets persisted, compared, or used to unlock a branch,
  * and the original unreadable input is unrecoverable. Confirmed damage from
- * tc-api PR #360, all three from this one shape:
+ * tc-api PR #360:
  *
- *   - `Carbon::parse(text($leaf) ?? null)` — a missing node parsed as `now()`,
- *     writing today's date as a person's date of birth.
  *   - `?? ''` seeding `['']` — a one-element array holding an empty string reads
  *     as non-empty, which unlocked a `forceDelete()` wipe.
  *   - a gender written to the database as an empty `SET` string.
+ *
+ * A third bug in that PR — `Carbon::parse(text($leaf) ?? null)` writing `now()`
+ * as a person's date of birth — is the MOTIVATION for this rule but explicitly
+ * OUT OF ITS SCOPE. There is no literal sentinel there: `?? null` is the correct
+ * half of the shape, and the damage happens one call later, when a sink
+ * (`Carbon::parse()`) turns the preserved `null` into a plausible value. Catching
+ * it needs sink-aware analysis (which callees are null-swallowing), not this
+ * rule's fallback-shape matcher.
  *
  * The remediation is always one of: skip the write, fail closed (throw), or
  * handle `null` explicitly. `?? null` is deliberately NOT flagged — it preserves
@@ -71,9 +77,12 @@ use function var_export;
  *      non-vendor gate: `filter_var(...) ?? ''` and any framework call are
  *      structurally out of scope, because a vendor helper's null contract is not
  *      ours to reason about.
- *   2. At least one parameter is typed `mixed` — explicitly or by being untyped
- *      (both resolve to `MixedType`). That is the boundary tell: the helper is
- *      handed unvalidated external data.
+ *   2. At least one REQUIRED parameter is typed `mixed` — explicitly or by being
+ *      untyped (both resolve to `MixedType`). That is the boundary tell: the
+ *      helper is handed unvalidated external data. An OPTIONAL mixed parameter
+ *      does not count: `get(string $key, mixed $default = null): ?string` is a
+ *      lookup helper whose `mixed` is the caller's own default, not untrusted
+ *      input, and its `?? ''` is idiomatic.
  *   3. The return type is a nullable scalar or a nullable union of scalars
  *      (`?string`, `?int`, `?float`, `?bool`, `string|int|null`). Checked via the
  *      PHPStan Type API (`TypeCombinator::containsNull()` + a per-member scalar
@@ -101,6 +110,15 @@ use function var_export;
  *   - A helper result laundered through a variable
  *     (`$name = text($leaf); $name ?? ''`) — provenance is gone at the coalesce;
  *     closing it needs data-flow tracking, not a wider matcher.
+ *
+ * Known residual false positive: a first-party helper that takes a REQUIRED
+ * `mixed` (or untyped) key AND returns a nullable scalar still matches even when
+ * it is a lookup rather than a boundary reader — `get(mixed $key, string
+ * $default = ''): ?string` is indistinguishable from a narrowing helper by
+ * signature alone. The required/optional split above removes the common lookup
+ * shape; for the rest the escape hatch is an inline PHPStan ignore comment
+ * naming the `forbidSentinelFallbackOnNarrowingHelper.sentinelFallback`
+ * identifier.
  *
  * @implements Rule<Expr>
  */
@@ -213,6 +231,15 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
             }
 
             $methodName = $expr->name->toString();
+
+            // No `TypeCombinator::removeNull()` on the receiver, deliberately:
+            // this rule only ever runs on the left operand of `??` / `?:`, and
+            // PHPStan analyses that operand in isset-ish / truthy context, so a
+            // nullable receiver is ALREADY narrowed to non-null in this scope
+            // (verified on phpstan 2.2.7 for a nullable promoted property, a
+            // nullable parameter, a nullable method-call receiver, a chained
+            // `?->…?->`, and a nullable array offset — every one resolves to the
+            // bare class). Stripping null again would be an unreachable branch.
             $calledOnType = $scope->getType($expr->var);
 
             if (!$calledOnType->hasMethod($methodName)->yes()) {
@@ -304,13 +331,22 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
     }
 
     /**
-     * A `mixed` parameter is the boundary tell. An UNTYPED parameter also
-     * resolves to `MixedType` (implicit mixed), which is the same contract from
-     * the caller's side, so both count.
+     * A REQUIRED `mixed` parameter is the boundary tell. An UNTYPED parameter
+     * also resolves to `MixedType` (implicit mixed), which is the same contract
+     * from the caller's side, so both count.
+     *
+     * An OPTIONAL mixed parameter does not: `get(string $key, mixed $default =
+     * null): ?string` is a lookup helper, and its `mixed` is the CALLER's own
+     * default value flowing in, not unvalidated external data. Counting it made
+     * every such lookup a narrowing helper and its idiomatic `?? ''` an error.
      */
     private function hasMixedParameter(ParametersAcceptor $variant): bool
     {
         foreach ($variant->getParameters() as $parameter) {
+            if ($parameter->isOptional()) {
+                continue;
+            }
+
             if ($parameter->getType() instanceof MixedType) {
                 return true;
             }
