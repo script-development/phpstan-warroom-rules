@@ -67,6 +67,18 @@ parameters:
     rawExceptionMessageSinks: []
     safeMessageExceptionClasses: []
 
+    # `ForbidSentinelFallbackOnNarrowingHelperRule`: namespace prefixes whose
+    # classes / functions count as FIRST-PARTY, i.e. helpers whose nullable
+    # return contract we own and can reason about. A left-hand call is only
+    # considered a narrowing helper when its declaring class (method / static
+    # call) or its function FQN (plain function) sits under one of these — which
+    # is what keeps builtins and vendor code (`filter_var(...) ?? ''`) out of
+    # scope. Matching is namespace-BOUNDARY aware, so `App` and `App\` behave
+    # identically and `Application\Foo` is never swept in by the `App` default.
+    # Each prefix uses single backslashes — see the NEON-quoting note above.
+    narrowingHelperNamespacePrefixes:
+        - 'App'
+
 parametersSchema:
     resourceDataBaseClass: string()
     formRequestBaseClass: string()
@@ -76,6 +88,7 @@ parametersSchema:
     auditModelNameSuffixes: listOf(string())
     rawExceptionMessageSinks: listOf(string())
     safeMessageExceptionClasses: listOf(string())
+    narrowingHelperNamespacePrefixes: listOf(string())
 
 services:
     -
@@ -147,6 +160,11 @@ services:
         arguments:
             rawExceptionMessageSinks: %rawExceptionMessageSinks%
             safeMessageExceptionClasses: %safeMessageExceptionClasses%
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidSentinelFallbackOnNarrowingHelperRule
+        arguments:
+            narrowingHelperNamespacePrefixes: %narrowingHelperNamespacePrefixes%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
