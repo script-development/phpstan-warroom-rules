@@ -63,6 +63,18 @@ final class ForbidSentinelFallbackOnNarrowingHelperRuleTest extends RuleTestCase
         );
     }
 
+    public function testFlagsNullsafeCallOnNullableReceiver(): void
+    {
+        // `$this->reader?->text($leaf) ?? ''` — pins the NullsafeMethodCall arm
+        // as live. PHPStan analyses the left operand of `??` in isset-ish
+        // context, so the nullable receiver is already narrowed to the bare
+        // class and the method resolves.
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/NullsafeCallCoalesce.php'],
+            [[sprintf(self::MESSAGE, self::READER_TEXT, '??', "''"), 21]],
+        );
+    }
+
     public function testFlagsPlainFirstPartyFunctionFallback(): void
     {
         $this->analyse(
@@ -99,6 +111,17 @@ final class ForbidSentinelFallbackOnNarrowingHelperRuleTest extends RuleTestCase
     {
         $this->analyse(
             [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/NarrowedParameterHelper.php'],
+            [],
+        );
+    }
+
+    public function testIgnoresHelperWhoseOnlyMixedParameterIsOptional(): void
+    {
+        // `get(string $key, mixed $default = null): ?string` — a lookup helper.
+        // Its `mixed` is the CALLER's default flowing in, not unvalidated
+        // external data, so `?? ''` on it is idiomatic and must stay silent.
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/OptionalMixedDefaultHelper.php'],
             [],
         );
     }
