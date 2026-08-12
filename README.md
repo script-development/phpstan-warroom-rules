@@ -49,6 +49,7 @@ includes:
 | `ForbidEloquentMutationInControllersRule` | `forbidEloquentMutationInControllers.eloquentMutationInController` | `App\Http\Controllers\*` (including sub-namespaces; configurable via `controllerNamespacePrefixes`) | Calling Eloquent persistence APIs (`save`, `update`, `delete`, `create`, `destroy`, `forceDelete`, `forceFill`, `push`, `restore`, `touch`, and their `*OrFail` / `*Quietly` / `*OrCreate` variants — 24-method blocklist) on `Illuminate\Database\Eloquent\Model` subclasses or `Illuminate\Database\Eloquent\Builder` chains is an error. Reads (`find`, `where`, `get`, `first`, `paginate`, `pluck`, `count`, `exists`, `query`) are permitted. Delegate mutations to an Action. Doctrine: ADR-0011 (Action Class Architecture) + ADR-0019 (Explicit Model Hydration). |
 | `ForbidInlineArrayJsonResponseInControllersRule` | `forbidInlineArrayJsonResponseInControllers.arrayPayload` | `App\Http\Controllers\*` (including sub-namespaces; configurable via `controllerNamespacePrefixes`) | Constructing the base `Illuminate\Http\JsonResponse` — exact-FQCN, **NOT subclasses** — or its `response()->json(...)` factory twin with an **array** payload is an error. Type-aware: fires when the first argument's resolved type `isArray()->yes()`, catching both inline literals (`new JsonResponse(['enabled' => …])`) and array-typed variables (`new JsonResponse($result)` — the same violation laundered through a variable). Passes on Resource / DTO / `JsonSerializable` / mixed / unknown payloads, `null` (`new JsonResponse(null, 204)`), no-args, and any JsonResponse **subclass** (`NoContentResponse`, … — the compliant fix; matching by supertype would criminalize it). Response shapes belong to a Resource/ResourceData or a dedicated JsonResponse subclass. Deliberate miss: `JsonResponse::fromJsonString(...)`. Sibling/inverse of `ForbidResourceWrappedInJsonResponseRule` (same JsonResponse × payload boundary, opposite direction — that rule fires on a Resource payload, this one on an array). Doctrine: ADR-0009 (Unified ResourceData Pattern). Seed: kendo PR #1653. |
 | `ForbidRawExceptionMessageInResponseRule` | `forbidRawExceptionMessageInResponse.rawMessageInResponse` | Calls to a configured client-facing response sink (default `Laravel\Mcp\Response::error`; add more via `rawExceptionMessageSinks`) | Passing a raw `Throwable::getMessage()` — directly or via string concat (`'x: ' . $e->getMessage()`) — or the `Throwable` itself into a response sink is an error: it leaks internal detail (stack traces, SQL, file paths) to the API client. Log the raw message server-side (`Log::` / `report()`) and return a stable, app-authored message. **Type-aware:** only a `getMessage()` on an actual `\Throwable` receiver fires (`$validator->getMessage()` is silent). **Never flags** server-side logging — `Log::` / `logger()->` / PSR `LoggerInterface` log-level calls and `report()` are the remediation, not the leak. Exempt a proven-safe app-authored message per exception CLASS via `safeMessageExceptionClasses` (arch-test-pinned; message only — the Throwable itself still fires) or per call site with a `// @leak-safe: <rationale>` comment on/above the sink line. Doctrine: war-room §Explicit over implicit (#1); information-disclosure hardening. |
+| `ForbidSentinelFallbackOnNarrowingHelperRule` | `forbidSentinelFallbackOnNarrowingHelper.sentinelFallback` | `??` / short-`?:` fallbacks whose left side is a **narrowing helper** call — a first-party method / static method / function (namespace prefix, default `App\`, configurable via `narrowingHelperNamespacePrefixes`) that takes at least one **required** `mixed` (or untyped) parameter and returns a nullable scalar (`?string`, `?int`, `?float`, `?bool`, `string\|int\|null`) | Following such a call with a **literal sentinel** (`?? ''`, `?? 0`, `?: 'unknown'`, `?? false`, `?? []`, `?? Foo::BAR`) is an error: `null` means "this input was unreadable", and the sentinel converts that failure into a plausible value that then gets persisted or unlocks a branch. Skip the write, fail closed, or handle `null` explicitly. **`?? null` is never flagged** — it preserves the failure signal. Shape-keyed, not a helper-name list; the return-type check runs on the PHPStan Type API (`TypeCombinator::containsNull` + a per-member scalar probe), never on type-name strings. Vendor/builtin callees (`filter_var(...) ?? ''`), coalesces on properties/array offsets, helpers with no required `mixed` parameter (a lookup's optional `mixed $default = null` is the caller's own default, not external data), and non-nullable or non-scalar returns are all silent. A **non-literal** fallback (variable, call) is a deliberate miss (the false-positive-rich half of the shape), as is the long ternary (an explicit null test IS the remediation). Residual FP: a helper with a required `mixed` key plus a default parameter still fires — inline-ignore the identifier. Doctrine: war-room §Explicit over implicit; fail-closed data integrity. Seed: tc-api PR #360 (`?? ''` seeding `['']` that unlocked a `forceDelete()` wipe, empty-string gender; the `now()`-as-date-of-birth bug in the same PR motivated the rule but is out of scope — no literal sentinel, the `null` is swallowed by a downstream sink). |
 | `EnforceResourceDataValidatorOptInRule` | `enforceResourceDataValidatorOptIn.missingValidatorCall` | Classes extending `App\Http\Resources\ResourceData` | If the class declares a non-empty `EAGER_LOAD_COUNT` / `EAGER_LOAD_SUM` constant but never calls `validateRelationsLoaded()` in any method, error. |
 | `EnforceFormRequestToDtoRule` | `enforceFormRequestToDto.missingToDtoMethod` | Concrete classes extending `Illuminate\Foundation\Http\FormRequest` | If the class neither declares nor inherits a `toDto()` method, error. Abstract intermediates (`BaseFormRequest`) are exempt. Hand Actions a typed DTO, not `$request->validated()` arrays. Doctrine: ADR-0012 (FormRequest → DTO Flow). |
 | `EnforceCurrentUserAttributeRule` | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` | `Request::user()` / `Auth::user()` / `auth()->user()` calls inside `App\Http\Controllers\*` classes (namespace prefix, incl. sub-namespaces; configurable via `controllerNamespacePrefixes`) | Use `#[\Illuminate\Container\Attributes\CurrentUser] User $user` on the method parameter. Scope is decided by namespace, not class ancestry — a base-less `final` controller in `App\Http\Controllers` fires; FormRequests (`App\Http\Requests`), middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs, and console commands are silent because their namespaces do not start with the controller prefix (container-attribute injection does not apply to FormRequest methods regardless). |
@@ -270,6 +271,46 @@ return Response::error('Report failed: ' . $e->getMessage());
 ```
 
 The standard PHPStan inline-ignore on `forbidRawExceptionMessageInResponse.rawMessageInResponse` is the alternative. `getTraceAsString()` / `__toString()` and a Throwable laundered through a formatter call are deliberate v1 misses.
+
+### `ForbidSentinelFallbackOnNarrowingHelperRule` — configurable first-party namespaces
+
+A **narrowing helper** is a boundary helper: `mixed` external data in (an XML leaf, a CSV cell, a decoded JSON node), a nullable scalar out, where `null` means "this input was unreadable". A sentinel fallback throws that signal away:
+
+```php
+$gender = $this->text($leaf) ?? '';                  // ERROR — empty SET value gets persisted
+$names  = [$this->text($leaf) ?? ''];                // ERROR — [''] reads as non-empty
+
+$text = $this->text($leaf);
+
+if ($text === null) {
+    return;                                          // fine — skip the write
+}
+
+// never flagged:
+$dob   = Carbon::parse($this->text($leaf) ?? null);  // `?? null` KEEPS the failure signal — the
+                                                     // now()-as-date-of-birth damage happens in the
+                                                     // sink that swallows the null, one call later
+$city  = $this->lookup->get('city') ?? '';           // a lookup helper: its only `mixed` parameter
+                                                     // is the OPTIONAL $default, not external data
+```
+
+The `Carbon::parse(… ?? null)` case is the bug that motivated this rule, and it is deliberately out of its scope: there is no literal sentinel to match, so catching it needs sink-aware analysis (which callees swallow `null`) rather than a wider fallback matcher.
+
+Detection is keyed on the SHAPE, never on a helper-name list: the callee must be declared under a configured first-party namespace, take at least one **required** `mixed` (or untyped) parameter, and return a nullable scalar. The namespace prefixes are configurable, default `App`:
+
+```neon
+parameters:
+    narrowingHelperNamespacePrefixes:
+        # single backslashes — NEON keeps them literal outside double quotes
+        - 'App'
+        - 'Domain\Import'
+```
+
+Matching is namespace-BOUNDARY aware — `App` and `App\` behave identically, and `Application\Foo` is never swept in by the `App` default. The prefix gate is also what keeps builtins and vendor code out of scope: `filter_var($x, FILTER_VALIDATE_EMAIL) ?? ''` never fires, because a vendor helper's null contract is not ours to reason about.
+
+`?? null` is never flagged — it hands the failure signal to the caller, which is the point. A non-literal fallback (`?? $default`, `?? $this->fetch($leaf)`) is a deliberate miss, as is a helper result laundered through a variable before the coalesce.
+
+The boundary tell is a **required** `mixed` parameter. An optional one is the caller's own default flowing in, so `get(string $key, mixed $default = null): ?string` is a lookup helper and its `?? ''` stays silent. Known residual false positive: a helper with a **required** `mixed` key plus a default parameter (`get(mixed $key, string $default = ''): ?string`) is indistinguishable from a narrowing helper by signature alone and still fires — the escape hatch is an inline `@phpstan-ignore forbidSentinelFallbackOnNarrowingHelper.sentinelFallback`.
 
 ### Action namespace assumption
 
