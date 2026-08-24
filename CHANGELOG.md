@@ -16,6 +16,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
   **Field-validated (spike, 2026-07-21):** run against kendo / emmie / ublgenie / BIO backends — **zero false positives** (compliant chains short-circuit on the timeout; split/helper chains decline); a synthetic positive control fires on exactly the untimed method against the *real* Illuminate `Factory`. **Versioning: MINOR** (new rule; zero violations on every swept consumer ⇒ no baseline on kendo/emmie/ublgenie/BIO). A not-yet-swept consumer carrying an untimed *direct* facade/Factory chain would see a new error and adopt on its own bump PR; per the pre-1.0 caret convention `^0.8` excludes the next minor, so tagging auto-adopts nobody. **NOT tagged** (release is ally-gated).
 
+### Fixed
+
+- `ConnectionTransactionReturnTypeExtension` — corrected a **false claim in the test and source docblocks**, and gave the suite real teeth (war-room WR-0855). Both docblocks asserted that without the extension registered `ConnectionInterface::transaction()` returns `mixed` and "every assertion below would fail". That is **false on Laravel 13**, which annotates the method `@template TReturn` / `@param (\Closure(static): TReturn) $callback` / `@return TReturn` and satisfies all five existing `assertType()` calls unaided — measured directly: with the `extension.neon` service block removed on `illuminate/database` v13.20.0 the suite still reported **5/5 green**. Laravel **11** and **12** annotate it `@return mixed` (verified first-hand against v12.67.0), where the same experiment fails **5/5**, so the extension is load-bearing on two of the three supported majors and redundant — not wrong — on the third. Nothing in the rule code changed.
+
+  **Why this was invisible:** `.github/workflows/ci.yml`'s only matrix axis was PHP (`8.4`, `8.5`), so every run resolved `illuminate/*` to the highest satisfying release. Two of three supported majors had never been exercised. A new **`check-lowest-laravel`** job (PHP `8.4`/`8.5` × `illuminate/* ^12.0`) now pins the six `illuminate/*` requires down before installing, asserts the resolved major really is 12 (a silent fallback to 13 would make the leg green for the wrong reason), and runs `composer phpstan` + `composer test`. It is in the `ci-passed` rollup. **Scoped deliberately:** `composer audit`, coverage and mutation stay on the existing highest-Laravel `check` legs — the lowest leg is a semantics probe, not a second full gate.
+
+  **The declared `^11.0` floor is NOT a CI leg, and that is itself a finding.** `illuminate/mail` has no patched 11.x for **CVE-2026-48019** (Laravel CRLF injection in the default email rule; patched in 12.60.0 and 13.10.0, and 11.x is past its security window), so Composer's default `audit.block-insecure` refuses to resolve `illuminate/mail:^11.0` outright, and `illuminate/*` cannot be split across majors (`illuminate/database` v11 requires `illuminate/collections ^11`). Laravel 12 carries the identical `@return mixed` annotation, so it probes the same semantics without pinning a known-vulnerable dependency. Whether the package should keep advertising `^11.0` support it cannot install is a constraint-policy question left open.
+
+  **Fixture teeth on every major:** `tests/Fixtures/ConnectionTransactionReturnType/transaction-return-type.php` gains a `LegacyAnnotatedConnection` interface that re-declares `transaction()` with Laravel 11/12's docblock verbatim, plus two `LegacyAnnotatedCaller` assertions through it. Unregistering the extension on Laravel 13 now fails **exactly those 2 of 7** assertions (the other 5 remain carried by 13.x's own generic — visible now instead of hidden); registered, 7/7 pass.
+
+- **Versioning: PATCH** — test, CI and documentation only; no rule is added, removed or changed, and no consumer sees a new or missing error.
+
 ## [0.8.0] — 2026-08-11
 
 **Release-as-a-whole: candidate MAJOR** — `EnforceActionResultDtoRule` (war-room enforcement queue #136), `ForbidInlineArrayJsonResponseInControllersRule` (queue #137) and `ForbidRawExceptionMessageInResponseRule` (queue #140) all surface new errors in already-clean consumer code, as does the `ForbidEloquentMutationInControllersRule` receiver-scope fix (see their bullets). Per the pre-1.0 caret convention `^0.7` excludes this minor, so tagging auto-adopts nobody — each consumer adopts on its own pin-bump PR. Seeds: kendo PR #1653 (queue #136 + #137), war-room queue #140 (ublgenie/codebook MCP-tool leak sites), tc-api PR #133 (baseline-unmatched finding). _(Section originally dated 2026-07-13 covering only the queue #136/#137 pair; the tag was cut 2026-08-11 at `30c5145` and this section was folded to match the shipped payload.)_
@@ -152,7 +164,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.8.0
+[0.7.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.7.0
+[0.6.1]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.6.1
 [0.6.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.6.0
 [0.5.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.5.0
 [0.4.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.4.0

@@ -38,7 +38,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 | `ForbidUntimedHttpClientRule` | War-room §Explicit HTTP timeouts (#8) | `forbidUntimedHttpClient.missingTimeout` (type-aware; flags an `Http` facade OR injected `Illuminate\Http\Client\Factory` chain that reaches a send verb with no explicit `->timeout()` / `withOptions(['timeout'])`. Conservative — fires only on fully-visible single-expression chains; declines split/helper-built chains + Guzzle/SDK surfaces to hold FP at zero. COMPLEMENTS, does not replace, the per-territory `ExternalHttpTimeoutTest`. on `main`, `[Unreleased]`) |
 | `EnforceAuditModelProtectionsRule` | ADR-0001 §Append-only | `enforceAuditModelProtections.hasFactoryForbidden` / `.softDeletesForbidden` / `.updatedAtNotDisabled` (denylist-inversion; discovers audit models by shape — `auditModelNameSuffixes` default `AuditLog` OR `auditModelNamespacePrefixes` default `App\Models\Audit` — and flags `HasFactory` / `SoftDeletes` / missing `const UPDATED_AT = null`. shipped v0.7.0) |
 | `EnforceActionResultDtoRule` | ADR-0020 + ADR-0011 | `enforceActionResultDto.arrayReturnFromExecute` (signature-only; flags an `array` / `?array` / `array\|Dto` union / `iterable` native return type on `App\Actions\*` `execute()`. Phpdoc-only `@return array{...}` is a deliberate miss; no `list<T>` carve-out. Seed kendo PR #1653. shipped v0.8.0) |
-| `ConnectionTransactionReturnTypeExtension` | (type extension, no rule) | — |
+| `ConnectionTransactionReturnTypeExtension` | (type extension, no rule) | — (resolves `ConnectionInterface::transaction()` to the closure's return type. **Load-bearing on `illuminate/* ^11`/`^12` only** — those annotate `@return mixed`; Laravel 13 annotates `@template TReturn`/`@return TReturn` and infers the same type unaided. Its teeth are measured by the `check-lowest-laravel` CI job, not by the unit suite on a Laravel-13 tree. WR-0855) |
 
 Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snapshot-on-Retry Safety) was the first Phase 2 addition, promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). `EnforceResourceDataValidatorOptInRule` (ADR-0009 §EAGER_LOAD validator opt-in) is the second Phase 2 addition, promoted from kendo PR #1084 under war-room enforcement queue #55. `EnforceFormRequestToDtoRule` (ADR-0012) is the third Phase 2 addition, promoted from entreezuil's `tests/Arch/FormRequestsTest.php` under the same queue #55 (instance 2). `EnforceExplicitHydrationRule` (ADR-0019) is the next Phase 2 candidate.
 
@@ -61,6 +61,19 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 | `composer phpstan` | Self-analysis on the package's own source |
 | `composer format` | Pint write |
 | `composer format:check` | Pint check |
+
+## CI
+
+`.github/workflows/ci.yml` runs two matrix jobs, both rolled up into the single required check `ci-passed`:
+
+| Job | Matrix | Runs |
+|---|---|---|
+| `check` | PHP `8.4`, `8.5` | audit + format + phpstan + coverage + coverage gate + mutation. Resolves `illuminate/*` to the **highest** satisfying release. |
+| `check-lowest-laravel` | PHP `8.4`, `8.5` × `illuminate/* ^12.0` | phpstan + tests only. |
+
+**Why the second job exists (WR-0855):** the package supports `illuminate/* ^11 || ^12 || ^13`, but a PHP-only matrix always resolves to the highest major, so two of three supported majors were never exercised — and `ConnectionTransactionReturnTypeExtension`'s entire reason for existing is a `@return mixed` annotation that Laravel 13 no longer carries. The job asserts the resolved major really is 12 before analysing; a silent fallback to 13 would make the leg pass for the wrong reason.
+
+**The declared `^11.0` floor is not a CI leg.** `illuminate/mail` has no patched 11.x for CVE-2026-48019, so Composer's default `audit.block-insecure` refuses to resolve it, and `illuminate/*` cannot be split across majors. Laravel 12 carries the identical `@return mixed` annotation and probes the same semantics. Whether the package should keep advertising `^11.0` support it cannot install is open.
 
 ## Versioning
 
