@@ -71,10 +71,13 @@ use function sprintf;
  * literal. Pint's class_keyword fixer calls class_exists() on string
  * literals that look like class names, and the Pint phar bundles a real
  * `Illuminate\Foundation\Http\FormRequest` whose ValidatesWhenResolvedTrait
- * dependency is NOT bundled — a bare FQCN string literal anywhere in this
- * package's PHP source makes `composer format` fatal with "Trait not
- * found". The `use` import is alias-only; consumers analysing non-Laravel
- * trees are unaffected because `::class` resolution requires no autoload.
+ * dependency is NOT bundled — a bare FQCN string literal for this class
+ * anywhere in the package's PHP source makes `composer format` fatal with
+ * "Trait not found". An FQCN the phar CAN load is worse than fatal: the fixer
+ * silently rewrites it back to `::class`, so the literal never survives a
+ * format run at all. The `use` import is alias-only; consumers analysing
+ * non-Laravel trees are unaffected because `::class` resolution requires no
+ * autoload.
  *
  * @implements Rule<InClassNode>
  */

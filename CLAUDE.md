@@ -47,6 +47,7 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 - **Namespace:** `ScriptDevelopment\PhpstanWarroomRules\` (PSR-4, `src/`).
 - **Action namespace assumption:** Rules that scope to Actions match `App\Actions\*` — Laravel convention used by every consuming territory. If we onboard a territory with a different actions namespace, lift this into a parameter rather than fork.
 - **Doctrine source in docblock:** Every rule's class-level docblock names its doctrine source (ADR or war-room principle). When a rule is added, the docblock is the contract.
+- **Error identifiers read `cameLCase.cameLCase`,** and `RuleIdentifierConventionTest` checks that **per rule file** — every file in `src/Rules/` must contribute at least one identifier the test can read, and one that hands `identifier()` an expression it cannot resolve fails by name. It used to scan all rules into one list and assert only that the list was non-empty, which stayed true while `EnforceAuditModelProtectionsRule` (three identifiers routed through a private helper) contributed nothing at all (WR-0853). An identifier that is not a literal must be a string constant of the same class; there is no exemption list, deliberately.
 - **No territory-specific exceptions hardcoded.** Per-territory false positives are suppressed via consumer `phpstan.neon` `ignoreErrors`, never by name in the rule code. (See LogRule history: emmie's hardcoded `Terminology::class` exception was dropped during package promotion.)
 
 ## Commands
@@ -64,16 +65,23 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 
 ## CI
 
-`.github/workflows/ci.yml` runs two matrix jobs, both rolled up into the single required check `ci-passed`:
+`.github/workflows/ci.yml` runs three jobs, all rolled up into the single required check `ci-passed`:
 
 | Job | Matrix | Runs |
 |---|---|---|
 | `check` | PHP `8.4`, `8.5` | audit + format + phpstan + coverage + coverage gate + mutation. Resolves `illuminate/*` to the **highest** satisfying release. |
 | `check-lowest-laravel` | PHP `8.4`, `8.5` × `illuminate/* ^12.0` | phpstan + tests only. |
+| `check-production-tree` | PHP `8.4`, `--no-dev` install | phpstan only, on the tree a consumer actually installs. |
+
+`ci-passed` requires every upstream lane to report `success`. It previously failed only on `failure` or `cancelled`, so a **skipped** lane passed the rollup — nothing skips today, but `ci-passed` is the only required check on `main`, so the first `if:` added upstream would have hollowed the gate out while still reporting green (WR-0852).
 
 **Why the second job exists (WR-0855):** the package supports `illuminate/* ^11 || ^12 || ^13`, but a PHP-only matrix always resolves to the highest major, so two of three supported majors were never exercised — and `ConnectionTransactionReturnTypeExtension`'s entire reason for existing is a `@return mixed` annotation that Laravel 13 no longer carries. The job asserts the resolved major really is 12 before analysing; a silent fallback to 13 would make the leg pass for the wrong reason.
 
 **The declared `^11.0` floor is not a CI leg.** `illuminate/mail` has no patched 11.x for CVE-2026-48019, so Composer's default `audit.block-insecure` refuses to resolve it, and `illuminate/*` cannot be split across majors. Laravel 12 carries the identical `@return mixed` annotation and probes the same semantics. Whether the package should keep advertising `^11.0` support it cannot install is open.
+
+**Why the third job exists (WR-0854):** six rules name an `illuminate/http` or `symfony/http-kernel` FQCN as an analysis anchor, and neither package is a dependency — those classes exist here only as hand-written fixtures under `tests/Fixtures/`, which `autoload-dev` classmaps. `composer phpstan` was therefore green against a tree no consumer ever installs, and reported **7 `class.notFound`** the moment the dev autoloader was removed. The anchors are now declared for analysis in `stubs/analysis-anchors.php` (wired through `phpstan.neon.dist`'s `scanFiles`, which `extension.neon` does not include, so consumers are untouched), and this job installs `--no-dev` and analyses. It first asserts a fixture-declared class is **not** autoloadable — without that control the job reports a clean analysis both when the production tree is sound and when the fixtures have crept back into the runtime autoloader.
+
+**Why the anchors are `::class` and not FQCN strings.** Pint's `class_keyword` fixer calls `class_exists()` on every string literal and rewrites the resolvable ones back to `::class`; the Pint phar bundles five of the six, and half-bundles `Illuminate\Foundation\Http\FormRequest` so a literal for it makes `composer format` fatal outright. A plain FQCN string does not survive a format run, which is why the anchors are declared to PHPStan instead.
 
 ## Versioning
 

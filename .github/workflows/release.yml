@@ -71,6 +71,19 @@ jobs:
                       }
                       found { print }
                   ' CHANGELOG.md > release-notes.md
+
+                  # WR-0852: awk exits 0 having printed nothing when the tag has
+                  # no matching heading, so `set -euo pipefail` catches nothing
+                  # and `gh release create --notes-file` publishes an EMPTY
+                  # release on a green job. Whitespace-only counts as empty: a
+                  # heading with no body under it is the same silent outcome.
+                  if ! grep -q '[^[:space:]]' release-notes.md; then
+                      echo "::error::CHANGELOG.md has no content under a [$VERSION] heading (tag $TAG), so the release would publish with empty notes."
+                      echo "Headings present in CHANGELOG.md:"
+                      grep '^## \[' CHANGELOG.md || echo "  (none — the file has no version headings at all)"
+                      exit 1
+                  fi
+
                   echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
             - name: Create GitHub release
