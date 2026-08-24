@@ -109,10 +109,10 @@ jobs:
     # carries `@return TReturn` and hides whether
     # ConnectionTransactionReturnTypeExtension still works. Laravel 12 annotates
     # `@return mixed`, the shape the extension exists for. Cheap steps only:
-    # coverage, mutation and audit stay on `check`. The declared `^11.0` floor is
-    # NOT a leg: illuminate/mail has no patched 11.x for CVE-2026-48019, so
-    # composer's block-insecure default refuses to resolve it and illuminate/*
-    # cannot be split across majors.
+    # coverage, mutation and audit stay on `check`. Laravel 12 is the DECLARED
+    # FLOOR (WR-0860 dropped `^11.0`), so this leg now tests the real lower
+    # bound rather than a middle major — pinning here and pinning the manifest
+    # floor are the same thing, and must stay that way.
     check-lowest-laravel:
         runs-on: ubuntu-latest
         strategy:
