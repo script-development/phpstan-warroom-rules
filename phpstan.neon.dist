@@ -1,5 +1,8 @@
 # Self-analysis config — analyzes the package's own source.
 # Strict (level max), no baseline. The package is small enough to launch clean.
+#
+# Consumers include `extension.neon`, never this file, so nothing configured
+# here reaches a consumer's analysis.
 
 parameters:
     level: max
@@ -7,3 +10,8 @@ parameters:
         - src
     excludePaths:
         - tests/Fixtures/*
+    scanFiles:
+        # WR-0854 — declares the `illuminate/http` + `symfony/http-kernel` FQCNs
+        # that six rules name as analysis anchors but this package deliberately
+        # does not depend on. Read the file's own header before adding to it.
+        - stubs/analysis-anchors.php

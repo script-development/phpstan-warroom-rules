@@ -62,6 +62,48 @@ jobs:
                   retention-days: 14
                   if-no-files-found: ignore
 
+    # WR-0854: `check` installs dev dependencies, and `autoload-dev` classmaps
+    # `tests/Fixtures/` — where hand-written `Illuminate\Http\*` and
+    # `Symfony\…\HttpKernel` stubs live. Six rules name those FQCNs as analysis
+    # anchors, so the fixtures were silently satisfying `src/`: `composer
+    # phpstan` was green only against a tree no consumer ever installs, and
+    # reported 7 `class.notFound` the moment the dev autoloader was removed.
+    # This leg analyses the package exactly as a consumer receives it. The
+    # anchors are declared for analysis in `stubs/analysis-anchors.php` (wired
+    # via `scanFiles`), so a NEW anchor added without a declaration fails here.
+    check-production-tree:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - name: Setup PHP 8.4
+              uses: shivammathur/setup-php@728c6c6b8cf02c2e48117716a91ee48313958a19 # v2
+              with:
+                  php-version: '8.4'
+                  coverage: none
+                  tools: composer:v2
+
+            - name: Install production dependencies only
+              run: composer install --no-dev --prefer-dist --no-progress --no-interaction
+
+            # Positive control for the leg above it. Without this the job reports
+            # a clean analysis both when the production tree is genuinely sound
+            # and when the fixture stubs have crept back into the runtime
+            # autoloader — the exact failure it exists to catch. `Request` is a
+            # fixture-declared anchor: reachable here means dev autoloading is
+            # in play and the analysis below is measuring the wrong tree.
+            - name: Assert the dev fixture stubs are NOT autoloadable
+              run: |
+                  set -euo pipefail
+                  php -r 'require "vendor/autoload.php";
+                      if (class_exists("Illuminate\\Http\\Request")) {
+                          fwrite(STDERR, "Illuminate\\Http\\Request is autoloadable on a --no-dev install: the dev fixture stubs are reachable, so the analysis below is not measuring the production tree.\n");
+                          exit(1);
+                      }'
+
+            - name: Static analysis (production tree)
+              run: composer phpstan
+
     # WR-0855: `check` resolves illuminate/* to the highest satisfying release, so
     # it only ever exercised Laravel 13 — whose ConnectionInterface::transaction()
     # carries `@return TReturn` and hides whether
@@ -115,11 +157,33 @@ jobs:
     ci-passed:
         name: ci-passed
         runs-on: ubuntu-latest
-        needs: [check, check-lowest-laravel]
+        needs: [check, check-lowest-laravel, check-production-tree]
         if: always()
         steps:
-            - name: Verify all matrix legs passed
-              if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+            # WR-0852: this used to fail only on 'failure' or 'cancelled', so a
+            # SKIPPED lane passed the rollup. Nothing skips today (no upstream
+            # job carries an `if:` and the workflow has no `paths:` filter), but
+            # ci-passed is the single required check on main, so the day someone
+            # adds one the merge gate hollows out while still reporting green.
+            # Requiring success is also future-proof in the direction that
+            # matters: a result value GitHub has not shipped yet fails here
+            # rather than slipping through an enumeration of the bad ones.
+            - name: Verify every upstream lane succeeded
+              env:
+                  RESULTS: ${{ join(needs.*.result, ' ') }}
               run: |
-                  echo "One or more CI lanes did not pass."
-                  exit 1
+                  set -euo pipefail
+
+                  echo "upstream lane results: ${RESULTS:-<none>}"
+
+                  if [ -z "${RESULTS//[[:space:]]/}" ]; then
+                      echo "::error::ci-passed received no upstream results, so it is gating nothing."
+                      exit 1
+                  fi
+
+                  for result in $RESULTS; do
+                      if [ "$result" != "success" ]; then
+                          echo "::error::An upstream CI lane reported '$result'. ci-passed requires every lane to succeed."
+                          exit 1
+                      fi
+                  done

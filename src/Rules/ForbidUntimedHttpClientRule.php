@@ -96,12 +96,13 @@ final class ForbidUntimedHttpClientRule implements Rule
     private const string HTTP_FACADE = Http::class;
 
     /**
-     * Literal FQCN, not `Factory::class` — `illuminate/http` is not in this
-     * package's own dev tree (only `illuminate/support` is), so a class-const
-     * fetch is a `class.notFound` under self-analysis. `ObjectType` takes the
-     * string happily; in a consumer tree without Laravel the anchor simply
-     * never matches (correct: nothing to enforce). Same pattern as the
-     * sibling rule's `DEFAULT_SINK`.
+     * `illuminate/http` is not a dependency of this package, so this anchor
+     * names a class that exists only in a consumer's tree; where Laravel is
+     * absent the anchor simply never matches, which is correct. PHPStan is told
+     * the name exists by `phpstan.neon.dist`'s `scanFiles` — a plain FQCN string
+     * would be the more obvious form and is not available, because Pint's
+     * `class_keyword` fixer rewrites any resolvable FQCN string back to
+     * `::class` and the phar resolves this one. WR-0854.
      */
     private const string CLIENT_FACTORY = Factory::class;
 
