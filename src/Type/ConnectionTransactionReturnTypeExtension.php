@@ -14,13 +14,13 @@ use PHPStan\Type\Type;
 /**
  * Resolves the return type of ConnectionInterface::transaction() to the closure's return type.
  *
- * Load-bearing on illuminate/database ^11 and ^12, which annotate
+ * Load-bearing on illuminate/database ^12, which annotates
  * ConnectionInterface::transaction() `@return mixed` — there, without this extension,
  * $connection->transaction(fn () => $foo) is mixed, which breaks strict typing of
  * transaction call sites and weakens downstream rules that reason about transactional
  * code. Laravel 13 annotates the method `@template TReturn`/`@return TReturn` and infers
  * the same type unaided, so on ^13 alone the extension is redundant rather than wrong.
- * It stays registered because the package supports all three majors. WR-0855.
+ * It stays registered because the package supports both majors. WR-0855, WR-0860.
  */
 final class ConnectionTransactionReturnTypeExtension implements DynamicMethodReturnTypeExtension
 {
