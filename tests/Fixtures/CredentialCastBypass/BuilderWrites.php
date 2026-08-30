@@ -5,6 +5,7 @@ declare(strict_types = 1);
 namespace App\Actions\CredentialCastBypass;
 
 use App\Models\CredentialCastBypass\ApiKey;
+use App\Models\CredentialCastBypass\TraitCastModel;
 use App\Models\CredentialCastBypass\User;
 use App\Models\CredentialCastBypass\Vault;
 
@@ -67,6 +68,16 @@ final class BuilderWrites
     public function relationDerivedWrite(User $user): void
     {
         $user->apiKeys()->update(['secret' => 'raw']);
+    }
+
+    public function castDeclaredInATraitViaMethod(): void
+    {
+        TraitCastModel::query()->update(['trait_secret' => 'raw']);
+    }
+
+    public function castDeclaredInATraitViaProperty(): void
+    {
+        TraitCastModel::query()->update(['trait_notes' => 'raw']);
     }
 
     public function twoCredentialColumnsInOnePayload(): void

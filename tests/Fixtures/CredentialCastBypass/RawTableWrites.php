@@ -28,6 +28,23 @@ final class RawTableWrites
         DB::table('users')->update(['login_count' => 1]);
     }
 
+    public function connectionScopedTableWrite(): void
+    {
+        DB::connection('mysql')->table('users')->update(['password' => 'plaintext']);
+    }
+
+    /**
+     * Hoisting the builder into a variable defeats the chain walk — the
+     * variable's TYPE is a bare `Query\Builder` carrying no table name, so
+     * there is nothing left to resolve. Documented, tested silence.
+     */
+    public function hoistedTableBuilder(): void
+    {
+        $query = DB::table('users');
+
+        $query->update(['password' => 'plaintext']);
+    }
+
     public function unmappedTable(): void
     {
         DB::table('articles')->update(['password' => 'plaintext']);

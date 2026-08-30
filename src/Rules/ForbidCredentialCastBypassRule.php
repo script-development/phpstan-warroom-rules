@@ -15,6 +15,7 @@ use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Class_;
+use PhpParser\Node\Stmt\ClassLike;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Property;
 use PhpParser\Node\Stmt\Return_;
@@ -34,6 +35,7 @@ use PHPStan\Type\TypeCombinator;
 use function array_key_exists;
 use function array_keys;
 use function array_reverse;
+use function implode;
 use function is_array;
 use function sprintf;
 use function str_starts_with;
@@ -113,9 +115,24 @@ use function str_starts_with;
  * `ClassReflection::getFileName()` names, locates the class by resolved
  * `namespacedName`, and collects `'column' => 'cast'` string pairs from BOTH
  * the `casts()` method's `return [...]` statements and a `$casts` property
- * default. Parents are walked and merged with the child winning, so a cast
- * declared on an abstract base still counts at the leaf. A model whose file
- * cannot be read, parsed, or located is treated as having no casts — silent.
+ * default.
+ *
+ * Both the ancestry AND the trait use-chain are walked — Laravel models compose
+ * cast maps from traits routinely, and a credential cast declared in a trait
+ * would otherwise silently exempt every model using it. `getTraits(true)`
+ * flattens traits-used-by-traits, so a cast two hops away still counts. The
+ * merge reproduces PHP's own member resolution: per ancestor, oldest first,
+ * traits then the class's own declarations — so a class-declared cast beats a
+ * trait-imported one, a trait-imported cast beats an inherited one, and the leaf
+ * beats everything.
+ *
+ * A declaring source whose PHP cannot be located or parsed does NOT silently
+ * count as "declares no casts". That would fail OPEN on exactly the models this
+ * rule exists to guard, and it makes MISSING indistinguishable from FAILED. The
+ * call site is reported under a separate identifier,
+ * `forbidCredentialCastBypass.modelSourceUnreadable`, saying the cast map is
+ * incomplete — regardless of the payload, because with an incomplete map the
+ * rule cannot claim the payload is clean.
  *
  * A cast counts as credential-bearing when its value is exactly `hashed`,
  * exactly `encrypted`, or begins with `encrypted:` (`encrypted:array`,
@@ -136,6 +153,14 @@ use function str_starts_with;
  *   - **`upsert()`'s third argument** (the update-column list) — its column
  *     names are VALUES, not keys, and every column named there must already
  *     appear in the row payload this rule does read.
+ *   - **A `DB::table('…')` builder hoisted into a variable** — `$q =
+ *     DB::table('users'); $q->update([...]);`. The chain walk needs the
+ *     `table('…')` literal, and the variable's TYPE is a bare
+ *     `Illuminate\Database\Query\Builder` that carries no table name, so once
+ *     the builder is behind a variable there is nothing left to resolve. Chain
+ *     forms ARE covered, including `DB::connection('…')->table('…')` and any
+ *     number of intermediate hops. This is a limitation of the query builder's
+ *     type, not of the walk.
  *   - **Static-magic builder entry** (`Model::where(...)->update([...])`
  *     without larastan) — plain PHPStan cannot type `Model::__callStatic`, so
  *     the receiver resolves to an error type and the rule declines. Consumers
@@ -148,6 +173,15 @@ use function str_starts_with;
 final class ForbidCredentialCastBypassRule implements Rule
 {
     private const string IDENTIFIER = 'forbidCredentialCastBypass.castBypassedByBuilderWrite';
+
+    /**
+     * Reported when a declaring source could not be read, so the cast map is
+     * INCOMPLETE and the rule cannot vouch for the payload. A distinct
+     * identifier because MISSING and FAILED must not arrive as the same
+     * (silent) outcome — a consumer can suppress this one alone without
+     * disarming the real check.
+     */
+    private const string UNREADABLE_IDENTIFIER = 'forbidCredentialCastBypass.modelSourceUnreadable';
 
     /**
      * Builder write verbs that ship their payload to SQL without routing
@@ -181,10 +215,10 @@ final class ForbidCredentialCastBypassRule implements Rule
     private const array CREDENTIAL_CASTS = ['hashed', 'encrypted'];
 
     /**
-     * Cast maps already read this run, keyed by model FQCN. A model is parsed
-     * once even when a hundred call sites write to it.
+     * Cast resolutions already computed this run, keyed by model FQCN. A model
+     * is parsed once even when a hundred call sites write to it.
      *
-     * @var array<string, array<string, string>>
+     * @var array<string, array{casts: array<string, string>, unreadable: list<string>}>
      */
     private array $castCache = [];
 
@@ -231,20 +265,25 @@ final class ForbidCredentialCastBypassRule implements Rule
             return [];
         }
 
-        $casts = $this->credentialCastsFor($modelFqcn);
-
-        if ($casts === []) {
-            return [];
-        }
+        $resolution = $this->castResolutionFor($modelFqcn);
 
         $errors = [];
 
+        // Reported REGARDLESS of the payload, and deliberately: when a
+        // declaring source could not be read, this rule does not know which
+        // columns carry a credential cast, so it cannot say the payload is
+        // clean. Staying silent here would be a fail-open on the one rule whose
+        // whole value is catching a silent plaintext write.
+        if ($resolution['unreadable'] !== []) {
+            $errors[] = $this->buildUnreadableSourceError($node, $modelFqcn, $resolution['unreadable']);
+        }
+
         foreach ($this->payloadColumns($node, $scope, self::WRITE_METHODS[$method]) as $column) {
-            if (!array_key_exists($column, $casts)) {
+            if (!array_key_exists($column, $resolution['casts'])) {
                 continue;
             }
 
-            $errors[] = $this->buildError($node, $modelFqcn, $column, $casts[$column], $method);
+            $errors[] = $this->buildError($node, $modelFqcn, $column, $resolution['casts'][$column], $method);
         }
 
         return $errors;
@@ -455,32 +494,48 @@ final class ForbidCredentialCastBypassRule implements Rule
 
     /**
      * The model's credential-bearing casts as `column => cast`, merged across
-     * the ancestry with the child winning. Memoized per FQCN.
+     * the ancestry AND the trait use-chain, plus the list of declaring sources
+     * whose PHP could not be read. Memoized per FQCN.
      *
-     * @return array<string, string>
+     * Merge order reproduces PHP's own member resolution: for each ancestor,
+     * oldest first, apply that ancestor's traits and then its own declarations.
+     * A class-declared cast therefore beats one imported from its traits, a
+     * trait-imported cast beats an inherited one, and the leaf beats everything.
+     *
+     * The `unreadable` list is the reason this returns a shape rather than a
+     * bare map: an ancestor whose source cannot be parsed yields the SAME empty
+     * cast set as an ancestor that genuinely declares none, and silently
+     * treating the two alike would make the rule fail OPEN on exactly the models
+     * it exists to guard. See `buildUnreadableSourceError()`.
+     *
+     * @return array{casts: array<string, string>, unreadable: list<string>}
      */
-    private function credentialCastsFor(string $modelFqcn): array
+    private function castResolutionFor(string $modelFqcn): array
     {
         if (array_key_exists($modelFqcn, $this->castCache)) {
             return $this->castCache[$modelFqcn];
         }
 
-        $this->castCache[$modelFqcn] = [];
+        $empty = ['casts' => [], 'unreadable' => []];
+        $this->castCache[$modelFqcn] = $empty;
 
         if (!$this->reflectionProvider->hasClass($modelFqcn)) {
-            return [];
+            return $empty;
         }
 
         $classReflection = $this->reflectionProvider->getClass($modelFqcn);
 
         $casts = [];
+        $unreadable = [];
 
-        // Ancestors first so a cast redeclared on the child overwrites the
-        // inherited one, matching how Laravel merges the maps at runtime.
         foreach (array_reverse([$classReflection, ...$classReflection->getParents()]) as $ancestor) {
-            foreach ($this->declaredCasts($ancestor) as $column => $cast) {
-                $casts[$column] = $cast;
+            // `getTraits(true)` flattens traits-used-by-traits, so a cast
+            // declared two trait hops away still counts.
+            foreach ($ancestor->getTraits(true) as $trait) {
+                $this->mergeDeclaredCasts($trait, $casts, $unreadable);
             }
+
+            $this->mergeDeclaredCasts($ancestor, $casts, $unreadable);
         }
 
         $credentialCasts = [];
@@ -491,9 +546,32 @@ final class ForbidCredentialCastBypassRule implements Rule
             }
         }
 
-        $this->castCache[$modelFqcn] = $credentialCasts;
+        $resolution = ['casts' => $credentialCasts, 'unreadable' => $unreadable];
+        $this->castCache[$modelFqcn] = $resolution;
 
-        return $credentialCasts;
+        return $resolution;
+    }
+
+    /**
+     * Merge one declaring source's casts into `$casts`, recording the source's
+     * FQCN in `$unreadable` when its PHP could not be located or parsed.
+     *
+     * @param array<string, string> $casts
+     * @param list<string>          $unreadable
+     */
+    private function mergeDeclaredCasts(ClassReflection $source, array &$casts, array &$unreadable): void
+    {
+        $declared = $this->declaredCasts($source);
+
+        if ($declared === null) {
+            $unreadable[] = $source->getName();
+
+            return;
+        }
+
+        foreach ($declared as $column => $cast) {
+            $casts[$column] = $cast;
+        }
     }
 
     private function isCredentialCast(string $cast): bool
@@ -514,26 +592,30 @@ final class ForbidCredentialCastBypassRule implements Rule
      * analyser. Both declaration forms are read: the `casts()` method's
      * `return [...]` statements and a `$casts` property default.
      *
-     * @return array<string, string>
+     * Returns NULL — never an empty array — when the source cannot be located
+     * or parsed, so the caller can tell "declares no casts" from "we could not
+     * look". An empty array means the source was read and declares none.
+     *
+     * @return array<string, string>|null
      */
-    private function declaredCasts(ClassReflection $classReflection): array
+    private function declaredCasts(ClassReflection $classReflection): ?array
     {
         $file = $classReflection->getFileName();
 
         if ($file === null) {
-            return [];
+            return null;
         }
 
         try {
             $stmts = $this->parser->parseFile($file);
         } catch (ParserErrorsException) {
-            return [];
+            return null;
         }
 
         $classNode = $this->findClassNode($stmts, $classReflection->getName());
 
         if ($classNode === null) {
-            return [];
+            return null;
         }
 
         $casts = [];
@@ -568,16 +650,17 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * Locate the class declaration for `$fqcn` among parsed statements. The
-     * injected parser resolves names, so `namespacedName` is populated and the
-     * match is exact rather than by short name.
+     * Locate the class-like declaration for `$fqcn` among parsed statements —
+     * a class OR a trait, since Laravel models routinely compose their cast map
+     * from traits. The injected parser resolves names, so `namespacedName` is
+     * populated and the match is exact rather than by short name.
      *
      * @param array<Node> $nodes
      */
-    private function findClassNode(array $nodes, string $fqcn): ?Class_
+    private function findClassNode(array $nodes, string $fqcn): ?ClassLike
     {
         foreach ($nodes as $node) {
-            if ($node instanceof Class_ && $node->namespacedName?->toString() === $fqcn) {
+            if ($node instanceof ClassLike && $node->namespacedName?->toString() === $fqcn) {
                 return $node;
             }
 
@@ -675,6 +758,27 @@ final class ForbidCredentialCastBypassRule implements Rule
         }
 
         return $pairs;
+    }
+
+    /**
+     * @param list<string> $unreadable
+     */
+    private function buildUnreadableSourceError(
+        MethodCall $node,
+        string $modelFqcn,
+        array $unreadable,
+    ): IdentifierRuleError {
+        $message = sprintf(
+            'Cannot verify this write against %s: the PHP declaring %s could not be located or parsed, so the credential-cast map is incomplete and a hashed/encrypted column in this payload would go unreported. Fix the source, or suppress %s here if the write is known safe.',
+            $modelFqcn,
+            implode(', ', $unreadable),
+            self::UNREADABLE_IDENTIFIER,
+        );
+
+        return RuleErrorBuilder::message($message)
+            ->identifier(self::UNREADABLE_IDENTIFIER)
+            ->line($node->getStartLine())
+            ->build();
     }
 
     private function buildError(

@@ -7,6 +7,7 @@ namespace App\Actions\CredentialCastBypass;
 use App\Models\CredentialCastBypass\Article;
 use App\Models\CredentialCastBypass\NearMissCastModel;
 use App\Models\CredentialCastBypass\OverridingVault;
+use App\Models\CredentialCastBypass\TraitOverriddenCastModel;
 use App\Models\CredentialCastBypass\User;
 use Illuminate\Support\Facades\DB;
 
@@ -98,6 +99,16 @@ final class CleanWrites
     public function nearMissCastNames(): void
     {
         NearMissCastModel::query()->update(['blob' => 'x', 'digest' => 'y']);
+    }
+
+    /**
+     * The class REDECLARES the trait's `trait_secret` cast as `string`. PHP
+     * resolves a class-declared member over a trait-imported one, so this is no
+     * longer a credential column.
+     */
+    public function classDeclarationBeatsTraitImportedCast(): void
+    {
+        TraitOverriddenCastModel::query()->update(['trait_secret' => 'plain']);
     }
 
     /**
