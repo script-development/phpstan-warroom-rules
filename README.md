@@ -54,7 +54,7 @@ includes:
 | `EnforceCurrentUserAttributeRule` | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` | `Request::user()` / `Auth::user()` / `auth()->user()` calls inside `App\Http\Controllers\*` classes (namespace prefix, incl. sub-namespaces; configurable via `controllerNamespacePrefixes`) | Use `#[\Illuminate\Container\Attributes\CurrentUser] User $user` on the method parameter. Scope is decided by namespace, not class ancestry — a base-less `final` controller in `App\Http\Controllers` fires; FormRequests (`App\Http\Requests`), middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs, and console commands are silent because their namespaces do not start with the controller prefix (container-attribute injection does not apply to FormRequest methods regardless). |
 | `EnforceCurrentUserAttributeRule` | `enforceCurrentUserAttribute.useAttributeInsteadOfRequestUser` | `Request::user()` / `Auth::user()` / `auth()->user()` calls inside `App\Http\Controllers\*` classes (namespace prefix, incl. sub-namespaces) | Use `#[\Illuminate\Container\Attributes\CurrentUser] User $user` on the method parameter. Scope is decided by namespace, not class ancestry — a base-less `final` controller in `App\Http\Controllers` fires; FormRequests (`App\Http\Requests`), middleware (`App\Http\Middleware`), services, Actions (`App\Actions`), jobs, and console commands are silent because their namespaces do not start with the controller prefix (container-attribute injection does not apply to FormRequest methods regardless). |
 | `EnforceAuditModelProtectionsRule` | `enforceAuditModelProtections.hasFactoryForbidden` / `.softDeletesForbidden` / `.updatedAtNotDisabled` | Eloquent models recognised as audit records by SHAPE — short name ends with a configured suffix (default `AuditLog`) OR FQCN sits under a configured namespace (default `App\Models\Audit`) | Three append-only protections, each firing independently: using `HasFactory` (a factory is a direct-insert path bypassing the hash-chained writer), using `SoftDeletes` (audit rows are never removed), or not disabling `updated_at` (an audit row is written once and never mutated — declare `public const UPDATED_AT = null;`) is an error. Discovery is by pattern, never a hand-maintained class list — a denylist inversion, so a newly-added audit model cannot escape the protections by omission. Abstract intermediates are exempt (their concrete leaves carry inherited violations). Non-model classes named `*AuditLog` are excluded by the Eloquent `Model` type gate. Doctrine: ADR-0001 §Append-only. |
-| `ForbidCredentialCastBypassRule` | `forbidCredentialCastBypass.castBypassedByBuilderWrite` | Query-builder write calls (`update`, `insert`, `insertOrIgnore`, `insertGetId`, `upsert`, `updateOrInsert`) whose receiver is an `Illuminate\Database\Eloquent\Builder`, `Illuminate\Database\Query\Builder`, or `Illuminate\Database\Eloquent\Relations\Relation` | Naming a column that carries a `hashed`, `encrypted` or `encrypted:*` cast as a key in the write payload is an error. Casts fire on the MODEL path only; a builder write delegates to `toBase()->update()` and ships the raw value to SQL — no hash, no encryption, no exception, and a green test suite. The model path is **structurally** silent (a `Model` receiver never matches), and so are the builder methods that route through a model (`create`, `updateOrCreate`, `firstOrCreate`, `createOrFirst`) — they are the remediation. The model comes from the builder's/relation's generic type argument; a `DB::table('…')` chain carries none and resolves only through the opt-in `credentialCastTableModels` map (empty by default ⇒ silent, never inferred from the table name). The cast map is read from the model SOURCE — both the `casts()` method and a `$casts` property, merged across the ancestry **and the trait use-chain** (class-declared beats trait-imported beats inherited; `getTraits(true)` flattens traits-of-traits). A declaring source whose PHP cannot be located or parsed is NOT treated as "declares no casts" — that would fail open — and is reported under the separate identifier `forbidCredentialCastBypass.modelSourceUnreadable`. Payload keys are read from the resolved **constant array type**, so a payload hoisted into a variable is caught and a dynamic payload is silent. Deliberate misses: class-based casts (`AsEncryptedArrayObject::class`), dynamic keys, `upsert()`'s third argument, `Model::where(...)` static-magic entry without larastan, and a `DB::table()` builder hoisted into a variable (the variable's type carries no table name). Doctrine: war-room §Architectural Principles #1 + #10; ISO 27001 A.5.33 / AVG. Seed: lokalekeuze PR #65. |
+| `ForbidCredentialCastBypassRule` | `forbidCredentialCastBypass.castBypassedByBuilderWrite` | Query-builder write calls (`update`, `insert`, `insertOrIgnore`, `insertGetId`, `upsert`, `updateOrInsert`) whose receiver is an `Illuminate\Database\Eloquent\Builder`, `Illuminate\Database\Query\Builder`, or `Illuminate\Database\Eloquent\Relations\Relation` | Naming a column that carries a `hashed`, `encrypted` or `encrypted:*` cast as a key in the write payload is an error. Casts fire on the MODEL path only; a builder write delegates to `toBase()->update()` and ships the raw value to SQL — no hash, no encryption, no exception, and a green test suite. The model path is **structurally** silent (a `Model` receiver never matches), and so are the builder methods that route through a model (`create`, `updateOrCreate`, `firstOrCreate`, `createOrFirst`) — they are the remediation. The model comes from the builder's/relation's generic type argument; a `DB::table('…')` chain carries none and resolves only through the opt-in `credentialCastTableModels` map (empty by default ⇒ silent, never inferred from the table name). The cast map is read from the model SOURCE — both the `casts()` method and a `$casts` property, merged across the ancestry **and the trait use-chain** (class-declared beats trait-imported beats inherited; `getTraits(true)` flattens traits-of-traits). Composed maps are read too: the literal inside `array_merge(parent::casts(), [...])` and an array spread both contribute. Three fail-open shapes each get their OWN identifier rather than reading as "declares no casts" — `forbidCredentialCastBypass.modelSourceUnreadable` (source cannot be located or parsed), `.castMapIncomplete` (source read, but a declaration carries no array literal at all — `return self::CASTS;`), and `.configuredModelMissing` (`credentialCastTableModels` names a class that does not exist). Payload keys are read from the resolved **constant array type**, so a payload hoisted into a variable is caught and a dynamic payload is silent. Deliberate misses: class-based casts (`AsEncryptedArrayObject::class`), dynamic keys, `upsert()`'s third argument, `Model::where(...)` static-magic entry without larastan, and a `DB::table()` builder hoisted into a variable (the variable's type carries no table name). Doctrine: war-room §Architectural Principles #1 + #10; ISO 27001 A.5.33 / AVG. Seed: lokalekeuze PR #65. |
 
 ### `EnforceActionTransactionsRule` — write-method list
 
@@ -268,20 +268,30 @@ The walk needs the `table('…')` string literal, and the variable's type is a b
 left to read. This is a limitation of the query builder's type rather than of the
 walk, and it is a false negative, never a false positive.
 
-### `ForbidCredentialCastBypassRule` — when the model source cannot be read
+### `ForbidCredentialCastBypassRule` — when the cast map cannot be read in full
 
-If a declaring class or trait's PHP cannot be located or parsed, the cast map is
-incomplete and the rule cannot vouch for the payload. Rather than pass silently —
-which would fail open on exactly the models it exists to guard — it reports the
-call site under its own identifier:
+Three different things can stop the rule from reading a complete cast map, and
+each reports under its own identifier — MISSING, FAILED and MISCONFIGURED must
+not arrive as the same silent outcome, and the remediation differs:
 
-```
-forbidCredentialCastBypass.modelSourceUnreadable
-```
+| Identifier | Cause | Fix |
+|---|---|---|
+| `forbidCredentialCastBypass.modelSourceUnreadable` | a declaring class or trait's PHP cannot be located or parsed | fix the source |
+| `forbidCredentialCastBypass.castMapIncomplete` | the source was read, but a `casts()` return or a `$casts` default carries no array literal at all (`return self::CASTS;`, `return $this->buildCasts();`) | restate the credential columns as literal string pairs |
+| `forbidCredentialCastBypass.configuredModelMissing` | `credentialCastTableModels` maps a table to a class that does not exist (a typo, or a stale rename) | fix the FQCN, or drop the mapping |
 
-This is deliberately independent of the payload: with an incomplete map, a
-credential column in that payload would go unreported. Suppress this identifier
+All three are deliberately independent of the payload: with an incomplete map, a
+credential column in that payload would go unreported. Suppress an identifier
 alone (per file or per line) if a write is known safe; the real check stays armed.
+
+**Composed cast maps are read, not reported.**
+`return array_merge(parent::casts(), ['password' => 'hashed']);` and
+`return [...parent::casts(), 'password' => 'hashed'];` both contribute their
+literal, and the ancestor being merged in is walked separately, so the merged map
+is complete and neither form triggers `castMapIncomplete`. A composition mixing a
+literal with a *dynamic* contributor (`array_merge($this->dynamicCasts(), [...])`)
+reads the literal half and stays silent about the rest — flagging it would mean
+flagging every model that composes at all.
 
 ### `ForbidRawExceptionMessageInResponseRule` — configurable sinks + `@leak-safe` exemption
 

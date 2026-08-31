@@ -33,6 +33,12 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
 
     private const string UNREADABLE_MESSAGE = 'Cannot verify this write against %s: the PHP declaring %s could not be located or parsed, so the credential-cast map is incomplete and a hashed/encrypted column in this payload would go unreported. Fix the source, or suppress forbidCredentialCastBypass.modelSourceUnreadable here if the write is known safe.';
 
+    private const string INCOMPLETE_MESSAGE = 'Cannot verify this write against %s: %s declares casts in a form this rule cannot read (a casts() return or a $casts default carrying no array literal, such as a class constant or a helper call), so the credential-cast map is incomplete and a hashed/encrypted column in this payload would go unreported. Restate the credential columns as literal string pairs, or suppress forbidCredentialCastBypass.castMapIncomplete here if the write is known safe.';
+
+    private const string CONFIGURED_MODEL_MISSING_MESSAGE = 'Cannot verify this write: credentialCastTableModels maps this table to %s, which does not exist, so no credential-cast map could be read and a hashed/encrypted column in this payload would go unreported. Fix the FQCN in the parameter, or remove the mapping if the table is no longer covered.';
+
+    private const string UNINTERPRETABLE_CAST_WRITES = __DIR__ . '/../Fixtures/CredentialCastBypass/UninterpretableCastWrites.php';
+
     /**
      * Table-to-model map used by the `DB::table()` tests. Left null so the
      * default (empty map, `DB::table()` silent) is what every other test sees.
@@ -54,20 +60,31 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
     public function testHashedCastColumnInBuilderUpdateIsFlagged(): void
     {
         $this->analyse([self::BUILDER_WRITES], [
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 20],
-            [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 25],
-            [sprintf(self::MESSAGE, 'recovery_codes', 'App\Models\CredentialCastBypass\User', 'encrypted:array', 'update'), 30],
-            [sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'), 35],
-            [sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\Vault', 'hashed', 'update'), 40],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 47],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insert'), 52],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'upsert'), 60],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'updateOrInsert'), 65],
-            [sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'), 70],
-            [sprintf(self::MESSAGE, 'trait_secret', 'App\Models\CredentialCastBypass\TraitCastModel', 'hashed', 'update'), 75],
-            [sprintf(self::MESSAGE, 'trait_notes', 'App\Models\CredentialCastBypass\TraitCastModel', 'encrypted', 'update'), 80],
-            [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 85],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 85],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 23],
+            [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 28],
+            [sprintf(self::MESSAGE, 'recovery_codes', 'App\Models\CredentialCastBypass\User', 'encrypted:array', 'update'), 33],
+            [sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'), 38],
+            [sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\Vault', 'hashed', 'update'), 43],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 50],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insert'), 55],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'upsert'), 63],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'updateOrInsert'), 68],
+            [sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'), 73],
+            [sprintf(self::MESSAGE, 'trait_secret', 'App\Models\CredentialCastBypass\TraitCastModel', 'hashed', 'update'), 78],
+            [sprintf(self::MESSAGE, 'trait_notes', 'App\Models\CredentialCastBypass\TraitCastModel', 'encrypted', 'update'), 83],
+            [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 88],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 88],
+            // crit round 2, issue 1 — the leaf's OWN cast, added through
+            // `array_merge(parent::casts(), …)`. Silent before the fix while
+            // line 97's inherited cast fired, so the same model was
+            // half-enforced.
+            [sprintf(self::MESSAGE, 'composed_secret', 'App\Models\CredentialCastBypass\ComposedCastModel', 'hashed', 'update'), 93],
+            [sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\ComposedCastModel', 'hashed', 'update'), 98],
+            [sprintf(self::MESSAGE, 'spread_secret', 'App\Models\CredentialCastBypass\SpreadCastModel', 'encrypted', 'update'), 103],
+            // Composed maps must contribute their OWN pairs and nothing else —
+            // the nested and callback literals on this model are pinned clean in
+            // testModelPathAndNonCredentialWritesAreClean.
+            [sprintf(self::MESSAGE, 'real_secret', 'App\Models\CredentialCastBypass\NestedLiteralCastModel', 'hashed', 'update'), 108],
         ]);
     }
 
@@ -125,6 +142,66 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         $this->analyse([self::SINGLE_UNCAST_WRITE], []);
     }
 
+    /**
+     * crit round 2, issue 1 — the OTHER direction. `declaredCasts()` requires an
+     * array literal; a `casts()` return or `$casts` default that carries none
+     * (`return self::CASTS;`) was read as "declares nothing", so the write
+     * passed silently. The source is readable, so `modelSourceUnreadable` never
+     * fired either: the declaration SHAPE is what cannot be read, and it gets
+     * its own identifier because the remediation is different.
+     *
+     * Reported regardless of payload, like the unreadable-source diagnostic —
+     * neither payload below names a credential column, which is the point: with
+     * an incomplete map the rule cannot claim the payload is clean.
+     */
+    public function testCastDeclarationsCarryingNoArrayLiteralAreReportedRatherThanReadAsCastless(): void
+    {
+        $this->analyse([self::UNINTERPRETABLE_CAST_WRITES], [
+            [
+                sprintf(
+                    self::INCOMPLETE_MESSAGE,
+                    'App\Models\CredentialCastBypass\ConstantCastModel',
+                    'App\Models\CredentialCastBypass\ConstantCastModel',
+                ),
+                21,
+            ],
+            [
+                sprintf(
+                    self::INCOMPLETE_MESSAGE,
+                    'App\Models\CredentialCastBypass\ConstantCastPropertyModel',
+                    'App\Models\CredentialCastBypass\ConstantCastPropertyModel',
+                ),
+                26,
+            ],
+        ]);
+    }
+
+    /**
+     * crit round 2, issue 2. `hasClass()` returning false was answered with the
+     * same empty cast set as "this table is not mapped", so a typo or a stale
+     * rename in `credentialCastTableModels` silently and permanently disarmed
+     * the rule for that table — the exact fail-open shape the unreadable-source
+     * identifier exists to prevent, arriving through configuration instead of
+     * source.
+     *
+     * The three `users` sites fire; `articles` (unmapped) and the non-literal
+     * table argument stay silent, so this also pins that a bad mapping does not
+     * spray the diagnostic over tables it was never configured for.
+     */
+    public function testAMistypedConfiguredModelIsReportedRatherThanTreatedAsUnmapped(): void
+    {
+        $this->tableModelOverride = ['users' => 'App\Models\CredentialCastBypass\Uzer'];
+
+        $message = sprintf(self::CONFIGURED_MODEL_MISSING_MESSAGE, 'App\Models\CredentialCastBypass\Uzer');
+
+        $this->analyse([self::RAW_TABLE_WRITES], [
+            [$message, 18],
+            [$message, 23],
+            [$message, 28],
+            [$message, 33],
+        ]);
+    }
+
     // ---------------------------------------------------------- DENOMINATOR ---
 
     /**
@@ -144,8 +221,8 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             return preg_match_all('/(->|::)(update|insert|insertOrIgnore|insertGetId|upsert|updateOrInsert|create|updateOrCreate|save)\(/', $source);
         };
 
-        self::assertGreaterThanOrEqual(13, $writeCalls(self::BUILDER_WRITES), 'The violating fixture lost write sites.');
-        self::assertGreaterThanOrEqual(12, $writeCalls(self::CLEAN_WRITES), 'The clean fixture lost write sites, so its zero proves nothing.');
+        self::assertGreaterThanOrEqual(17, $writeCalls(self::BUILDER_WRITES), 'The violating fixture lost write sites.');
+        self::assertGreaterThanOrEqual(14, $writeCalls(self::CLEAN_WRITES), 'The clean fixture lost write sites, so its zero proves nothing.');
         self::assertGreaterThanOrEqual(7, $writeCalls(self::RAW_TABLE_WRITES), 'The raw-table fixture lost write sites.');
     }
 
@@ -175,6 +252,11 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             'App\Models\CredentialCastBypass\HasHashedSecret',
             'App\Models\CredentialCastBypass\HasEncryptedNotesProperty',
             'App\Models\CredentialCastBypass\ComposesHashedSecret',
+            'App\Models\CredentialCastBypass\ComposedCastModel',
+            'App\Models\CredentialCastBypass\SpreadCastModel',
+            'App\Models\CredentialCastBypass\ConstantCastModel',
+            'App\Models\CredentialCastBypass\ConstantCastPropertyModel',
+            'App\Models\CredentialCastBypass\NestedLiteralCastModel',
         ];
 
         $reflectionProvider = self::createReflectionProvider();

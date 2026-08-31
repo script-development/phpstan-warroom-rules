@@ -5,6 +5,9 @@ declare(strict_types = 1);
 namespace App\Actions\CredentialCastBypass;
 
 use App\Models\CredentialCastBypass\ApiKey;
+use App\Models\CredentialCastBypass\ComposedCastModel;
+use App\Models\CredentialCastBypass\NestedLiteralCastModel;
+use App\Models\CredentialCastBypass\SpreadCastModel;
 use App\Models\CredentialCastBypass\TraitCastModel;
 use App\Models\CredentialCastBypass\User;
 use App\Models\CredentialCastBypass\Vault;
@@ -83,5 +86,25 @@ final class BuilderWrites
     public function twoCredentialColumnsInOnePayload(): void
     {
         User::query()->update(['password' => 'p', 'api_token' => 't']);
+    }
+
+    public function castComposedWithArrayMerge(): void
+    {
+        ComposedCastModel::query()->update(['composed_secret' => 'raw']);
+    }
+
+    public function castInheritedThroughAComposingLeaf(): void
+    {
+        ComposedCastModel::query()->update(['passphrase' => 'raw']);
+    }
+
+    public function castComposedWithArraySpread(): void
+    {
+        SpreadCastModel::query()->update(['spread_secret' => 'raw']);
+    }
+
+    public function castDeclaredAlongsideANestedLiteral(): void
+    {
+        NestedLiteralCastModel::query()->update(['real_secret' => 'raw']);
     }
 }

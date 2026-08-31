@@ -5,7 +5,9 @@ declare(strict_types = 1);
 namespace App\Actions\CredentialCastBypass;
 
 use App\Models\CredentialCastBypass\Article;
+use App\Models\CredentialCastBypass\ComposedCastModel;
 use App\Models\CredentialCastBypass\NearMissCastModel;
+use App\Models\CredentialCastBypass\NestedLiteralCastModel;
 use App\Models\CredentialCastBypass\OverridingVault;
 use App\Models\CredentialCastBypass\TraitOverriddenCastModel;
 use App\Models\CredentialCastBypass\User;
@@ -117,5 +119,25 @@ final class CleanWrites
     public function dynamicPayload(string $column, string $value): void
     {
         User::query()->update([$column => $value]);
+    }
+
+    /**
+     * The non-credential entry from the SAME composed cast map. Reading a
+     * composed declaration must not turn every column on that model into a
+     * finding — this is the false-positive direction of crit round 2, issue 1.
+     */
+    public function nonCredentialColumnOfAComposedCastMap(): void
+    {
+        ComposedCastModel::query()->update(['composed_count' => 3]);
+    }
+
+    /**
+     * The two literals a composed cast map must NOT contribute: a value nested
+     * inside the map itself, and a literal inside a callback passed as an
+     * argument. Both would be findings on columns the model never casts.
+     */
+    public function nestedAndCallbackLiteralsAreNotCastPairs(): void
+    {
+        NestedLiteralCastModel::query()->update(['nested_secret' => 'x', 'decoy_secret' => 'y']);
     }
 }

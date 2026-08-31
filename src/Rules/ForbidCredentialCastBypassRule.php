@@ -12,6 +12,7 @@ use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
+use PhpParser\Node\FunctionLike;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt\Class_;
@@ -126,13 +127,31 @@ use function str_starts_with;
  * trait-imported one, a trait-imported cast beats an inherited one, and the leaf
  * beats everything.
  *
- * A declaring source whose PHP cannot be located or parsed does NOT silently
- * count as "declares no casts". That would fail OPEN on exactly the models this
- * rule exists to guard, and it makes MISSING indistinguishable from FAILED. The
- * call site is reported under a separate identifier,
- * `forbidCredentialCastBypass.modelSourceUnreadable`, saying the cast map is
- * incomplete — regardless of the payload, because with an incomplete map the
- * rule cannot claim the payload is clean.
+ * A cast map composed rather than returned literally is READ, not missed:
+ * `return array_merge(parent::casts(), ['password' => 'hashed']);` and
+ * `return [...parent::casts(), 'password' => 'hashed'];` both contribute their
+ * literal, and the ancestor being merged in is walked separately, so the merged
+ * map is complete. Array literals are collected from anywhere inside a returned
+ * expression — but never from inside an already-collected array, so a
+ * nested-array cast value stays a value rather than becoming a second cast map.
+ *
+ * Three failure modes are each reported under their OWN identifier, because
+ * MISSING, FAILED and MISCONFIGURED must not arrive as the same (silent)
+ * outcome, and each has a different remediation:
+ *
+ *   - **`…modelSourceUnreadable`** — a declaring source whose PHP cannot be
+ *     located or parsed. Fix the source.
+ *   - **`…castMapIncomplete`** — the source WAS read, but a `casts()` return or
+ *     a `$casts` default carries no array literal at all (`return self::CASTS;`,
+ *     `return $this->buildCasts();`). Restate the credential columns literally.
+ *   - **`…configuredModelMissing`** — `credentialCastTableModels` maps a table
+ *     to a class that does not exist. Fix the parameter. Reachable only from the
+ *     config map: an FQCN taken from a resolved generic type always exists.
+ *
+ * All three are reported REGARDLESS of the payload, because with an incomplete
+ * map the rule cannot claim the payload is clean. Treating any of them as
+ * "declares no casts" would fail OPEN on exactly the models this rule exists to
+ * guard, and would make MISSING indistinguishable from FAILED.
  *
  * A cast counts as credential-bearing when its value is exactly `hashed`,
  * exactly `encrypted`, or begins with `encrypted:` (`encrypted:array`,
@@ -167,6 +186,12 @@ use function str_starts_with;
  *     running larastan get `Builder<TModel>` there and the rule fires normally;
  *     `Model::query()->…` resolves on plain PHPStan either way.
  *   - **Raw SQL** (`DB::update('update users set …')`) — no payload array.
+ *   - **A composition mixing a literal with a dynamic contributor** —
+ *     `return array_merge($this->dynamicCasts(), ['password' => 'hashed']);`.
+ *     The literal IS read, so the map is not reported as incomplete, and
+ *     whatever the dynamic half contributes stays invisible. Reporting here
+ *     would mean flagging every model that composes at all, including the ones
+ *     read in full; the literal half being covered is the honest limit.
  *
  * @implements Rule<MethodCall>
  */
@@ -182,6 +207,29 @@ final class ForbidCredentialCastBypassRule implements Rule
      * disarming the real check.
      */
     private const string UNREADABLE_IDENTIFIER = 'forbidCredentialCastBypass.modelSourceUnreadable';
+
+    /**
+     * Reported when a declaring source WAS read but one of its cast
+     * declarations could not be interpreted — a `casts()` return or a `$casts`
+     * default that contributes no array literal at all (`return self::CASTS;`,
+     * `return $this->buildCasts();`). Distinct from UNREADABLE_IDENTIFIER
+     * because the remediation is different: the file is fine, the declaration
+     * shape is what this rule cannot read, and restating the credential columns
+     * in literal form fixes it. Composition forms that DO carry a literal
+     * (`array_merge(parent::casts(), [...])`, `[...parent::casts(), ...]`) are
+     * read, not reported.
+     */
+    private const string INCOMPLETE_IDENTIFIER = 'forbidCredentialCastBypass.castMapIncomplete';
+
+    /**
+     * Reported when `credentialCastTableModels` maps a table to a class that
+     * does not exist. A typo or a stale rename would otherwise be
+     * indistinguishable from "this table is not mapped", which silently and
+     * permanently disarms the rule for every write on that table — the same
+     * fail-open shape UNREADABLE_IDENTIFIER exists to prevent, arriving through
+     * the configuration instead of the source.
+     */
+    private const string CONFIG_IDENTIFIER = 'forbidCredentialCastBypass.configuredModelMissing';
 
     /**
      * Builder write verbs that ship their payload to SQL without routing
@@ -218,7 +266,7 @@ final class ForbidCredentialCastBypassRule implements Rule
      * Cast resolutions already computed this run, keyed by model FQCN. A model
      * is parsed once even when a hundred call sites write to it.
      *
-     * @var array<string, array{casts: array<string, string>, unreadable: list<string>}>
+     * @var array<string, array{casts: array<string, string>, unreadable: list<string>, incomplete: list<string>, missing: bool}>
      */
     private array $castCache = [];
 
@@ -274,8 +322,16 @@ final class ForbidCredentialCastBypassRule implements Rule
         // columns carry a credential cast, so it cannot say the payload is
         // clean. Staying silent here would be a fail-open on the one rule whose
         // whole value is catching a silent plaintext write.
+        if ($resolution['missing']) {
+            $errors[] = $this->buildConfiguredModelMissingError($node, $modelFqcn);
+        }
+
         if ($resolution['unreadable'] !== []) {
             $errors[] = $this->buildUnreadableSourceError($node, $modelFqcn, $resolution['unreadable']);
+        }
+
+        if ($resolution['incomplete'] !== []) {
+            $errors[] = $this->buildIncompleteCastMapError($node, $modelFqcn, $resolution['incomplete']);
         }
 
         foreach ($this->payloadColumns($node, $scope, self::WRITE_METHODS[$method]) as $column) {
@@ -508,7 +564,7 @@ final class ForbidCredentialCastBypassRule implements Rule
      * treating the two alike would make the rule fail OPEN on exactly the models
      * it exists to guard. See `buildUnreadableSourceError()`.
      *
-     * @return array{casts: array<string, string>, unreadable: list<string>}
+     * @return array{casts: array<string, string>, unreadable: list<string>, incomplete: list<string>, missing: bool}
      */
     private function castResolutionFor(string $modelFqcn): array
     {
@@ -516,26 +572,35 @@ final class ForbidCredentialCastBypassRule implements Rule
             return $this->castCache[$modelFqcn];
         }
 
-        $empty = ['casts' => [], 'unreadable' => []];
+        $empty = ['casts' => [], 'unreadable' => [], 'incomplete' => [], 'missing' => false];
         $this->castCache[$modelFqcn] = $empty;
 
+        // The class cannot be absent on the GENERIC path — that FQCN came out
+        // of a resolved type — so this branch is reachable only from the
+        // `credentialCastTableModels` map, where it means the configured class
+        // does not exist. Returning the "no mapping" answer here would let a
+        // typo disarm the rule permanently and silently.
         if (!$this->reflectionProvider->hasClass($modelFqcn)) {
-            return $empty;
+            $resolution = ['casts' => [], 'unreadable' => [], 'incomplete' => [], 'missing' => true];
+            $this->castCache[$modelFqcn] = $resolution;
+
+            return $resolution;
         }
 
         $classReflection = $this->reflectionProvider->getClass($modelFqcn);
 
         $casts = [];
         $unreadable = [];
+        $incomplete = [];
 
         foreach (array_reverse([$classReflection, ...$classReflection->getParents()]) as $ancestor) {
             // `getTraits(true)` flattens traits-used-by-traits, so a cast
             // declared two trait hops away still counts.
             foreach ($ancestor->getTraits(true) as $trait) {
-                $this->mergeDeclaredCasts($trait, $casts, $unreadable);
+                $this->mergeDeclaredCasts($trait, $casts, $unreadable, $incomplete);
             }
 
-            $this->mergeDeclaredCasts($ancestor, $casts, $unreadable);
+            $this->mergeDeclaredCasts($ancestor, $casts, $unreadable, $incomplete);
         }
 
         $credentialCasts = [];
@@ -546,7 +611,12 @@ final class ForbidCredentialCastBypassRule implements Rule
             }
         }
 
-        $resolution = ['casts' => $credentialCasts, 'unreadable' => $unreadable];
+        $resolution = [
+            'casts' => $credentialCasts,
+            'unreadable' => $unreadable,
+            'incomplete' => $incomplete,
+            'missing' => false,
+        ];
         $this->castCache[$modelFqcn] = $resolution;
 
         return $resolution;
@@ -558,9 +628,14 @@ final class ForbidCredentialCastBypassRule implements Rule
      *
      * @param array<string, string> $casts
      * @param list<string>          $unreadable
+     * @param list<string>          $incomplete
      */
-    private function mergeDeclaredCasts(ClassReflection $source, array &$casts, array &$unreadable): void
-    {
+    private function mergeDeclaredCasts(
+        ClassReflection $source,
+        array &$casts,
+        array &$unreadable,
+        array &$incomplete,
+    ): void {
         $declared = $this->declaredCasts($source);
 
         if ($declared === null) {
@@ -569,7 +644,11 @@ final class ForbidCredentialCastBypassRule implements Rule
             return;
         }
 
-        foreach ($declared as $column => $cast) {
+        if (!$declared['complete']) {
+            $incomplete[] = $source->getName();
+        }
+
+        foreach ($declared['casts'] as $column => $cast) {
             $casts[$column] = $cast;
         }
     }
@@ -592,11 +671,24 @@ final class ForbidCredentialCastBypassRule implements Rule
      * analyser. Both declaration forms are read: the `casts()` method's
      * `return [...]` statements and a `$casts` property default.
      *
-     * Returns NULL — never an empty array — when the source cannot be located
-     * or parsed, so the caller can tell "declares no casts" from "we could not
-     * look". An empty array means the source was read and declares none.
+     * Returns NULL — never an empty map — when the source cannot be located or
+     * parsed, so the caller can tell "declares no casts" from "we could not
+     * look". An empty map with `complete: true` means the source was read and
+     * declares none.
      *
-     * @return array<string, string>|null
+     * `complete` is FALSE when the source was read but a cast declaration could
+     * not be interpreted: a `casts()` return statement, or a `$casts` property
+     * default, from which no array literal can be extracted at all. Composition
+     * forms that DO carry a literal are read rather than reported — the array
+     * inside `array_merge(parent::casts(), [...])` is collected, and a spread
+     * (`[...parent::casts(), 'password' => 'hashed']`) is an array literal
+     * whose spread item simply carries no string key. In both, the contributor
+     * being merged in is an ancestor call, and the ancestry is walked
+     * separately, so the merged map is complete. What cannot be read is a
+     * declaration carrying no literal at all — `return self::CASTS;`,
+     * `return $this->buildCasts();`, `protected $casts = self::CASTS;`.
+     *
+     * @return array{casts: array<string, string>, complete: bool}|null
      */
     private function declaredCasts(ClassReflection $classReflection): ?array
     {
@@ -619,10 +711,11 @@ final class ForbidCredentialCastBypassRule implements Rule
         }
 
         $casts = [];
+        $complete = true;
 
         foreach ($classNode->stmts as $stmt) {
             if ($stmt instanceof ClassMethod && $stmt->name->toString() === 'casts') {
-                foreach ($this->returnedArrays($stmt) as $array) {
+                foreach ($this->returnedArrays($stmt, $complete) as $array) {
                     foreach ($this->stringPairs($array) as $column => $cast) {
                         $casts[$column] = $cast;
                     }
@@ -640,13 +733,19 @@ final class ForbidCredentialCastBypassRule implements Rule
                     continue;
                 }
 
+                if (!$prop->default instanceof Expr\Array_) {
+                    $complete = false;
+
+                    continue;
+                }
+
                 foreach ($this->stringPairs($prop->default) as $column => $cast) {
                     $casts[$column] = $cast;
                 }
             }
         }
 
-        return $casts;
+        return ['casts' => $casts, 'complete' => $complete];
     }
 
     /**
@@ -699,16 +798,21 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * Every array literal returned from a method body, including returns nested
-     * inside conditionals.
+     * Every array literal contributed by a `return` in a method body, including
+     * returns nested inside conditionals and literals nested inside a
+     * composition expression (`return array_merge(parent::casts(), [...]);`).
+     *
+     * `$complete` is set to FALSE when a return statement contributes no array
+     * literal at all, so the caller can report an incomplete cast map instead
+     * of silently reading it as "declares nothing".
      *
      * @return list<Expr\Array_>
      */
-    private function returnedArrays(ClassMethod $method): array
+    private function returnedArrays(ClassMethod $method, bool &$complete): array
     {
         $arrays = [];
 
-        $this->collectReturnedArrays($this->childNodes($method), $arrays);
+        $this->collectReturnedArrays($this->childNodes($method), $arrays, $complete);
 
         return $arrays;
     }
@@ -717,22 +821,71 @@ final class ForbidCredentialCastBypassRule implements Rule
      * @param list<Node>        $nodes
      * @param list<Expr\Array_> $arrays
      */
-    private function collectReturnedArrays(array $nodes, array &$arrays): void
+    private function collectReturnedArrays(array $nodes, array &$arrays, bool &$complete): void
     {
         foreach ($nodes as $node) {
-            if ($node instanceof Return_ && $node->expr instanceof Expr\Array_) {
-                $arrays[] = $node->expr;
+            if ($node instanceof Return_) {
+                if ($node->expr === null) {
+                    continue;
+                }
+
+                $returned = [];
+
+                $this->collectArrayLiterals([$node->expr], $returned);
+
+                if ($returned === []) {
+                    $complete = false;
+
+                    continue;
+                }
+
+                foreach ($returned as $array) {
+                    $arrays[] = $array;
+                }
 
                 continue;
             }
 
-            // A nested closure or anonymous class carries its own returns,
-            // which are not this method's cast map.
-            if ($node instanceof Expr\Closure || $node instanceof Class_) {
+            // A nested function-like (closure, arrow function, nested function
+            // declaration) or anonymous class carries its own returns, which
+            // are not this method's cast map.
+            if ($node instanceof FunctionLike || $node instanceof Class_) {
                 continue;
             }
 
-            $this->collectReturnedArrays($this->childNodes($node), $arrays);
+            $this->collectReturnedArrays($this->childNodes($node), $arrays, $complete);
+        }
+    }
+
+    /**
+     * Array literals reachable inside one expression WITHOUT descending into a
+     * collected array — so `['a' => ['b' => 'c']]` contributes the outer array
+     * only, and `'b' => 'c'` never becomes a cast pair of its own. Composition
+     * expressions DO contribute: `array_merge(parent::casts(), [...])` and a
+     * ternary over two literals both yield the literals they carry.
+     *
+     * A literal inside a function-like (a closure or arrow function passed as an
+     * argument, an anonymous class) is NOT collected — it is a callback's return
+     * value, not this cast map, and harvesting it would be a false positive on a
+     * column the model never casts.
+     *
+     * @param list<Node>        $nodes
+     * @param list<Expr\Array_> $arrays
+     */
+    private function collectArrayLiterals(array $nodes, array &$arrays): void
+    {
+        foreach ($nodes as $node) {
+            if ($node instanceof FunctionLike || $node instanceof Class_) {
+                continue;
+            }
+
+            if ($node instanceof Expr\Array_) {
+                $arrays[] = $node;
+
+                continue;
+            }
+
+            $this->collectArrayLiterals($this->childNodes($node), $arrays);
         }
     }
 
@@ -777,6 +930,40 @@ final class ForbidCredentialCastBypassRule implements Rule
 
         return RuleErrorBuilder::message($message)
             ->identifier(self::UNREADABLE_IDENTIFIER)
+            ->line($node->getStartLine())
+            ->build();
+    }
+
+    /**
+     * @param list<string> $incomplete
+     */
+    private function buildIncompleteCastMapError(
+        MethodCall $node,
+        string $modelFqcn,
+        array $incomplete,
+    ): IdentifierRuleError {
+        $message = sprintf(
+            'Cannot verify this write against %s: %s declares casts in a form this rule cannot read (a casts() return or a $casts default carrying no array literal, such as a class constant or a helper call), so the credential-cast map is incomplete and a hashed/encrypted column in this payload would go unreported. Restate the credential columns as literal string pairs, or suppress %s here if the write is known safe.',
+            $modelFqcn,
+            implode(', ', $incomplete),
+            self::INCOMPLETE_IDENTIFIER,
+        );
+
+        return RuleErrorBuilder::message($message)
+            ->identifier(self::INCOMPLETE_IDENTIFIER)
+            ->line($node->getStartLine())
+            ->build();
+    }
+
+    private function buildConfiguredModelMissingError(MethodCall $node, string $modelFqcn): IdentifierRuleError
+    {
+        $message = sprintf(
+            'Cannot verify this write: credentialCastTableModels maps this table to %s, which does not exist, so no credential-cast map could be read and a hashed/encrypted column in this payload would go unreported. Fix the FQCN in the parameter, or remove the mapping if the table is no longer covered.',
+            $modelFqcn,
+        );
+
+        return RuleErrorBuilder::message($message)
+            ->identifier(self::CONFIG_IDENTIFIER)
             ->line($node->getStartLine())
             ->build();
     }
