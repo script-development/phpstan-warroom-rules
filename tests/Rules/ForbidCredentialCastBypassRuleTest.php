@@ -4,6 +4,7 @@ declare(strict_types = 1);
 
 namespace ScriptDevelopment\PhpstanWarroomRules\Tests\Rules;
 
+use Composer\InstalledVersions;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as QueryBuilder;
@@ -19,9 +20,11 @@ use function array_key_exists;
 use function array_keys;
 use function array_map;
 use function array_values;
+use function count;
 use function dirname;
 use function explode;
 use function file_get_contents;
+use function in_array;
 use function is_string;
 use function preg_match;
 use function preg_match_all;
@@ -55,6 +58,27 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
     private const string CAST_DISPATCH_WRITES = __DIR__ . '/../Fixtures/CredentialCastBypass/CastDispatchWrites.php';
 
     private const string DISPATCH_NAMESPACE = 'App\Models\CredentialCastBypass\Dispatch\\';
+
+    /**
+     * Verbs that postdate this package's MINIMUM Laravel, mapped to the release
+     * that introduced them. Absent on the lowest-supported leg and present on
+     * the newest, and the test asserts both directions rather than treating an
+     * absence as permission to stop checking.
+     *
+     * ENUMERATED rather than guessed, against both supported majors: every one
+     * of the rule's 17 verbs resolves on `illuminate/database` 13.20, and
+     * exactly these three are absent on 12.68. `updateFrom`,
+     * `incrementOrCreate` and the non-`Each` quiet variants are already present
+     * on 12, which is why probing one quiet verb and generalising from it was
+     * wrong.
+     *
+     * @var array<string, string>
+     */
+    private const array VERSION_GATED_METHODS = [
+        'insertOrIgnoreReturning' => 'illuminate/database 13.x',
+        'incrementEachQuietly' => 'illuminate/database 13.x',
+        'decrementEachQuietly' => 'illuminate/database 13.x',
+    ];
 
     /** The one write site in the shape fixture with no table row — see its test. */
     private const string DOCUMENTED_FALSE_NEGATIVE = 'MergesCastsInConstructor';
@@ -429,6 +453,7 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
     {
         $declarers = [QueryBuilder::class, EloquentBuilder::class, Model::class];
         $checked = 0;
+        $skipped = [];
 
         foreach ($this->writeMethodSlots() as $method => $slots) {
             $reflection = null;
@@ -441,10 +466,23 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
                 }
             }
 
-            self::assertNotNull(
-                $reflection,
-                sprintf('The rule reads payloads from %s(), which no Laravel receiver class declares.', $method),
-            );
+            if ($reflection === null) {
+                // An absent verb is only acceptable when it is one this package
+                // knows postdates its minimum Laravel. Anything else means the
+                // rule reads a payload from a method that does not exist.
+                self::assertArrayHasKey(
+                    $method,
+                    self::VERSION_GATED_METHODS,
+                    sprintf(
+                        'The rule reads payloads from %s(), which no Laravel receiver class declares and which is not listed as version-gated.',
+                        $method,
+                    ),
+                );
+
+                $skipped[] = $method;
+
+                continue;
+            }
 
             $parameters = $reflection->getParameters();
 
@@ -469,11 +507,35 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             }
         }
 
-        self::assertGreaterThanOrEqual(
-            20,
+        // Reconciled, not a floor picked by hand: every slot of every present
+        // verb must have been checked. A hand-set minimum is calibrated on
+        // whichever Laravel the author happened to run, and silently wrong on
+        // the other — which is exactly how this assertion first failed.
+        $expected = 0;
+
+        foreach ($this->writeMethodSlots() as $method => $slots) {
+            if (!in_array($method, $skipped, true)) {
+                $expected += count($slots);
+            }
+        }
+
+        self::assertGreaterThan(0, $expected, 'The slot map is empty, so this test measures nothing.');
+        self::assertSame(
+            $expected,
             $checked,
-            'The slot map stopped being read, so this test would pass against an empty rule.',
+            'Fewer slots were checked than the present verbs declare, so part of the map went unread.',
         );
+
+        // On the NEWEST supported Laravel every verb must be present, so a
+        // rename there cannot hide behind the version gate — which is the only
+        // thing that would make skipping safe on the older leg.
+        if ($this->installedIlluminateMajor() >= 13) {
+            self::assertSame(
+                [],
+                $skipped,
+                'These verbs are absent on the newest supported Laravel, so they were renamed or removed rather than merely postdating the minimum.',
+            );
+        }
     }
 
     // ---------------------------------------------------------- DENOMINATOR ---
@@ -589,6 +651,22 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             $parser,
             $this->tableModelOverride ?? [],
         );
+    }
+
+    /**
+     * The major version of the installed `illuminate/database`.
+     *
+     * Read from Composer rather than from a class-existence probe, because the
+     * question here is "which Laravel is this?" and answering it by looking for
+     * one of the methods under test would make the guard argue with itself.
+     */
+    private function installedIlluminateMajor(): int
+    {
+        $version = InstalledVersions::getVersion('illuminate/database');
+
+        self::assertIsString($version, 'illuminate/database is not installed, so the signature check is measuring nothing.');
+
+        return (int) $version;
     }
 
     /**
