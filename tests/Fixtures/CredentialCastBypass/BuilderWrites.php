@@ -151,6 +151,81 @@ final class BuilderWrites
     }
 
     /**
+     * A NAMED argument only sits at its parameter's position when no earlier
+     * optional parameter was skipped. Here `$amount` is omitted, so the payload
+     * is argument 1 rather than 2 and a position-only reading finds nothing.
+     *
+     * The `update(values: …)` site below is the OTHER half of the pair: with one
+     * argument the named form lands at index 0 anyway, so it was already covered
+     * incidentally. It is pinned to keep it that way, not as a fix.
+     */
+    public function incrementWithNamedExtraArgument(): void
+    {
+        User::query()->increment('login_count', extra: ['password' => 'raw']);
+    }
+
+    public function updateWithNamedValuesArgument(): void
+    {
+        User::query()->update(values: ['password' => 'raw']);
+    }
+
+    /**
+     * A named argument AFTER the payload must not blind the positional read of
+     * the payload itself.
+     */
+    public function upsertWithNamedUniqueByArgument(): void
+    {
+        User::query()->upsert([['email' => 'a@b.c', 'password' => 'raw']], uniqueBy: ['email']);
+    }
+
+    /**
+     * `Query\Builder::updateFrom()` and `insertOrIgnoreReturning()` take a
+     * payload like `update()` and reach SQL the same way. Absent from
+     * `Eloquent\Builder`, but its `__call` forwards them.
+     */
+    public function updateFromPayload(): void
+    {
+        User::query()->updateFrom(['password' => 'raw']);
+    }
+
+    public function insertOrIgnoreReturningPayload(): void
+    {
+        User::query()->insertOrIgnoreReturning(['password' => 'raw']);
+    }
+
+    /**
+     * `incrementOrCreate()` routes `$attributes` through `firstOrCreate()` — a
+     * model save, so casts fire there and it is deliberately not read — then
+     * hands `$extra` to `Model::increment()`, which does not.
+     */
+    public function incrementOrCreateExtraPayload(): void
+    {
+        User::query()->incrementOrCreate(['email' => 'a@b.c'], 'login_count', 1, 1, ['password' => 'raw']);
+    }
+
+    /**
+     * A MODEL receiver, and still a bypass — the one family where it is.
+     * `Model::__call()` re-exposes the protected increment methods, and
+     * `Model::incrementOrDecrement()` casts the in-memory attribute via
+     * `forceFill($extra)` while passing the SAME `$extra` uncast to the query
+     * builder. The object is right; the row is plaintext.
+     */
+    public function modelIncrementExtraPayload(User $user): void
+    {
+        $user->increment('login_count', 1, ['password' => 'raw']);
+    }
+
+    public function modelDecrementEachExtraPayload(User $user): void
+    {
+        $user->decrementEach(['login_count' => 1], ['password' => 'raw']);
+    }
+
+    public function modelIncrementQuietlyExtraPayload(User $user): void
+    {
+        $user->incrementQuietly('login_count', 1, ['password' => 'raw']);
+    }
+
+    /**
      * A UNION receiver: `Builder<Article>|Builder<User>`, two different cast
      * maps behind one variable. Every branch is a real write, so every branch is
      * checked — and the castless model is deliberately FIRST, because reading

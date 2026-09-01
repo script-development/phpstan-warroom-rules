@@ -4,6 +4,9 @@ declare(strict_types = 1);
 
 namespace ScriptDevelopment\PhpstanWarroomRules\Tests\Rules;
 
+use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use PHPStan\Parser\Parser;
 use PHPStan\Rules\Rule;
 use PHPStan\Testing\RuleTestCase;
@@ -88,6 +91,15 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         'TwoHopInherited' => ['payload' => ['password'], 'naive' => ['password']],
         // A foreign static call is not `parent::casts()`, so the walk stops.
         'ReplacingOverrideWithForeignStaticCall' => ['payload' => ['password'], 'naive' => ['password']],
+        // Trait adaptation: a first-match walk over the imported traits picks the
+        // EXCLUDED declaration and reports a cast the model does not have.
+        'TraitMethodExcludedByInsteadOf' => ['payload' => ['password'], 'naive' => ['password']],
+        // A `parent::casts()` whose result is discarded contributes nothing.
+        'DiscardedParentCastsCall' => ['payload' => ['password'], 'naive' => ['password']],
+        // ...but one captured in a variable does — the fail-open guard.
+        'ParentCastsCapturedInVariable' => ['payload' => ['password', 'api_token'], 'naive' => ['password', 'api_token']],
+        // Branches disagreeing on one column: the credential cast wins.
+        'ConditionalReturnsDisagreeing' => ['payload' => ['password'], 'naive' => ['password']],
         'PropertyBase' => ['payload' => ['password'], 'naive' => ['password']],
         // A property IS inherited, unlike a replaced method body.
         'InheritedProperty' => ['payload' => ['password'], 'naive' => ['password']],
@@ -169,9 +181,25 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrement'), 140],
             [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementEach'), 145],
             [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrementEach'), 150],
+            // A NAMED argument sits at a different index than its parameter's
+            // position, so a position-only reading is silent here.
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'increment'), 164],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 169],
+            // A named argument AFTER the payload must not blind the payload's own
+            // positional read.
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'upsert'), 178],
+            // Postgres-only payload writes, forwarded by Eloquent's __call.
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'updateFrom'), 188],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insertOrIgnoreReturning'), 193],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementOrCreate'), 203],
+            // MODEL receivers — the one family where the model path bypasses
+            // casts, so the receiver type gate must not exclude them.
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'increment'), 215],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrementEach'), 220],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementQuietly'), 225],
             // Union receiver, castless branch first: reading only the first
             // branch reports nothing while the other branch writes plaintext.
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 164],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 239],
         ]);
     }
 
@@ -304,9 +332,12 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
      * Why the expectation is computed rather than written: a hand-written one
      * encodes the author's reading of Laravel, which is exactly what was wrong.
      * A merge-every-declaration reading of the ancestry, leaf wins, is wrong on
-     * seven of these shapes — six inventing a credential cast the model does not
+     * NINE of these shapes — eight inventing a credential cast the model does not
      * have, one calling a readable declaration unreadable — each masked in the
-     * older fixtures by a key collision. A rule
+     * older fixtures by a key collision. Resolving the method half by first match
+     * over the imported traits is wrong on two OTHERS (a trait `insteadof`, and a
+     * discarded `parent::casts()`), which is why shapes refuting both readings are
+     * kept: a table that only refutes an abandoned reading measures nothing. A rule
      * that invents a credential cast blocks a consumer's CI on a correct write;
      * on a security rule that spends the gate's authority faster than a missed
      * catch.
@@ -377,6 +408,74 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         $this->analyse([self::CAST_DISPATCH_WRITES], $this->expectedCastDispatchErrors());
     }
 
+    /**
+     * Every payload slot names a parameter that EXISTS on the Laravel method, at
+     * the position the rule reads.
+     *
+     * The rule addresses a payload by name first and position second, so each
+     * slot is two claims about `illuminate/database`: that a parameter of that
+     * name exists, and that it sits at that index. A Laravel rename or a
+     * reordered signature would break the named lookup silently — the rule would
+     * simply stop seeing named payloads, with no error anywhere — and a shifted
+     * position would make it read the wrong argument. Neither shows up in any
+     * other test here, because the fixtures call these methods positionally with
+     * the arguments the rule already expects.
+     *
+     * Verbs are matched against whichever of the three receiver classes declares
+     * them; the increment family exists on more than one, and the parameter names
+     * agree, so the first hit is authoritative.
+     */
+    public function testEveryPayloadSlotMatchesTheLaravelParameterItNames(): void
+    {
+        $declarers = [QueryBuilder::class, EloquentBuilder::class, Model::class];
+        $checked = 0;
+
+        foreach ($this->writeMethodSlots() as $method => $slots) {
+            $reflection = null;
+
+            foreach ($declarers as $class) {
+                if ((new ReflectionClass($class))->hasMethod($method)) {
+                    $reflection = (new ReflectionClass($class))->getMethod($method);
+
+                    break;
+                }
+            }
+
+            self::assertNotNull(
+                $reflection,
+                sprintf('The rule reads payloads from %s(), which no Laravel receiver class declares.', $method),
+            );
+
+            $parameters = $reflection->getParameters();
+
+            foreach ($slots as [$name, $position]) {
+                self::assertArrayHasKey(
+                    $position,
+                    $parameters,
+                    sprintf('%s() has no parameter at position %d.', $method, $position),
+                );
+                self::assertSame(
+                    $name,
+                    $parameters[$position]->getName(),
+                    sprintf(
+                        '%s() parameter %d is $%s, not $%s — the rule\'s named-argument lookup would silently never match.',
+                        $method,
+                        $position,
+                        $parameters[$position]->getName(),
+                        $name,
+                    ),
+                );
+                $checked++;
+            }
+        }
+
+        self::assertGreaterThanOrEqual(
+            20,
+            $checked,
+            'The slot map stopped being read, so this test would pass against an empty rule.',
+        );
+    }
+
     // ---------------------------------------------------------- DENOMINATOR ---
 
     /**
@@ -393,10 +492,10 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
 
             self::assertNotFalse($source, sprintf('Fixture %s could not be read.', $file));
 
-            return preg_match_all('/(->|::)(update|insert|insertOrIgnore|insertGetId|upsert|updateOrInsert|increment|decrement|incrementEach|decrementEach|create|updateOrCreate|save)\(/', $source);
+            return preg_match_all('/(->|::)(update|insert|insertOrIgnore|insertGetId|upsert|updateOrInsert|updateFrom|insertOrIgnoreReturning|increment|decrement|incrementEach|decrementEach|incrementQuietly|decrementQuietly|incrementEachQuietly|decrementEachQuietly|incrementOrCreate|create|updateOrCreate|save)\(/', $source);
         };
 
-        self::assertGreaterThanOrEqual(24, $writeCalls(self::BUILDER_WRITES), 'The violating fixture lost write sites.');
+        self::assertGreaterThanOrEqual(34, $writeCalls(self::BUILDER_WRITES), 'The violating fixture lost write sites.');
         self::assertGreaterThanOrEqual(14, $writeCalls(self::CLEAN_WRITES), 'The clean fixture lost write sites, so its zero proves nothing.');
         self::assertGreaterThanOrEqual(7, $writeCalls(self::RAW_TABLE_WRITES), 'The raw-table fixture lost write sites.');
     }
@@ -447,6 +546,8 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
                     'MidReplacing',
                     'DeclaresSecretViaMethod',
                     'DeclaresPlainPasswordViaMethod',
+                    'DeclaresPlainPasswordViaTraitToBeExcluded',
+                    'DeclaresHashedPasswordViaTraitToBeExcluded',
                 ],
             ),
         ];
@@ -488,6 +589,21 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             $parser,
             $this->tableModelOverride ?? [],
         );
+    }
+
+    /**
+     * The rule's own payload-slot map, read off the rule rather than restated —
+     * a copy here would drift and this test would then verify the copy.
+     *
+     * @return array<string, list<array{0: string, 1: int}>>
+     */
+    private function writeMethodSlots(): array
+    {
+        $slots = (new ReflectionClass(ForbidCredentialCastBypassRule::class))->getConstant('WRITE_METHODS');
+
+        self::assertIsArray($slots);
+
+        return $slots;
     }
 
     /**

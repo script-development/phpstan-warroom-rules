@@ -6,6 +6,8 @@ namespace App\Actions\CredentialCastBypass;
 
 use App\Models\CredentialCastBypass\Dispatch\ComposingOverride;
 use App\Models\CredentialCastBypass\Dispatch\ComposingOverrideShadowingParent;
+use App\Models\CredentialCastBypass\Dispatch\ConditionalReturnsDisagreeing;
+use App\Models\CredentialCastBypass\Dispatch\DiscardedParentCastsCall;
 use App\Models\CredentialCastBypass\Dispatch\GrandMethodBase;
 use App\Models\CredentialCastBypass\Dispatch\InheritedMethod;
 use App\Models\CredentialCastBypass\Dispatch\InheritedProperty;
@@ -13,6 +15,7 @@ use App\Models\CredentialCastBypass\Dispatch\LeafComposingOverMidReplacing;
 use App\Models\CredentialCastBypass\Dispatch\LeafMethod;
 use App\Models\CredentialCastBypass\Dispatch\MergesCastsInConstructor;
 use App\Models\CredentialCastBypass\Dispatch\MidReplacing;
+use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedInVariable;
 use App\Models\CredentialCastBypass\Dispatch\PassThroughOverride;
 use App\Models\CredentialCastBypass\Dispatch\PropertyBase;
 use App\Models\CredentialCastBypass\Dispatch\PropertyThenMethod;
@@ -22,6 +25,7 @@ use App\Models\CredentialCastBypass\Dispatch\ReplacingOverrideSameColumn;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverrideWithForeignStaticCall;
 use App\Models\CredentialCastBypass\Dispatch\SpreadingOverride;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodAndClassProperty;
+use App\Models\CredentialCastBypass\Dispatch\TraitMethodExcludedByInsteadOf;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodInherited;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodOverridden;
 use App\Models\CredentialCastBypass\Dispatch\TwoHopInherited;
@@ -86,6 +90,26 @@ final class CastDispatchWrites
     public function replacingOverrideWithForeignStaticCall(): void
     {
         ReplacingOverrideWithForeignStaticCall::query()->update(['password' => 'raw']);
+    }
+
+    public function traitMethodExcludedByInsteadOf(): void
+    {
+        TraitMethodExcludedByInsteadOf::query()->update(['password' => 'raw']);
+    }
+
+    public function discardedParentCastsCall(): void
+    {
+        DiscardedParentCastsCall::query()->update(['password' => 'raw']);
+    }
+
+    public function parentCastsCapturedInVariable(): void
+    {
+        ParentCastsCapturedInVariable::query()->update(['password' => 'raw', 'api_token' => 'raw']);
+    }
+
+    public function conditionalReturnsDisagreeing(): void
+    {
+        ConditionalReturnsDisagreeing::query()->update(['password' => 'raw']);
     }
 
     public function propertyBase(): void

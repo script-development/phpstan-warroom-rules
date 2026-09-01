@@ -63,6 +63,28 @@ trait DeclaresPlainPasswordViaMethod
     }
 }
 
+trait DeclaresPlainPasswordViaTraitToBeExcluded
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => 'string'];
+    }
+}
+
+trait DeclaresHashedPasswordViaTraitToBeExcluded
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => 'hashed'];
+    }
+}
+
 class MethodBase extends Model
 {
     /**
@@ -332,6 +354,80 @@ class LeafComposingOverMidReplacing extends MidReplacing
     protected function casts(): array
     {
         return array_merge(parent::casts(), ['leaf_secret' => 'hashed']);
+    }
+}
+
+/**
+ * A trait ADAPTATION: `insteadof` excludes the hashed declaration, so the body
+ * PHP dispatches is the plain one and `password` carries no credential cast.
+ *
+ * The excluded trait is listed FIRST on purpose — a first-match walk over the
+ * imported traits picks it and reports a cast that does not exist. Reflection
+ * resolves the adaptation, which is why the method half is resolved that way and
+ * the property half is not: a property has no adaptation, and a conflicting one
+ * is a PHP fatal rather than an ambiguity.
+ */
+class TraitMethodExcludedByInsteadOf extends Model
+{
+    use DeclaresHashedPasswordViaTraitToBeExcluded, DeclaresPlainPasswordViaTraitToBeExcluded {
+        DeclaresPlainPasswordViaTraitToBeExcluded::casts insteadof DeclaresHashedPasswordViaTraitToBeExcluded;
+    }
+}
+
+/**
+ * Calls `parent::casts()` and THROWS THE RESULT AWAY. None of the parent's map
+ * reaches the returned value, so `password` is not cast here — walking upward on
+ * the strength of the call merely appearing in the body invents a cast.
+ */
+class DiscardedParentCastsCall extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        parent::casts();
+
+        return ['nickname' => 'string'];
+    }
+}
+
+/**
+ * Captures `parent::casts()` in a VARIABLE before composing it. The result IS
+ * used, so the parent's map is part of the answer — the row that keeps the
+ * discarded-call fix from turning into a fail-open on a credential column.
+ */
+class ParentCastsCapturedInVariable extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+
+        return array_merge($inherited, ['api_token' => 'encrypted']);
+    }
+}
+
+/**
+ * Two returns disagreeing about the SAME column. No single call produces both,
+ * so every branch is read and the CREDENTIAL cast wins: a column some branch
+ * hashes is hashed on that path, and source order is not a fact about which
+ * branch runs.
+ */
+class ConditionalReturnsDisagreeing extends Model
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        if ($this->exists) {
+            return ['password' => 'string'];
+        }
+
+        return ['password' => 'hashed'];
     }
 }
 

@@ -36,10 +36,11 @@ use PHPStan\Type\TypeCombinator;
 use function array_key_exists;
 use function array_keys;
 use function array_reverse;
+use function count;
 use function implode;
+use function in_array;
 use function is_array;
 use function sprintf;
-use function str_starts_with;
 
 /**
  * Forbids naming a `hashed`- or `encrypted`-cast Eloquent attribute as a key in
@@ -64,17 +65,26 @@ use function str_starts_with;
  * sat one file away — nothing but author preference separated the safe site
  * from the unsafe one.
  *
- * Detection has three independent halves; all three must resolve or the rule
- * stays SILENT (a credential-flavoured false positive spends the gate's
- * authority faster than almost any other kind — ADR-0021 posture):
+ * Detection has three independent halves, and the rule stays SILENT unless all
+ * three resolve — a credential-flavoured false positive spends the gate's
+ * authority faster than almost any other kind (ADR-0021 posture). Read that as
+ * the DISPOSITION it is, not as a guarantee: it says what the rule does when it
+ * cannot resolve something, not that everything it does resolve is right. The
+ * false positives this rule has actually shipped were all cases where it
+ * resolved something confidently and wrongly, and each is now a fixture:
  *
- *   1. **Write verb + payload.** The call is one of `update`, `insert`,
- *      `insertOrIgnore`, `insertGetId`, `upsert`, `updateOrInsert`, or the
- *      increment family (`increment`, `decrement`, `incrementEach`,
- *      `decrementEach` — whose extra payload reaches SQL through
- *      `update(array_merge($columns, $extra))`), and the
- *      payload argument resolves to a CONSTANT array type, so its keys are
- *      statically known. A payload built dynamically (`$data` of unknown
+ *   1. **Write verb + payload.** The call is one of the verbs in
+ *      `WRITE_METHODS` — `update`, `insert`, `insertOrIgnore`, `insertGetId`,
+ *      `upsert`, `updateOrInsert`, the Postgres-only `updateFrom` and
+ *      `insertOrIgnoreReturning`, `incrementOrCreate`, and the increment family
+ *      loud and quiet, whose extra payload reaches SQL through
+ *      `update(array_merge($columns, $extra))` — and the payload argument
+ *      resolves to a CONSTANT array type, so its keys are statically known.
+ *      Each payload slot carries a parameter NAME as well as a position,
+ *      because a named argument does not sit at its parameter's index once an
+ *      earlier optional one is skipped (`increment('votes', extra: […])`); the
+ *      names are checked against Laravel's own signatures by a test, since a
+ *      rename upstream would otherwise disable the named lookup in silence. A payload built dynamically (`$data` of unknown
  *      shape, computed keys) is not a constant array type and is silent.
  *      Because the check is TYPE-based rather than AST-literal, a payload
  *      hoisted into a variable (`$p = ['password' => …]; $q->update($p);`) is
@@ -87,13 +97,23 @@ use function str_starts_with;
  *      that instantiate a model and `save()` it, so casts DO fire — flagging
  *      them would criminalize the remediation.
  *
- *   2. **Receiver is a builder, never a model.** The receiver type must be a
- *      subtype of `Illuminate\Database\Eloquent\Builder`,
+ *   2. **Receiver is a builder — and, for eight verbs, a model too.** The
+ *      receiver type must be a subtype of
+ *      `Illuminate\Database\Eloquent\Builder`,
  *      `Illuminate\Database\Query\Builder`, or
  *      `Illuminate\Database\Eloquent\Relations\Relation`. A `Model` receiver is
- *      structurally excluded, which is what keeps the whole model path silent:
- *      `$model->update([...])` routes through `fill()` → `setAttribute()` and
- *      casts fire, so it is correct and must not fire here.
+ *      excluded for every OTHER verb, which is what keeps the model path
+ *      silent: `$model->update([...])` routes through `fill()` →
+ *      `setAttribute()` and casts fire, so it is correct and must not fire.
+ *
+ *      **The exception is the increment family** (`MODEL_BYPASSING_METHODS`),
+ *      and it is not a carve-out for convenience — `Model::increment()` is
+ *      `protected`, but `Model::__call()` names all eight and forwards to them,
+ *      and `Model::incrementOrDecrement()` casts the in-memory attribute
+ *      through `forceFill($extra)` while handing the SAME `$extra` uncast to
+ *      the query builder. The object ends up right and the row ends up
+ *      plaintext. So "the model path is safe" is true per VERB, never
+ *      structurally, and this list is the whole of the exception.
  *
  *   3. **Model resolution.** From an Eloquent `Builder<TModel>` or a
  *      `Relation<TRelatedModel, …>` the model comes out of the GENERIC
@@ -131,26 +151,46 @@ use function str_starts_with;
  *     a class-declared default replacing a trait-imported one.
  *   - `casts()` is a METHOD read by a SINGLE virtual dispatch: only the nearest
  *     body runs. An ancestor's or a trait's body contributes NOTHING unless the
- *     body that runs calls `parent::casts()` — the one construct that walks the
- *     chain upward.
+ *     body that runs calls `parent::casts()` AND captures the result — a bare
+ *     `parent::casts();` statement changes nothing at runtime, so it must not
+ *     extend the walk either.
  *
  * The method half therefore beats the property half on a shared column,
  * whatever order the two appear in the file.
  *
+ * **Which body runs is resolved by REFLECTION, not by searching the source.**
+ * `getNativeReflection()->getMethod('casts')` is the declaration PHP would
+ * dispatch, and its file and start line locate it exactly — through a trait, and
+ * through a trait ADAPTATION. A first-match walk over the imported traits gets
+ * `use A, B { B::casts insteadof A; }` wrong whenever the excluded trait is
+ * listed first, and an `as` alias the same way. The PROPERTY half does walk the
+ * declaration chain, and that is PHP's answer there: adaptations are method-only,
+ * and two sources declaring `$casts` with different defaults is a fatal error
+ * rather than an ambiguity.
+ *
+ * A body with SEVERAL returns has no single static answer, so every branch is
+ * read and the union taken — a column some branch casts as a credential IS cast
+ * on that path. Where branches disagree about the same column the CREDENTIAL
+ * cast wins, because source order is not a fact about which branch runs.
+ *
  * Why this is spelled out at this length: merging every declaration in the
- * ancestry and letting the leaf win reads plausible and is wrong on SEVEN of the
- * eighteen shapes in `CastDispatchShapes.php` — six inventing a credential cast
- * the model does not have, the seventh calling a readable declaration
- * unreadable. The test beside that fixture computes its expectation from PHP
- * itself rather than from anyone's reading of Laravel.
+ * ancestry and letting the leaf win reads plausible and is wrong on NINE of the
+ * twenty-three shapes in `CastDispatchShapes.php` — eight inventing a credential
+ * cast the model does not have, the ninth calling a readable declaration
+ * unreadable. Resolving the method half by first match over the imported traits
+ * instead is wrong on two OTHERS, which is the point of keeping shapes for both
+ * mistakes: a table that only refutes the reading you have already abandoned
+ * measures nothing. The test beside that fixture computes its expectation from
+ * PHP itself rather than from anyone's reading of Laravel.
  *
  * A cast map composed rather than returned literally is READ, not missed:
  * `return array_merge(parent::casts(), ['password' => 'hashed']);` and
  * `return [...parent::casts(), 'password' => 'hashed'];` both contribute their
- * literal AND mark the declaration as calling its parent, so the chain walk
- * continues upward and the merged map is complete. A bare
- * `return parent::casts();` carries no literal at all and needs none, for the
- * same reason. Array literals are collected from anywhere inside a returned
+ * literal AND capture the parent's map, so the chain walk continues upward and
+ * the merged map is complete. A bare `return parent::casts();` carries no
+ * literal at all and needs none, for the same reason, and one assigned to a
+ * variable first (`$c = parent::casts(); return array_merge($c, […]);`) counts
+ * too — what does NOT count is a call whose result is discarded. Array literals are collected from anywhere inside a returned
  * expression — but never from inside an already-collected array, so a
  * nested-array cast value stays a value rather than becoming a second cast map.
  *
@@ -266,30 +306,71 @@ final class ForbidCredentialCastBypassRule implements Rule
 
     /**
      * Builder write verbs that ship their payload to SQL without routing
-     * through `Model::setAttribute()`, mapped to the argument positions
-     * carrying a `column => value` payload.
+     * through `Model::setAttribute()`, mapped to the payload SLOTS carrying a
+     * `column => value` array — each slot the parameter's NAME and its position,
+     * because a named argument does not sit at its position once an earlier
+     * optional parameter is skipped.
      *
      * `create` / `updateOrCreate` / `firstOrCreate` / `createOrFirst` are
      * deliberately absent — they build and `save()` a model, so casts fire.
      *
-     * @var array<string, list<int>>
+     * @var array<string, list<array{0: string, 1: int}>>
      */
     private const array WRITE_METHODS = [
-        'update' => [0],
-        'insert' => [0],
-        'insertOrIgnore' => [0],
-        'insertGetId' => [0],
-        'upsert' => [0],
-        'updateOrInsert' => [0, 1],
-        // The increment family ships an extra payload to SQL by the same route:
+        'update' => [['values', 0]],
+        'insert' => [['values', 0]],
+        'insertOrIgnore' => [['values', 0]],
+        'insertGetId' => [['values', 0]],
+        'upsert' => [['values', 0]],
+        'updateOrInsert' => [['attributes', 0], ['values', 1]],
+        // Postgres-only builder writes that take a payload like `update()` and
+        // reach SQL by the same route. Absent from `Eloquent\Builder`, but its
+        // `__call` forwards them, so a model query reaches them too.
+        'updateFrom' => [['values', 0]],
+        'insertOrIgnoreReturning' => [['values', 0]],
+        // The increment family ships an EXTRA payload to SQL by the same route:
         // `Query\Builder::incrementEach()` is literally
         // `update(array_merge($columns, $extra))`, and `increment()` /
         // `decrement()` delegate to it. A credential column named in either
         // array lands raw in the column with no model in the path.
-        'increment' => [2],
-        'decrement' => [2],
-        'incrementEach' => [0, 1],
-        'decrementEach' => [0, 1],
+        'increment' => [['extra', 2]],
+        'decrement' => [['extra', 2]],
+        'incrementEach' => [['columns', 0], ['extra', 1]],
+        'decrementEach' => [['columns', 0], ['extra', 1]],
+        // `Eloquent\Builder::incrementOrCreate()` routes its `$attributes`
+        // through `firstOrCreate()` — a model save, so casts fire there and it
+        // is deliberately NOT read — then hands `$extra` to `Model::increment()`.
+        'incrementOrCreate' => [['extra', 4]],
+        // Model-only, re-exposed through `Model::__call`. Same payload slot as
+        // their loud counterparts.
+        'incrementQuietly' => [['extra', 2]],
+        'decrementQuietly' => [['extra', 2]],
+        'incrementEachQuietly' => [['columns', 0], ['extra', 1]],
+        'decrementEachQuietly' => [['columns', 0], ['extra', 1]],
+    ];
+
+    /**
+     * The verbs whose payload bypasses casts even on a MODEL receiver, so the
+     * receiver type gate must NOT exclude them.
+     *
+     * `Model::increment()` is `protected`, but `Model::__call()` names all eight
+     * explicitly and forwards to them, so `$model->increment(…)` is reachable
+     * from anywhere. `Model::incrementOrDecrement()` then casts the in-memory
+     * attribute through `forceFill($extra)` and passes the SAME `$extra`,
+     * uncast, to the query builder — so the object is right and the row is
+     * plaintext. Verified against `Illuminate\Database\Eloquent\Model`.
+     *
+     * @var list<string>
+     */
+    private const array MODEL_BYPASSING_METHODS = [
+        'increment',
+        'decrement',
+        'incrementEach',
+        'decrementEach',
+        'incrementQuietly',
+        'decrementQuietly',
+        'incrementEachQuietly',
+        'decrementEachQuietly',
     ];
 
     /** The fluent-chain method whose string argument names the table. */
@@ -298,7 +379,7 @@ final class ForbidCredentialCastBypassRule implements Rule
     /**
      * The member name Eloquent reads casts from — the same string names the
      * `casts()` method and the `$casts` property, which is why both halves of
-     * `declaredCasts()` match on it.
+     * `declaredPropertyCasts()` and `dispatchedMethodCasts()` match on it.
      */
     private const string CASTS_MEMBER = 'casts';
 
@@ -320,11 +401,11 @@ final class ForbidCredentialCastBypassRule implements Rule
     private array $castCache = [];
 
     /**
-     * Per-SOURCE declarations already read this run, keyed by class-or-trait
-     * FQCN. The property walk and the method walk traverse the same sources, so
-     * without this a model's ancestry is parsed twice.
+     * Per-SOURCE `$casts` property declarations already read this run, keyed by
+     * class-or-trait FQCN. The property walk visits every ancestor and its
+     * traits, and one model is written to from many call sites.
      *
-     * @var array<string, array{property: array<string, string>|null, propertyComplete: bool, method: array<string, string>|null, methodComplete: bool, callsParent: bool}|null>
+     * @var array<string, array{property: array<string, string>|null, complete: bool}|null>
      */
     private array $declarationCache = [];
 
@@ -365,7 +446,7 @@ final class ForbidCredentialCastBypassRule implements Rule
             return [];
         }
 
-        $modelFqcns = $this->resolveModels($node, $scope);
+        $modelFqcns = $this->resolveModels($node, $scope, $method);
 
         if ($modelFqcns === []) {
             return [];
@@ -423,12 +504,25 @@ final class ForbidCredentialCastBypassRule implements Rule
      *
      * @return list<string>
      */
-    private function resolveModels(MethodCall $node, Scope $scope): array
+    private function resolveModels(MethodCall $node, Scope $scope, string $method): array
     {
         $receiverType = TypeCombinator::removeNull($scope->getType($node->var));
 
         if ((new ObjectType(Model::class))->isSuperTypeOf($receiverType)->yes()) {
-            return [];
+            // The model path fires casts for every verb EXCEPT these — see
+            // MODEL_BYPASSING_METHODS. This is the one place the receiver type
+            // gate is not sufficient on its own.
+            if (!in_array($method, self::MODEL_BYPASSING_METHODS, true)) {
+                return [];
+            }
+
+            $models = [];
+
+            foreach ($receiverType->getObjectClassReflections() as $classReflection) {
+                $models[$classReflection->getName()] = true;
+            }
+
+            return array_keys($models);
         }
 
         $isEloquentBuilder = (new ObjectType(EloquentBuilder::class))->isSuperTypeOf($receiverType)->yes();
@@ -539,33 +633,68 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * Distinct column names appearing as keys in the payload arguments at
-     * `$argumentPositions`. Only constant array types are read; anything else
+     * Distinct column names appearing as keys in the payload arguments named by
+     * `$payloadSlots`. Only constant array types are read; anything else
      * contributes nothing.
      *
      * Deduplicated on purpose: a multi-row `insert([['password' => …],
      * ['password' => …]])` names one offending column at one call site, and
      * reporting it once per row would put N identical errors on one line.
      *
-     * @param list<int> $argumentPositions
+     * @param list<array{0: string, 1: int}> $payloadSlots
      *
      * @return list<string>
      */
-    private function payloadColumns(MethodCall $node, Scope $scope, array $argumentPositions): array
+    private function payloadColumns(MethodCall $node, Scope $scope, array $payloadSlots): array
     {
         $seen = [];
 
-        foreach ($argumentPositions as $position) {
-            if (!isset($node->args[$position]) || !$node->args[$position] instanceof Node\Arg) {
+        foreach ($payloadSlots as [$name, $position]) {
+            $argument = $this->argumentAt($node, $name, $position);
+
+            if ($argument === null) {
                 continue;
             }
 
-            foreach ($this->constantArrayKeys($scope->getType($node->args[$position]->value)) as $column) {
+            foreach ($this->constantArrayKeys($scope->getType($argument->value)) as $column) {
                 $seen[$column] = true;
             }
         }
 
         return array_keys($seen);
+    }
+
+    /**
+     * One argument, addressed by NAME first and by position second.
+     *
+     * A named argument does not sit at its parameter's position:
+     * `increment('votes', extra: [...])` puts the payload at index 1, so reading
+     * index 2 finds nothing and the write passes silently. Since PHP 8.0 any
+     * caller may name any argument, so a position-only reading is a
+     * false-negative generator on every verb here — and on the increment family
+     * especially, whose payload is the THIRD parameter and whose second
+     * (`$amount`) has a default worth skipping.
+     */
+    private function argumentAt(MethodCall $node, string $name, int $position): ?Node\Arg
+    {
+        foreach ($node->args as $argument) {
+            if (
+                $argument instanceof Node\Arg
+                && $argument->name instanceof Identifier
+                && $argument->name->toString() === $name
+            ) {
+                return $argument;
+            }
+        }
+
+        // PHP requires every positional argument before the first named one, so
+        // positional slots are contiguous from zero and this index is only
+        // meaningful when the argument sitting there is itself positional.
+        // Checking the slot rather than refusing whenever ANY argument is named
+        // keeps `upsert($values, uniqueBy: […])` covered.
+        $argument = $node->args[$position] ?? null;
+
+        return $argument instanceof Node\Arg && $argument->name === null ? $argument : null;
     }
 
     /**
@@ -660,9 +789,9 @@ final class ForbidCredentialCastBypassRule implements Rule
      * property half for any column both declare — regardless of the order the
      * two appear in the source file.
      *
-     * Measured against PHP's own answer over the eighteen declaration shapes in
-     * `CastDispatchShapes.php` (war-room enforcement #217): reading this as
-     * "merge every declaration, leaf wins" is wrong on seven of them — six
+     * Measured against PHP's own answer over the twenty-three declaration shapes
+     * in `CastDispatchShapes.php` (war-room enforcement #217): reading this as
+     * "merge every declaration, leaf wins" is wrong on nine of them — eight
      * inventing a credential cast, one calling a readable declaration
      * unreadable — each masked in the obvious fixtures by a key collision.
      *
@@ -689,14 +818,15 @@ final class ForbidCredentialCastBypassRule implements Rule
             return $resolution;
         }
 
-        $chain = $this->declarationChain($this->reflectionProvider->getClass($modelFqcn));
+        $classReflection = $this->reflectionProvider->getClass($modelFqcn);
+        $chain = $this->declarationChain($classReflection);
 
         $unreadable = [];
         $incomplete = [];
 
         $casts = array_merge(
             $this->propertyCasts($chain, $unreadable, $incomplete),
-            $this->dispatchedMethodCasts($chain, $unreadable, $incomplete),
+            $this->dispatchedMethodCasts($classReflection, $unreadable, $incomplete),
         );
 
         $credentialCasts = [];
@@ -812,7 +942,7 @@ final class ForbidCredentialCastBypassRule implements Rule
     {
         foreach ($chain as $entry) {
             foreach ($entry['sources'] as $source) {
-                $declared = $this->declaredCasts($source);
+                $declared = $this->declaredPropertyCasts($source);
 
                 if ($declared === null) {
                     $unreadable[] = $source->getName();
@@ -824,7 +954,7 @@ final class ForbidCredentialCastBypassRule implements Rule
                     continue;
                 }
 
-                if (!$declared['propertyComplete']) {
+                if (!$declared['complete']) {
                     $incomplete[] = $source->getName();
                 }
 
@@ -836,59 +966,92 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * The map a `$model->casts()` call would actually produce. One virtual
-     * dispatch, so the walk stops at the first declaration it finds — UNLESS
-     * that body calls `parent::casts()`, in which case the next declaration up
-     * is part of the answer too, and the nearer one wins on a shared column.
+     * The map a `$model->casts()` call would actually produce.
      *
-     * @param list<array{class: ClassReflection, sources: list<ClassReflection>}> $chain
-     * @param list<string>                                                        $unreadable
-     * @param list<string>                                                        $incomplete
+     * The declaration that runs is resolved by REFLECTION, not by searching the
+     * ancestry: `getNativeReflection()->getMethod('casts')` is the method PHP
+     * would dispatch, and its `getFileName()` / `getStartLine()` locate that
+     * body exactly — through a trait, and through a trait ADAPTATION. Verified:
+     * on `use A, B { B::casts insteadof A; }` reflection points at B's body,
+     * which a first-match walk over the imported traits gets wrong whenever the
+     * excluded trait is listed first. An `as` alias has the same shape.
+     *
+     * The walk continues upward only when the body that runs uses
+     * `parent::casts()` — and then from the parent of the class that DECLARES
+     * that body, not of the class the write targeted, because `parent::` inside
+     * an inherited body resolves against that body's own class.
+     *
+     * @param list<string> $unreadable
+     * @param list<string> $incomplete
      *
      * @return array<string, string>
      */
-    private function dispatchedMethodCasts(array $chain, array &$unreadable, array &$incomplete): array
-    {
+    private function dispatchedMethodCasts(
+        ClassReflection $classReflection,
+        array &$unreadable,
+        array &$incomplete,
+    ): array {
         $maps = [];
+        $current = $classReflection;
+        $visited = [];
 
-        foreach ($chain as $entry) {
-            $declared = null;
-            $declaringSource = null;
+        // BOUNDED, not merely guarded. The walk only ever moves upward, so the
+        // ancestry depth is its ceiling — and an unbounded loop here would hang
+        // the consumer's analysis with no error at all rather than reporting
+        // something wrong. Mutation testing makes the difference visible: turning
+        // the visited-guard `break` below into `continue` spins forever, which is
+        // a timeout in CI and a mystery in a consumer's pipeline.
+        $remaining = count($classReflection->getParents()) + 1;
 
-            foreach ($entry['sources'] as $source) {
-                $candidate = $this->declaredCasts($source);
+        while ($current !== null && $remaining-- > 0) {
+            $native = $current->getNativeReflection();
 
-                if ($candidate === null) {
-                    $unreadable[] = $source->getName();
+            if (!$native->hasMethod(self::CASTS_MEMBER)) {
+                break;
+            }
 
-                    continue;
-                }
+            $method = $native->getMethod(self::CASTS_MEMBER);
+            $declaringClass = $method->getDeclaringClass()->getName();
 
-                if ($candidate['method'] === null) {
-                    continue;
-                }
+            // Laravel's own `casts(): array { return []; }`. Reaching it means
+            // nothing in the consumer's hierarchy declares one.
+            if ($declaringClass === Model::class) {
+                break;
+            }
 
-                $declared = $candidate;
-                $declaringSource = $source;
+            // A `parent::casts()` chain cannot revisit a class; guard anyway so
+            // a pathological hierarchy cannot spin here.
+            if (array_key_exists($declaringClass, $visited)) {
+                break;
+            }
+
+            $visited[$declaringClass] = true;
+
+            $file = $method->getFileName();
+            $node = $file === false
+                ? null
+                : $this->castsMethodNodeAt($file, $method->getStartLine());
+
+            if ($node === null) {
+                $unreadable[] = $declaringClass;
 
                 break;
             }
 
-            // This ancestor declares no `casts()` at all, so dispatch passes
-            // straight through it to the next one up.
-            if ($declared === null || $declaringSource === null) {
-                continue;
+            $complete = true;
+            $maps[] = $this->castsFromReturns($node, $complete);
+
+            if (!$complete) {
+                $incomplete[] = $declaringClass;
             }
 
-            if (!$declared['methodComplete']) {
-                $incomplete[] = $declaringSource->getName();
-            }
-
-            $maps[] = $declared['method'];
-
-            if (!$declared['callsParent']) {
+            if (!$this->contributesParentCasts($node)) {
                 break;
             }
+
+            $current = $this->reflectionProvider->hasClass($declaringClass)
+                ? $this->reflectionProvider->getClass($declaringClass)->getParentClass()
+                : null;
         }
 
         $casts = [];
@@ -901,6 +1064,159 @@ final class ForbidCredentialCastBypassRule implements Rule
         return $casts;
     }
 
+    /**
+     * The `casts()` declaration whose body starts at `$line` in `$file`.
+     *
+     * Matched on the EXACT start line rather than by locating the class, because
+     * the body that runs may live in a trait the class only imports — and after
+     * an `insteadof` it is not even the first trait declaring it. Measured:
+     * php-parser and PHP reflection agree on this line, docblock and attribute
+     * included. No match means the source moved under us, which is a read
+     * FAILURE and reported as one, never a silent empty map.
+     */
+    private function castsMethodNodeAt(string $file, false|int $line): ?ClassMethod
+    {
+        if ($line === false) {
+            return null;
+        }
+
+        try {
+            $stmts = $this->parser->parseFile($file);
+        } catch (ParserErrorsException) {
+            return null;
+        }
+
+        foreach ($this->castsMethodNodes($stmts) as $candidate) {
+            if ($candidate->getStartLine() === $line) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Every `casts()` method declaration among parsed statements, at any depth —
+     * one file can hold several classes and traits declaring it.
+     *
+     * @param array<Node> $nodes
+     *
+     * @return list<ClassMethod>
+     */
+    private function castsMethodNodes(array $nodes): array
+    {
+        $found = [];
+
+        foreach ($nodes as $node) {
+            if ($node instanceof ClassMethod && $node->name->toString() === self::CASTS_MEMBER) {
+                $found[] = $node;
+            }
+
+            foreach ($this->castsMethodNodes($this->childNodes($node)) as $nested) {
+                $found[] = $nested;
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * The `column => cast` pairs one `casts()` body contributes.
+     *
+     * A body with SEVERAL returns (`if (…) { return [...]; } return [...];`) has
+     * no single static answer, so every branch is read and the union is taken.
+     * That is a deliberate bias: a column some branch casts as a credential IS
+     * cast on that path, and a builder write to it is unsafe there. Where two
+     * branches disagree about the SAME column, the CREDENTIAL cast wins rather
+     * than whichever appears last — source order is not a fact about which
+     * branch runs.
+     *
+     * @return array<string, string>
+     */
+    private function castsFromReturns(ClassMethod $method, bool &$complete): array
+    {
+        $casts = [];
+
+        foreach ($this->returnedArrays($method, $complete) as $array) {
+            foreach ($this->stringPairs($array) as $column => $cast) {
+                if (
+                    array_key_exists($column, $casts)
+                    && $this->isCredentialCast($casts[$column])
+                    && !$this->isCredentialCast($cast)
+                ) {
+                    continue;
+                }
+
+                $casts[$column] = $cast;
+            }
+        }
+
+        return $casts;
+    }
+
+    /**
+     * Whether this body's returned value actually DEPENDS on `parent::casts()`.
+     *
+     * A call whose result is thrown away — `parent::casts();` as a statement of
+     * its own — contributes nothing at runtime, so inheriting the parent's map
+     * on the strength of it invents casts the child does not have. Anything that
+     * CAPTURES the result counts: returned directly, composed into a literal or
+     * an `array_merge`, or assigned to a variable first.
+     */
+    private function contributesParentCasts(ClassMethod $method): bool
+    {
+        foreach ($this->childNodes($method) as $node) {
+            if ($this->capturesParentCastsCall($node)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param Node $node a node whose own context is NOT a discarded expression
+     *                   statement
+     */
+    private function capturesParentCastsCall(Node $node): bool
+    {
+        if ($node instanceof FunctionLike || $node instanceof Class_) {
+            return false;
+        }
+
+        // `parent::casts();` alone: the call is the whole statement, so its
+        // result goes nowhere.
+        if ($node instanceof Node\Stmt\Expression && $this->isParentCastsCall($node->expr)) {
+            return false;
+        }
+
+        if ($this->isParentCastsCall($node)) {
+            return true;
+        }
+
+        foreach ($this->childNodes($node) as $child) {
+            if ($this->capturesParentCastsCall($child)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function isParentCastsCall(Node $node): bool
+    {
+        return $node instanceof StaticCall
+            && $node->class instanceof Node\Name
+            && $node->class->toLowerString() === 'parent'
+            && $node->name instanceof Identifier
+            && $node->name->toString() === self::CASTS_MEMBER;
+    }
+
+    /**
+     * Whether a cast value means "the model layer transforms this on write" —
+     * exactly `hashed`, exactly `encrypted`, or an `encrypted:` variant
+     * (`encrypted:array`, `encrypted:collection`, `encrypted:object`).
+     */
     private function isCredentialCast(string $cast): bool
     {
         foreach (self::CREDENTIAL_CASTS as $credentialCast) {
@@ -913,33 +1229,28 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * What ONE declaring source says about casts, read from its PHP source
-     * because neither declaration form is reachable through reflection alone: a
-     * `casts()` body is not, and invoking it would mean instantiating an
-     * Eloquent model inside the analyser.
+     * The `$casts` PROPERTY default declared by ONE source, read from its PHP
+     * because a property default is not what reflection hands back on an
+     * unconstructed analyser-side class.
      *
-     * The two forms are returned SEPARATELY and never pre-merged here, because
-     * their resolution rules differ and only the caller knows the ancestry —
-     * see `castResolutionFor()`. Folding them together in source order was the
-     * defect that made a model declaring both resolve differently depending on
-     * which one the author happened to write first.
+     * Property-only by design. The `casts()` METHOD half is resolved by
+     * reflection in `dispatchedMethodCasts()`, which handles trait adaptations
+     * a source walk cannot see. A property has no such adaptation — `insteadof`
+     * and `as` are method-only, and two sources declaring `$casts` with
+     * different defaults is a PHP fatal, not an ambiguity — so first-match over
+     * the declaration chain IS PHP's answer here.
      *
-     * Returns NULL — never an empty shape — when the source cannot be located
-     * or parsed, so the caller can tell "declares nothing" from "we could not
-     * look". Within the shape, `property` / `method` are NULL when this source
-     * declares that form not at all, and an ARRAY (possibly empty) when it
-     * does: the difference decides whether dispatch stops here.
+     * Returns NULL — never an empty shape — when the source cannot be located or
+     * parsed, so the caller can tell "declares nothing" from "we could not
+     * look". Within the shape, `property` is NULL when this source declares no
+     * `$casts` default at all, and an ARRAY (possibly empty) when it does: the
+     * difference is what stops the walk. `complete` is FALSE when a `$casts`
+     * default IS declared but carries no array literal to read
+     * (`protected $casts = self::CASTS;`).
      *
-     * `propertyComplete` / `methodComplete` are FALSE when the form IS declared
-     * but carries no array literal to read — `return self::CASTS;`,
-     * `protected $casts = self::CASTS;`. `callsParent` records a
-     * `parent::casts()` call anywhere in the method body, including one
-     * composed into a literal (`[...parent::casts(), …]`) or assigned first and
-     * merged later.
-     *
-     * @return array{property: array<string, string>|null, propertyComplete: bool, method: array<string, string>|null, methodComplete: bool, callsParent: bool}|null
+     * @return array{property: array<string, string>|null, complete: bool}|null
      */
-    private function declaredCasts(ClassReflection $classReflection): ?array
+    private function declaredPropertyCasts(ClassReflection $classReflection): ?array
     {
         $name = $classReflection->getName();
 
@@ -968,25 +1279,9 @@ final class ForbidCredentialCastBypassRule implements Rule
         }
 
         $property = null;
-        $propertyComplete = true;
-        $method = null;
-        $methodComplete = true;
-        $callsParent = false;
+        $complete = true;
 
         foreach ($classNode->stmts as $stmt) {
-            if ($stmt instanceof ClassMethod && $stmt->name->toString() === self::CASTS_MEMBER) {
-                $method = [];
-                $callsParent = $this->containsParentCastsCall($this->childNodes($stmt));
-
-                foreach ($this->returnedArrays($stmt, $methodComplete) as $array) {
-                    foreach ($this->stringPairs($array) as $column => $cast) {
-                        $method[$column] = $cast;
-                    }
-                }
-
-                continue;
-            }
-
             if (!$stmt instanceof Property) {
                 continue;
             }
@@ -998,7 +1293,7 @@ final class ForbidCredentialCastBypassRule implements Rule
 
                 if (!$prop->default instanceof Expr\Array_) {
                     $property = [];
-                    $propertyComplete = false;
+                    $complete = false;
 
                     continue;
                 }
@@ -1007,52 +1302,10 @@ final class ForbidCredentialCastBypassRule implements Rule
             }
         }
 
-        $declaration = [
-            'property' => $property,
-            'propertyComplete' => $propertyComplete,
-            'method' => $method,
-            'methodComplete' => $methodComplete,
-            'callsParent' => $callsParent,
-        ];
+        $declaration = ['property' => $property, 'complete' => $complete];
         $this->declarationCache[$name] = $declaration;
 
         return $declaration;
-    }
-
-    /**
-     * Whether these nodes carry a `parent::casts()` call — the only construct
-     * that makes an ancestor's declaration part of the dispatched map.
-     *
-     * A nested function-like or anonymous class is skipped for the same reason
-     * `collectArrayLiterals()` skips one: a callback's body is not this
-     * declaration, and a `parent::casts()` inside a closure that nothing invokes
-     * would extend the walk on the strength of dead code.
-     *
-     * @param list<Node> $nodes
-     */
-    private function containsParentCastsCall(array $nodes): bool
-    {
-        foreach ($nodes as $node) {
-            if ($node instanceof FunctionLike || $node instanceof Class_) {
-                continue;
-            }
-
-            if (
-                $node instanceof StaticCall
-                && $node->class instanceof Node\Name
-                && $node->class->toLowerString() === 'parent'
-                && $node->name instanceof Identifier
-                && $node->name->toString() === self::CASTS_MEMBER
-            ) {
-                return true;
-            }
-
-            if ($this->containsParentCastsCall($this->childNodes($node))) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /**
@@ -1146,7 +1399,7 @@ final class ForbidCredentialCastBypassRule implements Rule
                     // resolvable chain link that dispatchedMethodCasts() walks.
                     // Reporting it as uninterpretable would be a false positive
                     // on the idiomatic pass-through override.
-                    if (!$this->containsParentCastsCall([$node->expr])) {
+                    if (!$this->isParentCastsCall($node->expr) && !$this->capturesParentCastsCall($node->expr)) {
                         $complete = false;
                     }
 
