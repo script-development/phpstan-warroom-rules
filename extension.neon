@@ -67,6 +67,16 @@ parameters:
     rawExceptionMessageSinks: []
     safeMessageExceptionClasses: []
 
+    # `ForbidCredentialCastBypassRule`: map of raw TABLE NAME to model FQCN,
+    # used ONLY to resolve a `DB::table('…')->update([...])` chain, which
+    # carries no model in its type the way `Model::query()` does. Empty by
+    # default, so `DB::table()` writes are silent until a consumer opts in —
+    # inferring a model from a table name would be a false-positive source this
+    # rule cannot afford. Builder and relation writes need no entry here; their
+    # model comes out of the generic type argument. Each FQCN uses single
+    # backslashes — see the NEON-quoting note above.
+    credentialCastTableModels: []
+
 parametersSchema:
     resourceDataBaseClass: string()
     formRequestBaseClass: string()
@@ -76,6 +86,7 @@ parametersSchema:
     auditModelNameSuffixes: listOf(string())
     rawExceptionMessageSinks: listOf(string())
     safeMessageExceptionClasses: listOf(string())
+    credentialCastTableModels: arrayOf(string())
 
 services:
     -
@@ -150,6 +161,12 @@ services:
         arguments:
             rawExceptionMessageSinks: %rawExceptionMessageSinks%
             safeMessageExceptionClasses: %safeMessageExceptionClasses%
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidCredentialCastBypassRule
+        arguments:
+            parser: @defaultAnalysisParser
+            credentialCastTableModels: %credentialCastTableModels%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
