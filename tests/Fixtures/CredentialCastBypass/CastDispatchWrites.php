@@ -24,7 +24,6 @@ use App\Models\CredentialCastBypass\Dispatch\SpreadingOverride;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodAndClassProperty;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodInherited;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodOverridden;
-use App\Models\CredentialCastBypass\Dispatch\TraitPropertyInherited;
 use App\Models\CredentialCastBypass\Dispatch\TwoHopInherited;
 
 /**
@@ -122,11 +121,6 @@ final class CastDispatchWrites
     public function traitMethodInherited(): void
     {
         TraitMethodInherited::query()->update(['trait_method_secret' => 'raw']);
-    }
-
-    public function traitPropertyInherited(): void
-    {
-        TraitPropertyInherited::query()->update(['trait_property_secret' => 'raw']);
     }
 
     public function grandMethodBase(): void

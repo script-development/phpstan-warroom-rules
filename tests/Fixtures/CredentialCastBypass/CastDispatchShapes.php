@@ -26,6 +26,20 @@ use Illuminate\Database\Eloquent\Model;
  * computes the expectation for every class here from PHP itself rather than from
  * a hand-written list, and asserts the two readings disagree on enough rows that
  * the table is actually exercising the difference.
+ *
+ * **Every class here is LOADED, not merely parsed** — that is what makes the
+ * expectation PHP's own answer instead of someone's reading of Laravel, and it
+ * constrains what can live here: a shape must be composable on the package's
+ * MINIMUM PHP, not just the newest. One shape is absent for exactly that reason.
+ * A trait declaring a non-empty `$casts` DEFAULT is a fatal composition error on
+ * PHP 8.4 — `Model` already declares `protected $casts = []` through
+ * `HasAttributes`, and 8.4 requires an inherited and a trait-imported property
+ * to agree on their default ("the definition differs and is considered
+ * incompatible"); PHP 8.5 accepts it. Measured on CI, where 8.5 passed and both
+ * 8.4 legs died. The trait-`$casts` shape is therefore pinned by the
+ * analysis-only fixtures instead (`HasEncryptedNotesProperty` on
+ * `TraitCastModel`), which PHPStan parses and never composes — the reason the
+ * incompatibility went unnoticed there.
  */
 trait DeclaresSecretViaMethod
 {
@@ -47,12 +61,6 @@ trait DeclaresPlainPasswordViaMethod
     {
         return ['password' => 'string'];
     }
-}
-
-trait DeclaresSecretViaProperty
-{
-    /** @var array<string, string> */
-    protected $casts = ['trait_property_secret' => 'hashed'];
 }
 
 class MethodBase extends Model
@@ -225,11 +233,6 @@ class TraitMethodOverridden extends Model
 class TraitMethodInherited extends Model
 {
     use DeclaresSecretViaMethod;
-}
-
-class TraitPropertyInherited extends Model
-{
-    use DeclaresSecretViaProperty;
 }
 
 class GrandMethodBase extends Model

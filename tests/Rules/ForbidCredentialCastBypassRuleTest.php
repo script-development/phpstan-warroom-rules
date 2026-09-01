@@ -102,7 +102,6 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         // A class-declared `casts()` means the trait's body never runs.
         'TraitMethodOverridden' => ['payload' => ['trait_method_secret'], 'naive' => ['trait_method_secret']],
         'TraitMethodInherited' => ['payload' => ['trait_method_secret'], 'naive' => ['trait_method_secret']],
-        'TraitPropertyInherited' => ['payload' => ['trait_property_secret'], 'naive' => ['trait_property_secret']],
         'GrandMethodBase' => ['payload' => ['grand_secret'], 'naive' => ['grand_secret']],
         'MidReplacing' => ['payload' => ['grand_secret'], 'naive' => ['grand_secret']],
         // Composes with a parent that CUT the chain: walking up on a parent call
@@ -448,7 +447,6 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
                     'MidReplacing',
                     'DeclaresSecretViaMethod',
                     'DeclaresPlainPasswordViaMethod',
-                    'DeclaresSecretViaProperty',
                 ],
             ),
         ];
