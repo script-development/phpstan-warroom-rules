@@ -77,6 +77,22 @@ parameters:
     # backslashes — see the NEON-quoting note above.
     credentialCastTableModels: []
 
+    # `ForbidAdHocDateParsingRule`: namespace prefixes inside which a date/time
+    # STRING may legitimately be decoded. A class whose namespace
+    # `str_starts_with` any entry is silent, so sub-namespaces match their
+    # prefix naturally; everywhere else, constructing a date from a string is an
+    # error. The default names the two boundary doors of ADR-0020 Amendment 1 —
+    # a dedicated decode helper (emmie ships `App\Support\DateTime\InstantParser`;
+    # lokalekeuze's lands under `App\Support\Time`) and the row-to-model cast
+    # (`App\Casts`), where the string genuinely arrives from outside and must
+    # become a value object exactly once. A territory narrows or widens this
+    # list; the rule itself knows nothing about any territory's layout. Each
+    # prefix uses single backslashes — see the NEON-quoting note above.
+    dateParsingNamespaces:
+        - 'App\Support\Time'
+        - 'App\Support\DateTime'
+        - 'App\Casts'
+
 parametersSchema:
     resourceDataBaseClass: string()
     formRequestBaseClass: string()
@@ -87,6 +103,7 @@ parametersSchema:
     rawExceptionMessageSinks: listOf(string())
     safeMessageExceptionClasses: listOf(string())
     credentialCastTableModels: arrayOf(string())
+    dateParsingNamespaces: listOf(string())
 
 services:
     -
@@ -161,6 +178,11 @@ services:
         arguments:
             rawExceptionMessageSinks: %rawExceptionMessageSinks%
             safeMessageExceptionClasses: %safeMessageExceptionClasses%
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidAdHocDateParsingRule
+        arguments:
+            dateParsingNamespaces: %dateParsingNamespaces%
         tags: [phpstan.rules.rule]
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidCredentialCastBypassRule
