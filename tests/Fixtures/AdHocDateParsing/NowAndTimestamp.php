@@ -34,6 +34,18 @@ final class NowAndTimestamp
         return new DateTimeImmutable;
     }
 
+    /**
+     * A static method OUTSIDE the parsing set, handed a string. The argument
+     * gate would let this through; only the method-name check holds it back,
+     * so this is what keeps that check from being masked by the gate.
+     */
+    public function staticHelpersWithAString(string $raw): bool
+    {
+        CarbonImmutable::setLocale('nl');
+
+        return CarbonImmutable::hasFormat($raw, 'Y-m-d');
+    }
+
     public function movesAnAlreadyDecodedValue(CarbonImmutable $at): string
     {
         return $at->addDays(1)->startOfDay()->format('Y-m-d');

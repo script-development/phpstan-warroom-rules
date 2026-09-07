@@ -99,10 +99,13 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
     }
 
     /**
-     * Clock reads, timestamp factories, zero-argument construction and
-     * instance calls on an already-decoded value all sit in a NON-boundary
-     * namespace in this fixture, so what holds them back is the method set and
-     * the argument-count check — not the namespace gate.
+     * Clock reads, timestamp factories, zero-argument construction, instance
+     * calls on an already-decoded value and a non-listed static helper handed
+     * a string all sit in a NON-boundary namespace in this fixture, so what
+     * holds them back is the method set and the argument gate — not the
+     * namespace gate. The string-taking helper is what keeps the method set
+     * load-bearing: without it, the argument gate alone would silence every
+     * other call here and the name check could be deleted unnoticed.
      */
     public function testIgnoresClockReadsTimestampFactoriesAndInstanceCalls(): void
     {
@@ -142,6 +145,43 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
         );
     }
 
+    /**
+     * The argument gate, negative half. Every call here names a method or
+     * function the rule lists, in a non-boundary namespace, and none of them
+     * receives a string or anything that could be one: integer components,
+     * an existing value object, a `null`, or no argument at all. Removing the
+     * gate reds this test; so does narrowing it back to a zero-argument check.
+     */
+    public function testIgnoresComponentFactoriesRewrapsAndZeroArgumentCalls(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AdHocDateParsing/ComponentFactoriesAndRewraps.php'],
+            [],
+        );
+    }
+
+    /**
+     * The argument gate, positive half and its DIRECTION: a first argument the
+     * analyser cannot prove is NOT a string (`mixed`, `int|string`, `?string`)
+     * fires. A gate that required a proven string instead would exempt every
+     * untyped `$request->input()` parse — this test is what makes that swap
+     * red rather than silent.
+     */
+    public function testFlagsAFirstArgumentThatMayBeAString(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AdHocDateParsing/MaybeStringFirstArgument.php'],
+            [
+                [self::expected('CarbonImmutable::create()'), 19],
+                [self::expected('CarbonImmutable::createFromDate()'), 20],
+                [self::expected('CarbonImmutable::make()'), 21],
+                [self::expected('CarbonImmutable::create()'), 26],
+                [self::expected('CarbonImmutable::parse()'), 27],
+                [self::expected('new CarbonImmutable()'), 29],
+            ],
+        );
+    }
+
     public function testIgnoresALocalClassMerelyNamedCarbon(): void
     {
         $this->analyse(
@@ -161,27 +201,29 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
         $this->analyse(
             [__DIR__ . '/../Fixtures/AdHocDateParsing/AllParsingMethods.php'],
             [
-                [self::expected('CarbonImmutable::parse()'), 27],
-                [self::expected('CarbonImmutable::rawParse()'), 28],
-                [self::expected('CarbonImmutable::createFromFormat()'), 29],
-                [self::expected('CarbonImmutable::createFromIsoFormat()'), 30],
-                [self::expected('CarbonImmutable::createFromLocaleFormat()'), 31],
-                [self::expected('CarbonImmutable::createFromLocaleIsoFormat()'), 32],
-                [self::expected('CarbonImmutable::createFromTimeString()'), 33],
-                [self::expected('CarbonImmutable::createFromDate()'), 34],
-                [self::expected('CarbonImmutable::createFromTime()'), 35],
-                [self::expected('CarbonImmutable::create()'), 36],
-                [self::expected('CarbonImmutable::make()'), 37],
-                [self::expected('CarbonImmutable::createStrict()'), 38],
-                [self::expected('CarbonImmutable::createSafe()'), 39],
-                [self::expected('strtotime()'), 44],
-                [self::expected('date_create()'), 45],
-                [self::expected('date_create_immutable()'), 46],
-                [self::expected('date_parse()'), 47],
-                [self::expected('date_parse_from_format()'), 48],
-                [self::expected('new DateTime()'), 53],
-                [self::expected('new DateTimeImmutable()'), 54],
-                [self::expected('DateTime::createFromFormat()'), 55],
+                [self::expected('CarbonImmutable::parse()'), 31],
+                [self::expected('CarbonImmutable::rawParse()'), 32],
+                [self::expected('CarbonImmutable::createFromFormat()'), 33],
+                [self::expected('CarbonImmutable::createFromIsoFormat()'), 34],
+                [self::expected('CarbonImmutable::createFromLocaleFormat()'), 35],
+                [self::expected('CarbonImmutable::createFromLocaleIsoFormat()'), 36],
+                [self::expected('CarbonImmutable::createFromTimeString()'), 37],
+                [self::expected('CarbonImmutable::createFromDate()'), 38],
+                [self::expected('CarbonImmutable::createFromTime()'), 39],
+                [self::expected('CarbonImmutable::create()'), 40],
+                [self::expected('CarbonImmutable::make()'), 41],
+                [self::expected('CarbonImmutable::createStrict()'), 42],
+                [self::expected('CarbonImmutable::createSafe()'), 43],
+                [self::expected('strtotime()'), 48],
+                [self::expected('date_create()'), 49],
+                [self::expected('date_create_immutable()'), 50],
+                [self::expected('date_parse()'), 51],
+                [self::expected('date_parse_from_format()'), 52],
+                [self::expected('date_create_from_format()'), 53],
+                [self::expected('date_create_immutable_from_format()'), 54],
+                [self::expected('new DateTime()'), 59],
+                [self::expected('new DateTimeImmutable()'), 60],
+                [self::expected('DateTime::createFromFormat()'), 61],
             ],
         );
     }

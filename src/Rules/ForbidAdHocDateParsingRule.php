@@ -53,8 +53,20 @@ use function str_starts_with;
  *      `\DateTime`, `\DateTimeImmutable`, and any subclass) or to the
  *      `Illuminate\Support\Facades\Date` facade, with a method name in
  *      `PARSING_METHODS`.
- *   2. `New_` of a `DateTimeInterface` subtype WITH AT LEAST ONE ARGUMENT.
+ *   2. `New_` of a `DateTimeInterface` subtype.
  *   3. `FuncCall` to one of `PARSING_FUNCTIONS`.
+ *
+ * — each of them ONLY when the call's FIRST ARGUMENT is present and its type
+ * is not provably non-string (`firstArgumentMayBeAString()`). That one gate
+ * is what separates a decode from everything else the same names can do:
+ * `Carbon::create(2026, 9, 7)` assembles a date from integers,
+ * `Carbon::make($carbon)` re-wraps a value already decoded, `Carbon::create()`
+ * and `date_create()` read the clock, `new CarbonImmutable(null, $tz)` is "now
+ * in a zone" — none of them interprets a string, and none of them fires. The
+ * gate's DIRECTION is deliberate: `mixed`, `int|string` and `?string` DO fire,
+ * because an untyped value at a parse site (`$request->input('from')`) is
+ * exactly the input the boundary type exists to pin down; a gate that demanded
+ * a PROVEN string would exempt every one of those.
  *
  * `Carbon\CarbonInterface` extends `DateTimeInterface`, so ONE supertype check
  * covers the whole Carbon family as well as the two PHP natives — a second,
@@ -70,8 +82,9 @@ use function str_starts_with;
  *   - `now()`, `today()`, `yesterday()`, `tomorrow()`, `instance()`,
  *     `fromSerialized()` and the `createFromTimestamp*` family. A timestamp is
  *     already an instant; there is nothing to interpret.
- *   - Zero-argument `new \DateTimeImmutable()` / `new CarbonImmutable()` —
- *     that is "now", not a parse.
+ *   - Any listed call whose first argument is absent or provably not a string
+ *     (see the gate above): zero-argument construction and factories, integer
+ *     components, `null`, an existing `DateTimeInterface` value.
  *   - Instance calls: `$date->format(...)`, `$date->addDays(1)`,
  *     `$date->startOfDay()`. The value object is already decoded; moving it
  *     around is what the boundary type exists FOR.
@@ -79,6 +92,9 @@ use function str_starts_with;
  *     a `New_` on a dynamic class expression. An accepted false negative: the
  *     receiver has no resolvable name, and guessing one would be a
  *     false-positive source a boundary rule cannot afford.
+ *   - A first-class callable (`Carbon::parse(...)`). Nothing is decoded at
+ *     that site, and PHPStan does not hand the node to this rule. Accepted
+ *     false negative, pinned by fixture.
  *   - A local class that merely happens to be NAMED `Carbon` and declares a
  *     static `parse()`. Resolution is by TYPE, never by string-matching the
  *     class name — pinned by a negative fixture.
@@ -117,8 +133,15 @@ final class ForbidAdHocDateParsingRule implements Rule
     private const string DATE_FACADE = Date::class;
 
     /**
-     * Static factory methods that take a STRING and interpret it. Every entry
-     * decodes; nothing here is a clock read or a timestamp conversion.
+     * Static factory methods that interpret a STRING handed to them in first
+     * position. The names alone do not discriminate: `create`,
+     * `createFromDate`, `createFromTime`, `createStrict` and `createSafe` also
+     * accept integer components, `make` and `parse` also re-wrap an existing
+     * value, and every one of them is a clock read with no argument at all —
+     * Carbon's `create()` delegates to `parse()` exactly when its `$year` is a
+     * non-numeric string. The argument gate in `firstArgumentMayBeAString()`
+     * is what turns a name in this list into a finding, so the list stays
+     * wide and the gate stays narrow.
      *
      * @var list<string>
      */
@@ -139,7 +162,10 @@ final class ForbidAdHocDateParsingRule implements Rule
     ];
 
     /**
-     * Procedural equivalents of the same decode.
+     * Procedural equivalents of the same decode, including the two
+     * `*_from_format` aliases of `createFromFormat` — the method the seed
+     * measured as the second-largest offender, which a list without them would
+     * have left a one-token escape hatch for.
      *
      * @var list<string>
      */
@@ -147,6 +173,8 @@ final class ForbidAdHocDateParsingRule implements Rule
         'strtotime',
         'date_create',
         'date_create_immutable',
+        'date_create_from_format',
+        'date_create_immutable_from_format',
         'date_parse',
         'date_parse_from_format',
     ];
@@ -188,7 +216,7 @@ final class ForbidAdHocDateParsingRule implements Rule
         }
 
         if ($node instanceof FuncCall) {
-            return $this->processFuncCall($node);
+            return $this->processFuncCall($node, $scope);
         }
 
         return [];
@@ -231,6 +259,10 @@ final class ForbidAdHocDateParsingRule implements Rule
             return [];
         }
 
+        if (!$this->firstArgumentMayBeAString($node, $scope)) {
+            return [];
+        }
+
         $class = $this->resolveClassName($node->class, $scope);
 
         if ($class === null) {
@@ -245,15 +277,11 @@ final class ForbidAdHocDateParsingRule implements Rule
     }
 
     /**
-     * A zero-argument constructor is "now", never a parse — the argument count
-     * is the whole discriminator, so it is checked before anything else that
-     * could mask it.
-     *
      * @return list<IdentifierRuleError>
      */
     private function processNew(New_ $node, Scope $scope): array
     {
-        if ($node->getArgs() === []) {
+        if (!$this->firstArgumentMayBeAString($node, $scope)) {
             return [];
         }
 
@@ -269,7 +297,7 @@ final class ForbidAdHocDateParsingRule implements Rule
     /**
      * @return list<IdentifierRuleError>
      */
-    private function processFuncCall(FuncCall $node): array
+    private function processFuncCall(FuncCall $node, Scope $scope): array
     {
         if (!$node->name instanceof Name) {
             return [];
@@ -281,7 +309,34 @@ final class ForbidAdHocDateParsingRule implements Rule
             return [];
         }
 
+        if (!$this->firstArgumentMayBeAString($node, $scope)) {
+            return [];
+        }
+
         return [$this->buildError(sprintf('%s()', $function))];
+    }
+
+    /**
+     * The argument gate shared by all three shapes: a call decodes only if it
+     * is handed something in first position that the analyser cannot prove is
+     * NOT a string. Absent argument, integer components, `null` and an existing
+     * value object all resolve `isString()` to "no" and are silent; `string`,
+     * `mixed`, `int|string` and `?string` are not provably non-string and fire.
+     *
+     * There is deliberately no first-class-callable branch here: PHPStan does
+     * not deliver `Carbon::parse(...)` to this rule at all (a probe planted in
+     * such a branch never fired), so a guard for it would be dead code no test
+     * could pin. The fixture line is the tripwire if that ever changes.
+     */
+    private function firstArgumentMayBeAString(CallLike $node, Scope $scope): bool
+    {
+        $args = $node->getArgs();
+
+        if ($args === []) {
+            return false;
+        }
+
+        return !$scope->getType($args[0]->value)->isString()->no();
     }
 
     /**
