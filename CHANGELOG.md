@@ -83,7 +83,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Security
 
-- `league/commonmark` 2.9.0 → 2.10.0 in `composer.lock` (GHSA-8rr7-cvq3-gmfh; the 2.9.1 advisories GHSA-jjv6-8j6v-6j52, GHSA-f8fg-pg57-v4j8 and GHSA-j8pm-gj4c-rq4x close with it). A dev-only dependency here — the package never ships to a consumer — but `composer install` audits the lock on every CI job, so the stale pin was reddening every check on every open PR (WR-1256).
+- `league/commonmark` 2.9.0 → 2.10.0 in `composer.lock` (GHSA-8rr7-cvq3-gmfh; the 2.9.1 advisories GHSA-jjv6-8j6v-6j52, GHSA-f8fg-pg57-v4j8 and GHSA-j8pm-gj4c-rq4x close with it). A **runtime** dependency of this package: `illuminate/mail` is in `require` and pulls `league/commonmark ^2.7`, so `composer install --no-dev` installs it. This lock pins only what this repo's own CI and self-analysis tree install — a consumer territory resolves the range through its own lock and must bump there — but the stale pin here was reddening every check on every open PR, because `composer install` audits the lock on every job (WR-1256).
 
 ## [0.8.0] — 2026-08-11
 
