@@ -54,14 +54,24 @@ final class ComponentFactoriesAndRewraps
     }
 
     /**
-     * A first-class callable decodes nothing at THIS site — the string arrives
-     * wherever the callable is invoked — and PHPStan does not deliver the node
-     * to the rule at all. Accepted false negative; this line is the tripwire.
+     * The first-class-callable tripwire, on both shapes the rule registers for.
+     * Nothing is decoded here — the string arrives wherever the callable is
+     * later invoked — and the rule never sees these calls: PHPStan substitutes
+     * `StaticMethodCallableNode` and `FunctionCallableNode`, neither of which
+     * is a `CallLike`, so a `CallLike` registration cannot reach `getArgs()`
+     * with one. That substitution is an upstream fact, asserted directly in
+     * `ForbidAdHocDateParsingRuleTest`; these lines are what starts reporting
+     * if it ever stops holding.
      *
-     * @return callable(string): CarbonImmutable
+     * @return list<callable>
      */
-    public function firstClassCallable(): callable
+    public function firstClassCallables(): array
     {
-        return CarbonImmutable::parse(...);
+        return [
+            CarbonImmutable::parse(...),
+            CarbonImmutable::createFromFormat(...),
+            strtotime(...),
+            date_create(...),
+        ];
     }
 }

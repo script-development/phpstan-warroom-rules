@@ -6,10 +6,17 @@ namespace ScriptDevelopment\PhpstanWarroomRules\Tests\Rules;
 
 use Carbon\CarbonInterface;
 use DateTimeInterface;
+use PhpParser\Node\Expr\CallLike;
+use PHPStan\Node\FunctionCallableNode;
+use PHPStan\Node\MethodCallableNode;
+use PHPStan\Node\StaticMethodCallableNode;
 use PHPStan\Rules\Rule;
 use PHPStan\Testing\RuleTestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidAdHocDateParsingRule;
 
+use function class_exists;
+use function is_a;
 use function is_subclass_of;
 use function sprintf;
 
@@ -314,6 +321,48 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
             is_subclass_of(CarbonInterface::class, DateTimeInterface::class),
             'Carbon\CarbonInterface no longer extends DateTimeInterface, so ForbidAdHocDateParsingRule::DATE_TIME_ANCHOR no longer covers the Carbon family. Add an explicit Carbon anchor to the rule.',
         );
+    }
+
+    /**
+     * `CallLike::getArgs()` asserts `!isFirstClassCallable()` and returns raw
+     * arguments otherwise, so reaching it with `Carbon::parse(...)` would be an
+     * AssertionError under `zend.assertions=1` and a read of an undefined
+     * property on a `VariadicPlaceholder` without it. Nothing in the rule
+     * guards against that, and nothing needs to: PHPStan substitutes a
+     * dedicated node for every first-class callable, and none of those nodes is
+     * a `CallLike`, so the rule's own registration is what makes the argument
+     * gate unreachable with one. That is a fact about PHPStan, not about this
+     * code — a release that made those nodes `CallLike` would hand the rule a
+     * shape it cannot read, with the fixture tripwire still green because the
+     * rule would crash before reporting anything. This is what turns that into
+     * a red build.
+     *
+     * @param class-string $node
+     */
+    #[DataProvider('firstClassCallableNodes')]
+    public function testPhpstanFirstClassCallableNodesAreNotCallLike(string $node): void
+    {
+        self::assertTrue(class_exists($node), sprintf('%s no longer exists in PHPStan.', $node));
+
+        self::assertFalse(
+            is_a($node, CallLike::class, true),
+            sprintf(
+                '%s is now a CallLike, so PHPStan can hand a first-class callable to ForbidAdHocDateParsingRule and firstArgumentMayBeAString() will call getArgs() on it. Guard the choke point with isFirstClassCallable().',
+                $node,
+            ),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{class-string}>
+     */
+    public static function firstClassCallableNodes(): iterable
+    {
+        yield 'static method' => [StaticMethodCallableNode::class];
+
+        yield 'function' => [FunctionCallableNode::class];
+
+        yield 'instance method' => [MethodCallableNode::class];
     }
 
     /**

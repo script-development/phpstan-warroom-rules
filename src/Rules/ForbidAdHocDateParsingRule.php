@@ -323,10 +323,13 @@ final class ForbidAdHocDateParsingRule implements Rule
      * value object all resolve `isString()` to "no" and are silent; `string`,
      * `mixed`, `int|string` and `?string` are not provably non-string and fire.
      *
-     * There is deliberately no first-class-callable branch here: PHPStan does
-     * not deliver `Carbon::parse(...)` to this rule at all (a probe planted in
-     * such a branch never fired), so a guard for it would be dead code no test
-     * could pin. The fixture line is the tripwire if that ever changes.
+     * `getArgs()` is safe to call unguarded even though it asserts
+     * `!isFirstClassCallable()`: PHPStan substitutes `StaticMethodCallableNode`
+     * / `FunctionCallableNode` / `MethodCallableNode` for a first-class
+     * callable, and none of those extends `CallLike`, so this rule's
+     * registration cannot receive one. A guard here would be unreachable code
+     * no test could pin and every mutation of it would escape. The upstream
+     * substitution is asserted in the rule test instead.
      */
     private function firstArgumentMayBeAString(CallLike $node, Scope $scope): bool
     {
