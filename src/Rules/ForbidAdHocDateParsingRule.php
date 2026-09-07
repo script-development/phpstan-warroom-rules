@@ -7,6 +7,7 @@ namespace ScriptDevelopment\PhpstanWarroomRules\Rules;
 use DateTimeInterface;
 use Illuminate\Support\Facades\Date;
 use PhpParser\Node;
+use PhpParser\Node\Arg;
 use PhpParser\Node\Expr\CallLike;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\New_;
@@ -14,13 +15,17 @@ use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
 use PHPStan\Analyser\Scope;
+use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
 
+use function array_key_exists;
+use function array_map;
 use function implode;
 use function in_array;
+use function mb_rtrim;
 use function mb_strrpos;
 use function mb_strtolower;
 use function mb_substr;
@@ -54,11 +59,23 @@ use function str_starts_with;
  *      `Illuminate\Support\Facades\Date` facade, with a method name in
  *      `PARSING_METHODS`.
  *   2. `New_` of a `DateTimeInterface` subtype.
- *   3. `FuncCall` to one of `PARSING_FUNCTIONS`.
+ *   3. `FuncCall` whose callee RESOLVES to one of `PARSING_FUNCTIONS`.
+ *      Resolution is through the `ReflectionProvider`, never the written
+ *      token: PHP resolves an unqualified call to a same-namespace
+ *      declaration when one exists, so `App\Support\strtotime()` is not the
+ *      global function and must not fire. A `FuncCall` whose name is an `Expr`
+ *      (a variable function) has no resolvable callee and stays out of scope.
  *
- * — each of them ONLY when the call's FIRST ARGUMENT is present and its type
- * is not provably non-string (`firstArgumentMayBeAString()`). That one gate
- * is what separates a decode from everything else the same names can do:
+ * — each of them ONLY when the argument in the call's DECODED SLOT is present
+ * and its type is not provably non-string (`decodedSlotMayBeAString()`). The
+ * slot is named per verb, not assumed to be argument zero: `createFromFormat`
+ * decodes its `$time`, the SECOND parameter, and `create` decodes its `$year`.
+ * It is addressed by parameter NAME first and by position second, because
+ * since PHP 8.0 a caller may name any argument and a named one does not sit at
+ * its parameter's index — `create(timezone: 'Europe/Amsterdam')` hands the
+ * call no date input at all, and `create(month: 1, year: $raw)` hands it a
+ * string at index 1. That one gate is what separates a decode from everything
+ * else the same names can do:
  * `Carbon::create(2026, 9, 7)` assembles a date from integers,
  * `Carbon::make($carbon)` re-wraps a value already decoded, `Carbon::create()`
  * and `date_create()` read the clock, `new CarbonImmutable(null, $tz)` is "now
@@ -82,7 +99,7 @@ use function str_starts_with;
  *   - `now()`, `today()`, `yesterday()`, `tomorrow()`, `instance()`,
  *     `fromSerialized()` and the `createFromTimestamp*` family. A timestamp is
  *     already an instant; there is nothing to interpret.
- *   - Any listed call whose first argument is absent or provably not a string
+ *   - Any listed call whose decoded slot is absent or provably not a string
  *     (see the gate above): zero-argument construction and factories, integer
  *     components, `null`, an existing `DateTimeInterface` value.
  *   - Instance calls: `$date->format(...)`, `$date->addDays(1)`,
@@ -100,8 +117,9 @@ use function str_starts_with;
  *     class name — pinned by a negative fixture.
  *
  * THE ALLOWED NAMESPACES ARE CONFIGURATION, not a hardcoded carve-out. A class
- * whose namespace `str_starts_with` any entry in `dateParsingNamespaces` is
- * silent, so sub-namespaces match their prefix naturally. The default
+ * whose namespace EQUALS an entry in `dateParsingNamespaces`, or continues one
+ * across a namespace SEPARATOR, is silent — so `App\Casts\Money` is inside
+ * `App\Casts` and `App\CastsReport` is not. The default
  * `['App\Support\Time', 'App\Support\DateTime', 'App\Casts']` covers the two
  * boundary doors ADR-0020 Amd 1 names: a dedicated decode helper (emmie ships
  * `App\Support\DateTime\InstantParser`; lokalekeuze's lands under
@@ -133,68 +151,104 @@ final class ForbidAdHocDateParsingRule implements Rule
     private const string DATE_FACADE = Date::class;
 
     /**
-     * Static factory methods that interpret a STRING handed to them in first
-     * position. The names alone do not discriminate: `create`,
-     * `createFromDate`, `createFromTime`, `createStrict` and `createSafe` also
-     * accept integer components, `make` and `parse` also re-wrap an existing
-     * value, and every one of them is a clock read with no argument at all —
-     * Carbon's `create()` delegates to `parse()` exactly when its `$year` is a
-     * non-numeric string. The argument gate in `firstArgumentMayBeAString()`
-     * is what turns a name in this list into a finding, so the list stays
-     * wide and the gate stays narrow.
+     * Static factory methods that interpret a STRING, mapped to the SLOT that
+     * carries it — the accepted parameter spellings and the position. The names
+     * alone do not discriminate: `create`, `createFromDate`, `createFromTime`,
+     * `createStrict` and `createSafe` also accept integer components, `make`
+     * and `parse` also re-wrap an existing value, and every one of them is a
+     * clock read with no argument at all — Carbon's `create()` delegates to
+     * `parse()` exactly when its `$year` is a non-numeric string. The gate in
+     * `decodedSlotMayBeAString()` is what turns a name here into a finding, so
+     * the list stays wide and the gate stays narrow.
      *
-     * @var list<string>
+     * The slot is NOT argument zero for the `*FromFormat` family: the format
+     * string sits there and the decoded value is the `$time` after it, two
+     * places along for the locale-aware pair. `createFromFormat` carries two
+     * spellings because Carbon names that parameter `$time` and the two PHP
+     * natives name it `$datetime`; every slot here is pinned against the real
+     * signatures in `testEveryDecodedSlotMatchesTheParameterItNames`.
+     *
+     * Keys are lower-case because PHP dispatches a static method
+     * case-insensitively and the lookup folds the written identifier to match.
+     *
+     * @var array<string, array{0: list<string>, 1: int}>
      */
     private const array PARSING_METHODS = [
-        'parse',
-        'rawParse',
-        'createFromFormat',
-        'createFromIsoFormat',
-        'createFromLocaleFormat',
-        'createFromLocaleIsoFormat',
-        'createFromTimeString',
-        'createFromDate',
-        'createFromTime',
-        'create',
-        'make',
-        'createStrict',
-        'createSafe',
+        'parse' => [['time'], 0],
+        'rawparse' => [['time'], 0],
+        'createfromformat' => [['time', 'datetime'], 1],
+        'createfromisoformat' => [['time'], 1],
+        'createfromlocaleformat' => [['time'], 2],
+        'createfromlocaleisoformat' => [['time'], 2],
+        'createfromtimestring' => [['time'], 0],
+        'createfromdate' => [['year'], 0],
+        'createfromtime' => [['hour'], 0],
+        'create' => [['year'], 0],
+        'make' => [['var'], 0],
+        'createstrict' => [['year'], 0],
+        'createsafe' => [['year'], 0],
     ];
 
     /**
-     * Procedural equivalents of the same decode, including the two
-     * `*_from_format` aliases of `createFromFormat` — the method the seed
-     * measured as the second-largest offender, which a list without them would
-     * have left a one-token escape hatch for.
+     * The slot `new DateTimeImmutable(...)` / `new CarbonImmutable(...)`
+     * decodes. Carbon spells that constructor parameter `$time`, the two PHP
+     * natives spell it `$datetime`, and `new CarbonImmutable(timezone: $tz)` is
+     * "now in a zone" with nothing in the slot at all.
      *
-     * @var list<string>
+     * @var array{0: list<string>, 1: int}
+     */
+    private const array CONSTRUCTOR_SLOT = [['time', 'datetime'], 0];
+
+    /**
+     * Procedural equivalents of the same decode, mapped to the same kind of
+     * slot — including the two `*_from_format` aliases of `createFromFormat`,
+     * the method the seed measured as the second-largest offender, which a list
+     * without them would have left a one-token escape hatch for. Every one of
+     * these spells its decoded parameter `$datetime`; the three `*_from_format`
+     * shapes carry it after the format, at index 1.
+     *
+     * @var array<string, array{0: list<string>, 1: int}>
      */
     private const array PARSING_FUNCTIONS = [
-        'strtotime',
-        'date_create',
-        'date_create_immutable',
-        'date_create_from_format',
-        'date_create_immutable_from_format',
-        'date_parse',
-        'date_parse_from_format',
+        'strtotime' => [['datetime'], 0],
+        'date_create' => [['datetime'], 0],
+        'date_create_immutable' => [['datetime'], 0],
+        'date_create_from_format' => [['datetime'], 1],
+        'date_create_immutable_from_format' => [['datetime'], 1],
+        'date_parse' => [['datetime'], 0],
+        'date_parse_from_format' => [['datetime'], 1],
     ];
+
+    /** @var list<string> */
+    private array $dateParsingNamespaces;
 
     /**
      * @param list<string> $dateParsingNamespaces namespace prefixes inside
      *                                            which a date/time string may
-     *                                            legitimately be decoded
-     *                                            (matched via
-     *                                            `str_starts_with`, so
-     *                                            sub-namespaces match their
-     *                                            prefix). The default names the
-     *                                            two boundary doors of
-     *                                            ADR-0020 Amd 1 — a dedicated
-     *                                            decode helper and the
-     *                                            row-to-model cast.
+     *                                            legitimately be decoded. A
+     *                                            namespace matches when it
+     *                                            equals a prefix or continues
+     *                                            it across a separator, so
+     *                                            sub-namespaces match and
+     *                                            `App\CastsReport` does not.
+     *                                            The default names the two
+     *                                            boundary doors of ADR-0020
+     *                                            Amd 1 — a dedicated decode
+     *                                            helper and the row-to-model
+     *                                            cast.
      */
     public function __construct(
-        private array $dateParsingNamespaces = ['App\Support\Time', 'App\Support\DateTime', 'App\Casts'],
-    ) {}
+        private ReflectionProvider $reflectionProvider,
+        array $dateParsingNamespaces = ['App\Support\Time', 'App\Support\DateTime', 'App\Casts'],
+    ) {
+        // A configured `App\Casts\` and `App\Casts` name the same boundary.
+        // Normalising once here keeps the separator test below from treating
+        // the trailing form as a second, never-matching spelling.
+        $this->dateParsingNamespaces = array_map(
+            static fn(string $prefix): string => mb_rtrim($prefix, '\\'),
+            $dateParsingNamespaces,
+        );
+    }
 
     public function getNodeType(): string
     {
@@ -236,7 +290,11 @@ final class ForbidAdHocDateParsingRule implements Rule
         }
 
         foreach ($this->dateParsingNamespaces as $prefix) {
-            if (str_starts_with($namespace, $prefix)) {
+            // The separator is what makes this a NAMESPACE test rather than a
+            // character-prefix test: without it `App\CastsReport` is inside
+            // `App\Casts` and every namespace sharing an opening substring
+            // with a boundary silently inherits its exemption.
+            if ($namespace === $prefix || str_starts_with($namespace, $prefix . '\\')) {
                 return true;
             }
         }
@@ -255,11 +313,18 @@ final class ForbidAdHocDateParsingRule implements Rule
 
         $method = $node->name->toString();
 
-        if (!in_array($method, self::PARSING_METHODS, true)) {
+        // PHP dispatches `PARSE()` and `parse()` to the same method, so the
+        // written identifier is folded before the lookup. It is still what the
+        // error reports — that is the token the reader has to go and change.
+        $folded = mb_strtolower($method);
+
+        if (!array_key_exists($folded, self::PARSING_METHODS)) {
             return [];
         }
 
-        if (!$this->firstArgumentMayBeAString($node, $scope)) {
+        [$names, $position] = self::PARSING_METHODS[$folded];
+
+        if (!$this->decodedSlotMayBeAString($node, $scope, $names, $position)) {
             return [];
         }
 
@@ -281,7 +346,9 @@ final class ForbidAdHocDateParsingRule implements Rule
      */
     private function processNew(New_ $node, Scope $scope): array
     {
-        if (!$this->firstArgumentMayBeAString($node, $scope)) {
+        [$names, $position] = self::CONSTRUCTOR_SLOT;
+
+        if (!$this->decodedSlotMayBeAString($node, $scope, $names, $position)) {
             return [];
         }
 
@@ -303,13 +370,24 @@ final class ForbidAdHocDateParsingRule implements Rule
             return [];
         }
 
-        $function = mb_strtolower($node->name->toString());
-
-        if (!in_array($function, self::PARSING_FUNCTIONS, true)) {
+        // The callee is RESOLVED, never read off the token. An unqualified
+        // call inside a namespace resolves to a same-namespace declaration
+        // when one exists, so a local `strtotime()` helper is not the global
+        // function and must not fire; `use function strtotime as decode;`
+        // is the same question from the other side.
+        if (!$this->reflectionProvider->hasFunction($node->name, $scope)) {
             return [];
         }
 
-        if (!$this->firstArgumentMayBeAString($node, $scope)) {
+        $function = mb_strtolower($this->reflectionProvider->getFunction($node->name, $scope)->getName());
+
+        if (!array_key_exists($function, self::PARSING_FUNCTIONS)) {
+            return [];
+        }
+
+        [$names, $position] = self::PARSING_FUNCTIONS[$function];
+
+        if (!$this->decodedSlotMayBeAString($node, $scope, $names, $position)) {
             return [];
         }
 
@@ -317,11 +395,12 @@ final class ForbidAdHocDateParsingRule implements Rule
     }
 
     /**
-     * The argument gate shared by all three shapes: a call decodes only if it
-     * is handed something in first position that the analyser cannot prove is
-     * NOT a string. Absent argument, integer components, `null` and an existing
-     * value object all resolve `isString()` to "no" and are silent; `string`,
-     * `mixed`, `int|string` and `?string` are not provably non-string and fire.
+     * The argument gate shared by all three shapes: a call decodes only if the
+     * argument in its decoded slot is present and the analyser cannot prove it
+     * is NOT a string. Absent argument, integer components, `null` and an
+     * existing value object all resolve `isString()` to "no" and are silent;
+     * `string`, `mixed`, `int|string` and `?string` are not provably
+     * non-string and fire.
      *
      * `getArgs()` is safe to call unguarded even though it asserts
      * `!isFirstClassCallable()`: PHPStan substitutes `StaticMethodCallableNode`
@@ -330,16 +409,52 @@ final class ForbidAdHocDateParsingRule implements Rule
      * registration cannot receive one. A guard here would be unreachable code
      * no test could pin and every mutation of it would escape. The upstream
      * substitution is asserted in the rule test instead.
+     *
+     * @param list<string> $names
      */
-    private function firstArgumentMayBeAString(CallLike $node, Scope $scope): bool
+    private function decodedSlotMayBeAString(CallLike $node, Scope $scope, array $names, int $position): bool
     {
-        $args = $node->getArgs();
+        $argument = $this->argumentAt($node, $names, $position);
 
-        if ($args === []) {
+        if ($argument === null) {
             return false;
         }
 
-        return !$scope->getType($args[0]->value)->isString()->no();
+        return !$scope->getType($argument->value)->isString()->no();
+    }
+
+    /**
+     * One argument, addressed by NAME first and by position second — the reader
+     * `ForbidCredentialCastBypassRule::argumentAt()` uses, for the same reason.
+     *
+     * A named argument does not sit at its parameter's position:
+     * `create(month: 1, year: $raw)` puts the decoded value at index 1, so
+     * reading index 0 finds an integer and the parse passes silently, while
+     * `create(timezone: 'Europe/Amsterdam')` puts a string at index 0 that is
+     * not a date input at all and is reported for it.
+     *
+     * @param list<string> $names accepted spellings of the parameter, because
+     *                            Carbon and the two PHP natives disagree on
+     *                            `$time` versus `$datetime`
+     */
+    private function argumentAt(CallLike $node, array $names, int $position): ?Arg
+    {
+        $args = $node->getArgs();
+
+        foreach ($args as $argument) {
+            if ($argument->name instanceof Identifier && in_array($argument->name->toString(), $names, true)) {
+                return $argument;
+            }
+        }
+
+        // PHP requires every positional argument before the first named one, so
+        // positional slots are contiguous from zero and this index is only
+        // meaningful when the argument sitting there is itself positional.
+        // Checking the slot rather than refusing whenever ANY argument is named
+        // keeps `parse($raw, timezone: 'UTC')` covered.
+        $argument = $args[$position] ?? null;
+
+        return $argument !== null && $argument->name === null ? $argument : null;
     }
 
     /**

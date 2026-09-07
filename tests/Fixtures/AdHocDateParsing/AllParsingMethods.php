@@ -11,8 +11,8 @@ use DateTimeImmutable;
 /**
  * Denominator fixture: every entry of `PARSING_METHODS` and
  * `PARSING_FUNCTIONS`, plus both native constructors and the static
- * `DateTime::createFromFormat` form, each on its own line — and each handed a
- * STRING in first position, because the component factories (`create`,
+ * `DateTime::createFromFormat` form, each on its own line — each handed a
+ * STRING in its decoded slot, because the component factories (`create`,
  * `createFromDate`, …) delegate to `parse()` when the year is a non-numeric
  * string and are silent on integer components (see
  * `ComponentFactoriesAndRewraps`).
