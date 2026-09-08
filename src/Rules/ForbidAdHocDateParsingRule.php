@@ -19,7 +19,10 @@ use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
+use PHPStan\Type\Constant\ConstantIntegerType;
+use PHPStan\Type\Constant\ConstantStringType;
 use PHPStan\Type\ObjectType;
+use PHPStan\Type\Type;
 
 use function array_key_exists;
 use function array_map;
@@ -472,18 +475,15 @@ final class ForbidAdHocDateParsingRule implements Rule
      */
     private function decodedSlotMayBeAString(CallLike $node, Scope $scope, array $names, int $position): bool
     {
-        $argument = $this->argumentAt($node, $names, $position);
+        $type = $this->decodedSlotType($node, $scope, $names, $position);
 
-        if ($argument === null) {
-            return false;
-        }
-
-        return !$scope->getType($argument->value)->isString()->no();
+        return $type !== null && !$type->isString()->no();
     }
 
     /**
-     * One argument, addressed by NAME first and by position second — the reader
-     * `ForbidCredentialCastBypassRule::argumentAt()` uses, for the same reason.
+     * The TYPE that reaches the decoded slot, addressed by NAME first and by
+     * position second — the reader `ForbidCredentialCastBypassRule` uses, for
+     * the same reason. Null means no argument reaches the slot at all.
      *
      * A named argument does not sit at its parameter's position:
      * `create(month: 1, year: $raw)` puts the decoded value at index 1, so
@@ -491,28 +491,107 @@ final class ForbidAdHocDateParsingRule implements Rule
      * `create(timezone: 'Europe/Amsterdam')` puts a string at index 0 that is
      * not a date input at all and is reported for it.
      *
+     * A TYPE rather than an `Arg`, because an unpacked argument breaks the
+     * one-argument-one-parameter correspondence the AST otherwise has. Spread
+     * an array into a call and php-parser carries ONE `Arg` whose value is the
+     * whole ARRAY, however many parameters it fills — so reading that `Arg`'s
+     * type asks "is this array a string", the analyser answers a confident no,
+     * and `Carbon::parse(...$raw)` decodes a string in silence. The slot's type
+     * has to come from INSIDE the unpacked array, at the offset the slot
+     * actually lands on.
+     *
      * @param list<string> $names accepted spellings of the parameter, because
      *                            Carbon and the two PHP natives disagree on
      *                            `$time` versus `$datetime`
      */
-    private function argumentAt(CallLike $node, array $names, int $position): ?Arg
+    private function decodedSlotType(CallLike $node, Scope $scope, array $names, int $position): ?Type
     {
         $args = $node->getArgs();
 
+        // Name pass. A string-keyed array spread IS a named-argument spread —
+        // `parse(...['time' => $raw])` names the slot exactly as
+        // `parse(time: $raw)` does — so the key is asked of the unpacked array
+        // here rather than left to the positional pass, which counts integer
+        // offsets and would never see it.
         foreach ($args as $argument) {
             if ($argument->name instanceof Identifier && in_array($argument->name->toString(), $names, true)) {
-                return $argument;
+                return $scope->getType($argument->value);
+            }
+
+            if (!$argument->unpack) {
+                continue;
+            }
+
+            $unpacked = $scope->getType($argument->value);
+
+            foreach ($names as $name) {
+                $key = new ConstantStringType($name);
+
+                if (!$unpacked->hasOffsetValueType($key)->no()) {
+                    return $unpacked->getOffsetValueType($key);
+                }
             }
         }
 
-        // PHP requires every positional argument before the first named one, so
-        // positional slots are contiguous from zero and this index is only
-        // meaningful when the argument sitting there is itself positional.
-        // Checking the slot rather than refusing whenever ANY argument is named
-        // keeps `parse($raw, timezone: 'UTC')` covered.
-        $argument = $args[$position] ?? null;
+        // Positional pass. PHP requires every positional argument before the
+        // first named one, so positional slots are contiguous from zero — but
+        // an unpacked array fills as many of them as it has elements, so the
+        // index is counted rather than read off the argument list. Counting
+        // rather than refusing whenever ANY argument is named or unpacked keeps
+        // `parse($raw, timezone: 'UTC')` covered.
+        $index = 0;
 
-        return $argument !== null && $argument->name === null ? $argument : null;
+        foreach ($args as $argument) {
+            if ($argument->name !== null) {
+                // The guard is what stops a named argument being counted as a
+                // positional slot: `create(timezone: 'Europe/Amsterdam')` would
+                // otherwise answer index 0 with a string that is not a date
+                // input at all. `continue` and `break` are the same statement
+                // here — PHP's parser rejects both a positional argument and an
+                // unpack after a named one, so nothing following this can fill
+                // a positional slot — which is why a mutation between them
+                // survives and cannot be killed by any input.
+                continue;
+            }
+
+            if (!$argument->unpack) {
+                if ($index === $position) {
+                    return $scope->getType($argument->value);
+                }
+
+                $index++;
+
+                continue;
+            }
+
+            $unpacked = $scope->getType($argument->value);
+
+            if ($position >= $index) {
+                $offset = new ConstantIntegerType($position - $index);
+
+                // Not provably absent is the same direction the gate itself
+                // takes: an array with no element information yields `mixed`
+                // here and therefore FIRES, because an unpacked
+                // `$request->input()` bag is exactly the input the boundary
+                // type exists to pin down.
+                if (!$unpacked->hasOffsetValueType($offset)->no()) {
+                    return $unpacked->getOffsetValueType($offset);
+                }
+            }
+
+            $size = $unpacked->getArraySize();
+
+            // The slot is past this array. Skipping it needs its LENGTH, which
+            // only a constant array has; otherwise every later position is
+            // unknowable and there is nothing further to say.
+            if (!$size instanceof ConstantIntegerType) {
+                return null;
+            }
+
+            $index += $size->getValue();
+        }
+
+        return null;
     }
 
     /**

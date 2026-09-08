@@ -652,6 +652,50 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
     }
 
     /**
+     * An unpacked argument breaks the one-argument-one-parameter
+     * correspondence the rest of this rule relies on: spread an array into a
+     * call and php-parser carries ONE `Arg` whose value is the whole array,
+     * however many parameters it fills. Reading that `Arg`'s type asks "is this
+     * array a string", the analyser answers a confident no, and the parse is
+     * silent — the gate suppressing the finding rather than the call being
+     * safe, which is the worst shape a false negative can have.
+     *
+     * Six fire, and each names a different way the slot is reached: an unpacked
+     * `list<string>` at slot 0; a `array{string, string}` whose decoded value
+     * is at offset 1, behind the format; the constructor; a function; a
+     * string-keyed spread, which is a NAMED-argument spread and has to be
+     * resolved by key rather than by counting; and two spreads in a row, where
+     * the first has to be stepped over by its known LENGTH before the second
+     * can be read.
+     *
+     * A seventh fires on an untyped bag, pinning the direction the branch
+     * chooses: no element information means the value reaching the slot is not
+     * provably a non-string, so it fires — the same call the gate already makes
+     * on a bare `mixed`, and the shape an unpacked `$request->all()` has.
+     *
+     * Four stay silent, and each is silent for the reason the rule states
+     * rather than by accident: constant integer components, a `list<int>`, a
+     * method that is not in the table at all, and a Traversable spread, which
+     * has neither offsets nor a known length and is a declared deliberate miss.
+     */
+    public function testFlagsAStringUnpackedIntoTheDecodedSlot(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AdHocDateParsing/UnpackedArguments.php'],
+            [
+                [self::expected('CarbonImmutable::parse()'), 25],
+                [self::expected('Carbon::createFromFormat()'), 36],
+                [self::expected('new DateTimeImmutable()'), 44],
+                [self::expected('strtotime()'), 52],
+                [self::expected('CarbonImmutable::parse()'), 62],
+                [self::expected('CarbonImmutable::parse()'), 76],
+                [self::expected('Carbon::createFromFormat()'), 89],
+                [self::expected('Carbon::createFromLocaleFormat()'), 101],
+            ],
+        );
+    }
+
+    /**
      * A configured prefix that already ends in a separator names the same
      * boundary as one that does not. Without the normalisation the separator
      * test appends a second backslash and the trailing spelling matches
