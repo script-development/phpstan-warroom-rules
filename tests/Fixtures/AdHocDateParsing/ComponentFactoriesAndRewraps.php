@@ -30,6 +30,24 @@ final class ComponentFactoriesAndRewraps
     public function fromIntegerOrNullComponents(?int $year): void
     {
         CarbonImmutable::createFromDate($year);
+        CarbonImmutable::createMidnightDate($year);
+    }
+
+    /**
+     * The three factories the completeness gate added to `PARSING_METHODS` are
+     * held back by the same argument gate as their siblings, not by a special
+     * case. `createMidnightDate` takes integer components like `createFromDate`
+     * it delegates to. `parseFromLocale` and `rawCreateFromFormat` DECLARE their
+     * decoded slot `string`, so no provably-non-string value can be handed to
+     * them — an ABSENT slot is the only silent shape they have, addressed here
+     * by naming a different parameter.
+     */
+    public function newlyListedFactoriesWithNothingInTheSlot(): void
+    {
+        CarbonImmutable::createMidnightDate(2_026, 9, 8);
+
+        CarbonImmutable::parseFromLocale(locale: 'nl');
+        CarbonImmutable::rawCreateFromFormat(format: 'Y-m-d');
     }
 
     public function rewrapsAnExistingValue(CarbonImmutable $at, DateTimeImmutable $native): void

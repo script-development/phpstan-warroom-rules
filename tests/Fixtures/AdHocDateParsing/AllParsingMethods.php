@@ -30,12 +30,15 @@ final class AllParsingMethods
     {
         CarbonImmutable::parse($raw);
         CarbonImmutable::rawParse($raw);
+        CarbonImmutable::parseFromLocale($raw);
         CarbonImmutable::createFromFormat('Y-m-d', $raw);
+        CarbonImmutable::rawCreateFromFormat('Y-m-d', $raw);
         CarbonImmutable::createFromIsoFormat('YYYY-MM-DD', $raw);
         CarbonImmutable::createFromLocaleFormat('Y-m-d', 'nl', $raw);
         CarbonImmutable::createFromLocaleIsoFormat('YYYY-MM-DD', 'nl', $raw);
         CarbonImmutable::createFromTimeString($raw);
         CarbonImmutable::createFromDate($raw);
+        CarbonImmutable::createMidnightDate($raw);
         CarbonImmutable::createFromTime($raw);
         CarbonImmutable::create($raw);
         CarbonImmutable::make($raw);
