@@ -77,10 +77,12 @@ parameters:
     # backslashes — see the NEON-quoting note above.
     credentialCastTableModels: []
 
-    # `ForbidAdHocDateParsingRule`: namespace prefixes inside which a date/time
-    # STRING may legitimately be decoded. A class whose namespace
-    # `str_starts_with` any entry is silent, so sub-namespaces match their
-    # prefix naturally; everywhere else, constructing a date from a string is an
+    # `ForbidAdHocDateParsingRule`: boundary NAMESPACES inside which a date/time
+    # STRING may legitimately be decoded. A class is inside an entry when its
+    # namespace EQUALS it or continues it across a namespace separator — so
+    # `App\Casts\Money` is inside `App\Casts` and `App\CastsReport`, which merely
+    # shares an opening substring, is NOT (a trailing backslash on an entry is
+    # normalised away). Everywhere else, constructing a date from a string is an
     # error. The default names the two boundary doors of ADR-0020 Amendment 1 —
     # a dedicated decode helper (emmie ships `App\Support\DateTime\InstantParser`;
     # lokalekeuze's lands under `App\Support\Time`) and the row-to-model cast
