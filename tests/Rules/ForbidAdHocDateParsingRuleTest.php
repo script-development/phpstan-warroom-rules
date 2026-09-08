@@ -10,6 +10,7 @@ use Carbon\CarbonInterface;
 use DateTime;
 use DateTimeImmutable;
 use DateTimeInterface;
+use Illuminate\Support\Carbon as IlluminateCarbon;
 use PhpParser\Node\Expr\CallLike;
 use PHPStan\Node\FunctionCallableNode;
 use PHPStan\Node\MethodCallableNode;
@@ -19,15 +20,31 @@ use PHPStan\Testing\RuleTestCase;
 use PHPUnit\Framework\Attributes\DataProvider;
 use ReflectionClass;
 use ReflectionFunction;
+use ReflectionIntersectionType;
+use ReflectionMethod;
+use ReflectionNamedType;
 use ReflectionParameter;
+use ReflectionType;
+use ReflectionUnionType;
 use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidAdHocDateParsingRule;
 
+use function array_intersect_key;
+use function array_key_exists;
 use function array_keys;
+use function array_unique;
+use function array_values;
 use function class_exists;
+use function count;
+use function explode;
 use function function_exists;
 use function implode;
+use function in_array;
+use function interface_exists;
 use function is_a;
 use function is_subclass_of;
+use function mb_ltrim;
+use function mb_strtolower;
+use function preg_match;
 use function sort;
 use function sprintf;
 
@@ -39,6 +56,22 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
     private const string DEFAULT_ALLOWED = 'App\Support\Time, App\Support\DateTime, App\Casts';
 
     private const string CONFIGURED_ALLOWED = 'App\Domain\Clock';
+
+    /**
+     * The classes whose static surface the completeness gate must partition.
+     * `Illuminate\Support\Carbon` earns its place the same way the two
+     * `Carbon\*` classes do — the rule fires on it, because it is a
+     * `DateTimeInterface` subtype and it is what the `Date` facade resolves to,
+     * so a factory added there would evade the rule exactly as one added to
+     * Carbon would.
+     *
+     * @var list<class-string>
+     */
+    private const array FACTORY_DECLARERS = [
+        Carbon::class,
+        CarbonImmutable::class,
+        IlluminateCarbon::class,
+    ];
 
     /**
      * Override hook: when set, `getRule()` returns this instance instead of the
@@ -471,6 +504,154 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
     }
 
     /**
+     * The generator gate. Every method list on this rule was maintained BY HAND,
+     * and four consecutive review rounds on its pull request each found a true
+     * defect in one — the fourth naming two static factories `PARSING_METHODS`
+     * had never carried (`parseFromLocale`, `createMidnightDate`), with a
+     * reflection sweep over the same surface immediately turning up a third
+     * (`rawCreateFromFormat`) that nobody reading the list had seen. Reading the
+     * list harder is not the fix. The fix is that the list stops being a claim.
+     *
+     * So: reflect Carbon's REAL static factory surface and require every method
+     * on it to be classified — either a key of `PARSING_METHODS`, meaning it
+     * interprets a string and the rule reports it, or a key of
+     * `NON_DECODING_FACTORIES`, meaning it does not and the rule is silent for a
+     * stated reason. A method in neither fails here BY NAME, with both places it
+     * could go. A Carbon release that adds a factory then reds this build
+     * instead of opening a silent hole in the rule.
+     *
+     * The classification is deliberately conservative in ONE direction: a method
+     * whose returned shape cannot be read at all — no declared return type and
+     * no `@return` — counts as a factory and must be classified.
+     * `createFromImmutable` and `createFromMutable` are exactly that case. Being
+     * wrong that way costs one allowlist row; being wrong the other way is the
+     * hole this test exists to close.
+     */
+    public function testEveryCarbonStaticFactoryIsClassifiedAsDecodingOrNot(): void
+    {
+        $decoding = self::ruleSlots('PARSING_METHODS');
+        $allowed = self::ruleAllowlist();
+
+        self::assertNotSame([], $decoding, 'PARSING_METHODS is empty, so this test partitions nothing.');
+        self::assertNotSame([], $allowed, 'NON_DECODING_FACTORIES is empty, so every factory would have to be a decoder.');
+        self::assertSame(
+            [],
+            array_intersect_key($decoding, $allowed),
+            'A method is listed as BOTH decoding and non-decoding, so the two constants no longer partition the surface.',
+        );
+
+        $factories = [];
+        $unclassified = [];
+
+        foreach (self::FACTORY_DECLARERS as $class) {
+            foreach ((new ReflectionClass($class))->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+                if (!$method->isStatic() || !self::returnsAnInstance($method)) {
+                    continue;
+                }
+
+                $folded = mb_strtolower($method->getName());
+                $factories[$folded] = true;
+
+                if (array_key_exists($folded, $decoding) || array_key_exists($folded, $allowed)) {
+                    continue;
+                }
+
+                // First declarer wins, so the message names the class the
+                // method is declared on rather than the last one to inherit it.
+                $unclassified[$folded] ??= sprintf('%s::%s()', $class, $method->getName());
+            }
+        }
+
+        // Non-empty denominator. A reflection sweep that returned nothing would
+        // report a clean partition of an empty set — the exact output shape of a
+        // broken instrument. Carbon's real surface is comfortably over this
+        // floor, so the number only ever moves when the sweep breaks.
+        self::assertGreaterThanOrEqual(
+            20,
+            count($factories),
+            sprintf(
+                'Only %d static factories were reflected off %s, so the sweep is broken rather than the lists complete.',
+                count($factories),
+                implode(', ', self::FACTORY_DECLARERS),
+            ),
+        );
+
+        self::assertSame(
+            [],
+            array_values($unclassified),
+            'A Carbon static factory is classified by neither constant on ForbidAdHocDateParsingRule. Add it to PARSING_METHODS with the slot that carries the decoded string if it interprets one, or to NON_DECODING_FACTORIES with the reason it does not.',
+        );
+    }
+
+    /**
+     * The allowlist's own gate, and the reason `NON_DECODING_FACTORIES` cannot
+     * be used to silence a decoder. The test above is satisfied by ANY
+     * classification, including a wrong one: moving `parse` down into the
+     * allowlist would make it pass while the rule stopped reporting the single
+     * most common decode in the fleet.
+     *
+     * The discriminator is the one the rule itself uses — the parameter NAME. A
+     * decoding factory names its input with one of the slot spellings
+     * `PARSING_METHODS` reads (`$time`, `$datetime`, `$year`, `$hour`, `$var`)
+     * and types it so a string fits. A type-only check could not be written:
+     * `now(DateTimeZone|string|int|null $timezone)` and
+     * `createFromTimestamp(string|int|float $timestamp)` both accept a string in
+     * their first slot and both belong on the allowlist, so a check that read
+     * types alone would have to reject them.
+     */
+    public function testNoAllowedFactoryTakesAStringInADecodedSlot(): void
+    {
+        $spellings = self::decodedSlotSpellings();
+
+        self::assertNotSame([], $spellings, 'No slot spellings were read off the rule, so this check compares against nothing.');
+
+        $unmatched = [];
+
+        foreach (array_keys(self::ruleAllowlist()) as $allowed) {
+            $found = false;
+
+            foreach (self::FACTORY_DECLARERS as $class) {
+                $reflection = new ReflectionClass($class);
+
+                if (!$reflection->hasMethod($allowed)) {
+                    continue;
+                }
+
+                $found = true;
+
+                foreach ($reflection->getMethod($allowed)->getParameters() as $parameter) {
+                    if (!in_array(mb_strtolower($parameter->getName()), $spellings, true)) {
+                        continue;
+                    }
+
+                    self::assertFalse(
+                        self::admitsAString($parameter),
+                        sprintf(
+                            '%s::%s() is on NON_DECODING_FACTORIES, but its $%s parameter is a decoded slot that accepts a string. Either it decodes — move it to PARSING_METHODS — or the allowlist is being used to silence a decoder.',
+                            $class,
+                            $allowed,
+                            $parameter->getName(),
+                        ),
+                    );
+                }
+            }
+
+            if (!$found) {
+                $unmatched[] = $allowed;
+            }
+        }
+
+        // Per-ENTRY denominator, not a total: a count would stay satisfied while
+        // one entry matched nothing and another matched three classes, which is
+        // how a skipped loop passes for the wrong reason.
+        self::assertSame(
+            [],
+            $unmatched,
+            'An entry of NON_DECODING_FACTORIES names no method on any reflected class, so it was never checked and is dead configuration.',
+        );
+    }
+
+    /**
      * A configured prefix that already ends in a separator names the same
      * boundary as one that does not. Without the normalisation the separator
      * test appends a second backslash and the trailing spelling matches
@@ -638,6 +819,164 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
         self::assertIsArray($value);
 
         return $value;
+    }
+
+    /**
+     * The classification allowlist, read off the rule rather than restated.
+     *
+     * @return array<string, string>
+     */
+    private static function ruleAllowlist(): array
+    {
+        $allowed = (new ReflectionClass(ForbidAdHocDateParsingRule::class))->getConstant('NON_DECODING_FACTORIES');
+
+        self::assertIsArray($allowed);
+
+        return $allowed;
+    }
+
+    /**
+     * Every parameter spelling the rule will accept as a decoded slot, unioned
+     * across all three of its slot maps and read off the rule, so a spelling
+     * added there is covered here without an edit.
+     *
+     * @return list<string>
+     */
+    private static function decodedSlotSpellings(): array
+    {
+        $spellings = [];
+
+        foreach ([self::ruleSlots('PARSING_METHODS'), self::ruleSlots('PARSING_FUNCTIONS')] as $map) {
+            foreach ($map as [$names, $position]) {
+                foreach ($names as $name) {
+                    $spellings[] = mb_strtolower($name);
+                }
+            }
+        }
+
+        [$names, $position] = self::ruleConstant('CONSTRUCTOR_SLOT');
+
+        foreach ($names as $name) {
+            $spellings[] = mb_strtolower($name);
+        }
+
+        $spellings = array_values(array_unique($spellings));
+        sort($spellings);
+
+        return $spellings;
+    }
+
+    /**
+     * Whether a static method hands back an instance — the shape that makes it a
+     * factory this rule has to have an opinion about. The declared return type
+     * is read first; Carbon leaves two factories untyped, so the docblock
+     * `@return` is the fallback; and a method with NEITHER counts as a factory,
+     * because an unreadable shape must be classified rather than assumed inert.
+     */
+    private static function returnsAnInstance(ReflectionMethod $method): bool
+    {
+        $declared = $method->getReturnType();
+
+        if ($declared !== null) {
+            return self::namesAnInstance(self::typeNames($declared));
+        }
+
+        $documented = self::documentedReturn($method);
+
+        return $documented === null || self::namesAnInstance($documented);
+    }
+
+    /**
+     * @param list<string> $names
+     */
+    private static function namesAnInstance(array $names): bool
+    {
+        foreach ($names as $name) {
+            $name = mb_ltrim($name, '?\\');
+
+            if (in_array(mb_strtolower($name), ['static', 'self', '$this'], true)) {
+                return true;
+            }
+
+            // Carbon writes its own classes unqualified in docblocks, so the
+            // relative spelling is resolved against its namespace before the
+            // subtype question is asked.
+            foreach ([$name, 'Carbon\\' . $name] as $candidate) {
+                if ((class_exists($candidate) || interface_exists($candidate)) && is_a($candidate, DateTimeInterface::class, true)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @return list<string>|null the union members of the docblock `@return`, or
+     *                           null when the method documents none
+     */
+    private static function documentedReturn(ReflectionMethod $method): ?array
+    {
+        $doc = $method->getDocComment();
+
+        if ($doc === false || preg_match('/@return\s+(\S+)/', $doc, $matches) !== 1) {
+            return null;
+        }
+
+        return explode('|', $matches[1]);
+    }
+
+    /**
+     * Whether a string fits in this parameter. An untyped parameter and a
+     * `mixed` one both do — the same direction the rule's own argument gate
+     * takes, where "not provably non-string" is what fires.
+     */
+    private static function admitsAString(ReflectionParameter $parameter): bool
+    {
+        $type = $parameter->getType();
+
+        if ($type === null) {
+            return true;
+        }
+
+        $names = self::typeNames($type);
+
+        if ($names === []) {
+            return true;
+        }
+
+        foreach ($names as $name) {
+            if (in_array(mb_strtolower(mb_ltrim($name, '?\\')), ['string', 'mixed'], true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Every named member of a type, flattening unions and intersections so a
+     * `Closure|CarbonInterface|null` is read for the Carbon in it.
+     *
+     * @return list<string>
+     */
+    private static function typeNames(ReflectionType $type): array
+    {
+        if ($type instanceof ReflectionNamedType) {
+            return [$type->getName()];
+        }
+
+        if ($type instanceof ReflectionUnionType || $type instanceof ReflectionIntersectionType) {
+            $names = [];
+
+            foreach ($type->getTypes() as $inner) {
+                $names = [...$names, ...self::typeNames($inner)];
+            }
+
+            return $names;
+        }
+
+        return [];
     }
 
     private static function expected(string $call, string $allowed = self::DEFAULT_ALLOWED): string

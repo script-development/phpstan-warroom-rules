@@ -90,7 +90,7 @@ use function str_starts_with;
  * Carbon-specific check would be redundant and, worse, unfalsifiable: no input
  * could distinguish the two conditions, so nothing could ever prove the second
  * one still worked. That inheritance is load-bearing rather than incidental, so
- * it is asserted in the test suite (`testCarbonInterfaceExtendsTheAnchor`)
+ * it is asserted in the test suite (`testCarbonInterfaceExtendsTheDateTimeAnchor`)
  * instead of claimed in this docblock — a Carbon release that stopped extending
  * `DateTimeInterface` would silently narrow this rule to the two PHP natives,
  * and the assertion is what turns that into a red build.
@@ -98,7 +98,9 @@ use function str_starts_with;
  * WHAT DOES NOT FIRE, by design — none of these decodes a string:
  *   - `now()`, `today()`, `yesterday()`, `tomorrow()`, `instance()`,
  *     `fromSerialized()` and the `createFromTimestamp*` family. A timestamp is
- *     already an instant; there is nothing to interpret.
+ *     already an instant; there is nothing to interpret. Each of these is named
+ *     in `NON_DECODING_FACTORIES` with its reason, so a factory belonging to
+ *     neither constant is a failed test rather than a silent escape.
  *   - Any listed call whose decoded slot is absent or provably not a string
  *     (see the gate above): zero-argument construction and factories, integer
  *     components, `null`, an existing `DateTimeInterface` value.
@@ -137,6 +139,49 @@ use function str_starts_with;
  */
 final class ForbidAdHocDateParsingRule implements Rule
 {
+    /**
+     * The other half of Carbon's static factory surface: methods that return an
+     * instance without interpreting any argument as a date/time string. Listing
+     * them is what lets `testEveryCarbonStaticFactoryIsClassifiedAsDecodingOrNot`
+     * fail on a factory that is in NEITHER constant — the state a reviewer
+     * found by hand on the fourth consecutive round of PR #71.
+     *
+     * The reason is not decoration — it is the claim the entry makes, and the
+     * completeness test refuses any entry whose real signature names a decoded
+     * slot (`$time`, `$datetime`, `$year`, `$hour`, `$var`) with a type that
+     * admits a string. That is what stops a future author silencing a decoder
+     * by moving its name down here.
+     *
+     * Analysis never reads it: a name that is absent from `PARSING_METHODS`
+     * already returns no error, so consulting this list at analysis time would
+     * be a branch no input could distinguish. Its only reader is the
+     * completeness test, and `public` is what says so — a private constant
+     * nothing in this class consults is `classConstant.unused`, and the fix for
+     * that is to declare the external reader, not to invent a use.
+     *
+     * @var array<string, string>
+     */
+    public const array NON_DECODING_FACTORIES = [
+        'now' => 'Reads the clock. There is no argument to interpret.',
+        'today' => 'Reads the clock, truncated to the day.',
+        'tomorrow' => 'Reads the clock, offset by a day.',
+        'yesterday' => 'Reads the clock, offset by a day.',
+        'instance' => 'Re-wraps a DateTimeInterface that is already decoded.',
+        'createfrominterface' => 'Re-wraps a DateTimeInterface that is already decoded.',
+        'createfromimmutable' => 'Re-wraps a DateTimeImmutable that is already decoded.',
+        'createfrommutable' => 'Re-wraps a DateTime that is already decoded.',
+        'createfromid' => 'Reads the embedded timestamp of an ordered UUID or ULID, not a date string.',
+        'fromserialized' => 'Restores a previously serialized instance.',
+        '__set_state' => 'Restores an instance from its var_export() form.',
+        'createfromtimestamp' => 'A timestamp is already an instant; nothing is interpreted.',
+        'createfromtimestamputc' => 'A timestamp is already an instant; nothing is interpreted.',
+        'createfromtimestampms' => 'A timestamp is already an instant; nothing is interpreted.',
+        'createfromtimestampmsutc' => 'A timestamp is already an instant; nothing is interpreted.',
+        'startoftime' => 'The lowest representable instant. It takes no argument.',
+        'endoftime' => 'The highest representable instant. It takes no argument.',
+        'gettestnow' => 'Returns the configured test clock; it is a getter, not a factory over an argument.',
+    ];
+
     private const string IDENTIFIER = 'forbidAdHocDateParsing.stringParsedOutsideBoundary';
 
     /**
@@ -167,6 +212,16 @@ final class ForbidAdHocDateParsingRule implements Rule
      * spellings because Carbon names that parameter `$time` and the two PHP
      * natives name it `$datetime`; every slot here is pinned against the real
      * signatures in `testEveryDecodedSlotMatchesTheParameterItNames`.
+     *
+     * The list stays wide, and what keeps it COMPLETE is not care:
+     * `testEveryCarbonStaticFactoryIsClassifiedAsDecodingOrNot` reflects
+     * Carbon's real static surface and fails on any factory that is neither a
+     * key here nor a key of `NON_DECODING_FACTORIES`. Three methods were missing
+     * while the list was maintained by hand: a reviewer named `parseFromLocale`
+     * and `createMidnightDate`, and a reflection sweep over the same surface
+     * then found `rawCreateFromFormat`, which nobody reading the list had seen.
+     * That is what moved the completeness claim out of this docblock and into a
+     * test.
      *
      * Keys are lower-case because PHP dispatches a static method
      * case-insensitively and the lookup folds the written identifier to match.
