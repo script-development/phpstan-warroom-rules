@@ -426,7 +426,7 @@ Semantic versioning:
 - **Minor** — a new rule is added, or a rule gains an option that doesn't change defaults.
 - **Patch** — bug fixes, false-positive suppression, performance improvements.
 
-Pin to a 0.x minor version today (`^0.8`, the current minor); future 1.0 release will allow `^1.0` pinning. See `CLAUDE.md` § Versioning for the 0.x caret-semantics rationale.
+Pin to a 0.x minor version today (`^0.9`, the current minor); future 1.0 release will allow `^1.0` pinning. See `CLAUDE.md` § Versioning for the 0.x caret-semantics rationale.
 
 ## License
 
