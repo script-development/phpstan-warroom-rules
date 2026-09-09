@@ -27,6 +27,7 @@ use ReflectionParameter;
 use ReflectionType;
 use ReflectionUnionType;
 use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidAdHocDateParsingRule;
+use Throwable;
 
 use function array_intersect_key;
 use function array_key_exists;
@@ -56,6 +57,15 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
     private const string DEFAULT_ALLOWED = 'App\Support\Time, App\Support\DateTime, App\Casts';
 
     private const string CONFIGURED_ALLOWED = 'App\Domain\Clock';
+
+    /**
+     * A NON-NUMERIC date string with an explicit offset. Non-numeric is what
+     * takes `create()`'s parse branch, and the offset is what keeps the probe's
+     * expected instant independent of the ambient timezone and of the clock.
+     */
+    private const string PROBE_STRING = '2026-09-09T14:30:00+02:00';
+
+    private const string PROBE_FORMAT = 'Y-m-d\TH:i:s.uP';
 
     /**
      * The classes whose static surface the completeness gate must partition.
@@ -212,6 +222,27 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
     }
 
     /**
+     * `createFromTime`, `createStrict` and `createSafe` read like decoders and
+     * are not: `create()` parses `$year` alone, so a `$hour` is a component;
+     * `createStrict()` declares `?int`; `createSafe()` rejects every non-`int`
+     * component before it calls `create()`. They sit on
+     * `NON_DECODING_FACTORIES` for those mechanisms, and this file hands each
+     * of them a plain `string` anyway.
+     *
+     * Silence is the whole assertion, which is exactly why the file has to
+     * exist: re-listing any of the three as a decoder is otherwise a change
+     * with no red line anywhere, and it is the change round 1 of this rule's
+     * pull request argued for.
+     */
+    public function testIgnoresTheComponentFactoriesThatCannotReachTheParseBranch(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AdHocDateParsing/NonDecodingComponentFactories.php'],
+            [],
+        );
+    }
+
+    /**
      * The argument gate, positive half and its DIRECTION: a first argument the
      * analyser cannot prove is NOT a string (`mixed`, `int|string`, `?string`)
      * fires. A gate that required a proven string instead would exempt every
@@ -327,32 +358,29 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
         $this->analyse(
             [__DIR__ . '/../Fixtures/AdHocDateParsing/AllParsingMethods.php'],
             [
-                [self::expected('CarbonImmutable::parse()'), 31],
-                [self::expected('CarbonImmutable::rawParse()'), 32],
-                [self::expected('CarbonImmutable::parseFromLocale()'), 33],
-                [self::expected('CarbonImmutable::createFromFormat()'), 34],
-                [self::expected('CarbonImmutable::rawCreateFromFormat()'), 35],
-                [self::expected('CarbonImmutable::createFromIsoFormat()'), 36],
-                [self::expected('CarbonImmutable::createFromLocaleFormat()'), 37],
-                [self::expected('CarbonImmutable::createFromLocaleIsoFormat()'), 38],
-                [self::expected('CarbonImmutable::createFromTimeString()'), 39],
-                [self::expected('CarbonImmutable::createFromDate()'), 40],
-                [self::expected('CarbonImmutable::createMidnightDate()'), 41],
-                [self::expected('CarbonImmutable::createFromTime()'), 42],
-                [self::expected('CarbonImmutable::create()'), 43],
-                [self::expected('CarbonImmutable::make()'), 44],
-                [self::expected('CarbonImmutable::createStrict()'), 45],
-                [self::expected('CarbonImmutable::createSafe()'), 46],
-                [self::expected('strtotime()'), 51],
-                [self::expected('date_create()'), 52],
-                [self::expected('date_create_immutable()'), 53],
-                [self::expected('date_parse()'), 54],
-                [self::expected('date_parse_from_format()'), 55],
-                [self::expected('date_create_from_format()'), 56],
-                [self::expected('date_create_immutable_from_format()'), 57],
-                [self::expected('new DateTime()'), 62],
-                [self::expected('new DateTimeImmutable()'), 63],
-                [self::expected('DateTime::createFromFormat()'), 64],
+                [self::expected('CarbonImmutable::parse()'), 37],
+                [self::expected('CarbonImmutable::rawParse()'), 38],
+                [self::expected('CarbonImmutable::parseFromLocale()'), 39],
+                [self::expected('CarbonImmutable::createFromFormat()'), 40],
+                [self::expected('CarbonImmutable::rawCreateFromFormat()'), 41],
+                [self::expected('CarbonImmutable::createFromIsoFormat()'), 42],
+                [self::expected('CarbonImmutable::createFromLocaleFormat()'), 43],
+                [self::expected('CarbonImmutable::createFromLocaleIsoFormat()'), 44],
+                [self::expected('CarbonImmutable::createFromTimeString()'), 45],
+                [self::expected('CarbonImmutable::createFromDate()'), 46],
+                [self::expected('CarbonImmutable::createMidnightDate()'), 47],
+                [self::expected('CarbonImmutable::create()'), 48],
+                [self::expected('CarbonImmutable::make()'), 49],
+                [self::expected('strtotime()'), 54],
+                [self::expected('date_create()'), 55],
+                [self::expected('date_create_immutable()'), 56],
+                [self::expected('date_parse()'), 57],
+                [self::expected('date_parse_from_format()'), 58],
+                [self::expected('date_create_from_format()'), 59],
+                [self::expected('date_create_immutable_from_format()'), 60],
+                [self::expected('new DateTime()'), 65],
+                [self::expected('new DateTimeImmutable()'), 66],
+                [self::expected('DateTime::createFromFormat()'), 67],
             ],
         );
     }
@@ -590,22 +618,48 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
      * allowlist would make it pass while the rule stopped reporting the single
      * most common decode in the fleet.
      *
-     * The discriminator is the one the rule itself uses — the parameter NAME. A
-     * decoding factory names its input with one of the slot spellings
-     * `PARSING_METHODS` reads (`$time`, `$datetime`, `$year`, `$hour`, `$var`)
-     * and types it so a string fits. A type-only check could not be written:
-     * `now(DateTimeZone|string|int|null $timezone)` and
-     * `createFromTimestamp(string|int|float $timestamp)` both accept a string in
-     * their first slot and both belong on the allowlist, so a check that read
-     * types alone would have to reject them.
+     * The discriminator is BEHAVIOUR, and it has to be. A signature settles the
+     * question only in one direction: `createStrict(?int $year)` cannot be
+     * handed a string, so nothing needs calling. Where the signature ADMITS a
+     * string in a slot-spelled parameter it settles nothing —
+     * `createSafe($year = null)` is untyped and `parse(string $time)` is a
+     * `string`, and one of those decodes. So the factory is CALLED with a
+     * non-numeric date string in that slot and the result is required not to be
+     * the instant `parse()` reads from the same string; a `Throwable` or a
+     * `null` is "did not decode", which is exactly how `createSafe` answers
+     * under Carbon's two strict-mode settings.
+     *
+     * A name-and-type check was the previous shape of this gate and it is what
+     * had to be replaced rather than exempted: it passed `createStrict` for the
+     * right reason, passed `createFromTime` only because `$hour` stopped being
+     * a slot spelling when the method left `PARSING_METHODS`, and had no answer
+     * at all for `createSafe`.
+     *
+     * The probe is positive-controlled INSIDE the test, because "no allowlisted
+     * factory decoded anything" is the output of a broken probe as well as of a
+     * sound allowlist.
+     *
+     * The residual, stated because nothing here closes it: a factory that threw
+     * for a reason unrelated to the string would also read as not-decoding.
      */
-    public function testNoAllowedFactoryTakesAStringInADecodedSlot(): void
+    public function testNoAllowedFactoryCanDecodeAStringInADecodedSlot(): void
     {
         $spellings = self::decodedSlotSpellings();
 
         self::assertNotSame([], $spellings, 'No slot spellings were read off the rule, so this check compares against nothing.');
 
+        foreach ([['parse', 0], ['create', 0]] as [$control, $position]) {
+            self::assertTrue(
+                self::decodesTheProbeString(CarbonImmutable::class, $control, $position),
+                sprintf(
+                    'The probe reports that CarbonImmutable::%s() does not decode a date string. It is the most-used decoder in the fleet, so the probe is broken and cannot report anything about the allowlist either.',
+                    $control,
+                ),
+            );
+        }
+
         $unmatched = [];
+        $probed = [];
 
         foreach (array_keys(self::ruleAllowlist()) as $allowed) {
             $found = false;
@@ -620,14 +674,16 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
                 $found = true;
 
                 foreach ($reflection->getMethod($allowed)->getParameters() as $parameter) {
-                    if (!in_array(mb_strtolower($parameter->getName()), $spellings, true)) {
+                    if (!in_array(mb_strtolower($parameter->getName()), $spellings, true) || !self::admitsAString($parameter)) {
                         continue;
                     }
 
+                    $probed[] = sprintf('%s::%s($%s)', $class, $allowed, $parameter->getName());
+
                     self::assertFalse(
-                        self::admitsAString($parameter),
+                        self::decodesTheProbeString($class, $allowed, $parameter->getPosition()),
                         sprintf(
-                            '%s::%s() is on NON_DECODING_FACTORIES, but its $%s parameter is a decoded slot that accepts a string. Either it decodes — move it to PARSING_METHODS — or the allowlist is being used to silence a decoder.',
+                            '%s::%s() is on NON_DECODING_FACTORIES, but handing a date string to its $%s parameter returns the instant CarbonImmutable::parse() reads from that same string. Either it decodes — move it to PARSING_METHODS — or the allowlist is being used to silence a decoder.',
                             $class,
                             $allowed,
                             $parameter->getName(),
@@ -640,6 +696,17 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
                 $unmatched[] = $allowed;
             }
         }
+
+        // The behavioural half's own denominator. An empty set has two readings
+        // and they need different fixes: the selection above stopped matching
+        // anything (a defect here), or every allowlisted factory narrowed its
+        // slot-spelled parameters to types no string fits (upstream did the
+        // work, and this assertion is then the thing to delete).
+        self::assertNotSame(
+            [],
+            $probed,
+            'No allowlist entry admits a string in a decoded slot, so the behavioural probe ran against nothing and this gate asserted the empty set.',
+        );
 
         // Per-ENTRY denominator, not a total: a count would stay satisfied while
         // one entry matched nothing and another matched three classes, which is
@@ -968,6 +1035,78 @@ final class ForbidAdHocDateParsingRuleTest extends RuleTestCase
         }
 
         return explode('|', $matches[1]);
+    }
+
+    /**
+     * Whether handing this factory a non-numeric date string in one slot yields
+     * the instant `parse()` reads from the same string.
+     *
+     * Carbon's strict mode decides whether a rejecting factory throws or
+     * returns `null` — `createSafe` does one or the other — so the probe runs
+     * under both settings and restores whatever was configured. A decode under
+     * either setting counts as a decode.
+     */
+    private static function decodesTheProbeString(string $class, string $method, int $position): bool
+    {
+        $configured = CarbonImmutable::isStrictModeEnabled();
+
+        try {
+            foreach ([true, false] as $strict) {
+                CarbonImmutable::useStrictMode($strict);
+
+                if (self::probeReturnsTheParsedInstant($class, $method, $position)) {
+                    return true;
+                }
+            }
+        } finally {
+            CarbonImmutable::useStrictMode($configured);
+        }
+
+        return false;
+    }
+
+    private static function probeReturnsTheParsedInstant(string $class, string $method, int $position): bool
+    {
+        $reflection = (new ReflectionClass($class))->getMethod($method);
+
+        try {
+            $result = $reflection->invokeArgs(null, self::probeArguments($reflection, $position));
+        } catch (Throwable) {
+            return false;
+        }
+
+        if (!$result instanceof DateTimeInterface) {
+            return false;
+        }
+
+        return $result->format(self::PROBE_FORMAT) === CarbonImmutable::parse(self::PROBE_STRING)->format(self::PROBE_FORMAT);
+    }
+
+    /**
+     * The probe string in the slot, and every earlier parameter at its own
+     * default so the call is the shape a caller would actually write.
+     *
+     * @return list<mixed>
+     */
+    private static function probeArguments(ReflectionMethod $method, int $position): array
+    {
+        $arguments = [];
+
+        foreach ($method->getParameters() as $parameter) {
+            if ($parameter->getPosition() > $position) {
+                break;
+            }
+
+            if ($parameter->getPosition() === $position) {
+                $arguments[] = self::PROBE_STRING;
+
+                continue;
+            }
+
+            $arguments[] = $parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : null;
+        }
+
+        return $arguments;
     }
 
     /**

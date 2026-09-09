@@ -21,9 +21,6 @@ final class ComponentFactoriesAndRewraps
         CarbonImmutable::create(2_026, 9, 7);
         CarbonImmutable::create($year, $month, $day);
         CarbonImmutable::createFromDate(2_026, 9, 7);
-        CarbonImmutable::createFromTime(9, 41, 0);
-        CarbonImmutable::createStrict(2_026, 9, 7);
-        CarbonImmutable::createSafe(2_026, 9, 7);
         CarbonImmutable::createFromDate($year, $month, $day, 'Europe/Amsterdam');
     }
 

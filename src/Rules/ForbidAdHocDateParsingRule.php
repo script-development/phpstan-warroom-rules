@@ -104,6 +104,18 @@ use function str_starts_with;
  *     already an instant; there is nothing to interpret. Each of these is named
  *     in `NON_DECODING_FACTORIES` with its reason, so a factory belonging to
  *     neither constant is a failed test rather than a silent escape.
+ *   - `createFromTime()`, `createStrict()` and `createSafe()`. They are
+ *     component factories like `create()`, but no string can reach the parse
+ *     branch through any of them: `create()` parses `$year` alone and
+ *     `createFromTime()` fills `$hour`, `createStrict()` declares `?int`
+ *     components, and `createSafe()` rejects every component that is not an
+ *     `int` before it calls `create()`. They are on `NON_DECODING_FACTORIES`,
+ *     and the allowlist gate proves the claim by CALLING them.
+ *   - An unpacked argument whose element at the slot cannot be read at all —
+ *     a `Traversable` spread, or an earlier spread of unknown length that the
+ *     slot sits behind. Neither offsets nor a length are available, so the
+ *     rule declines rather than guessing, the same call it makes on a dynamic
+ *     class expression. Accepted false negative, pinned by fixture.
  *   - Any listed call whose decoded slot is absent or provably not a string
  *     (see the gate above): zero-argument construction and factories, integer
  *     components, `null`, an existing `DateTimeInterface` value.
@@ -149,11 +161,14 @@ final class ForbidAdHocDateParsingRule implements Rule
      * fail on a factory that is in NEITHER constant — the state a reviewer
      * found by hand on the fourth consecutive round of PR #71.
      *
-     * The reason is not decoration — it is the claim the entry makes, and the
-     * completeness test refuses any entry whose real signature names a decoded
-     * slot (`$time`, `$datetime`, `$year`, `$hour`, `$var`) with a type that
-     * admits a string. That is what stops a future author silencing a decoder
-     * by moving its name down here.
+     * The reason is not decoration — it is the claim the entry makes, and
+     * `testNoAllowedFactoryCanDecodeAStringInADecodedSlot` checks it. Where a
+     * signature cannot admit a string in a decoded slot the signature settles
+     * it; where it can, the test CALLS the factory with a date string and
+     * requires the result not to be the instant `parse()` reads from it. That
+     * is what stops a future author silencing a decoder by moving its name
+     * down here, and it is why `createSafe`'s untyped `$year` is safe to
+     * allowlist while `parse`'s `string $time` is not.
      *
      * Analysis never reads it: a name that is absent from `PARSING_METHODS`
      * already returns no error, so consulting this list at analysis time would
@@ -183,6 +198,9 @@ final class ForbidAdHocDateParsingRule implements Rule
         'startoftime' => 'The lowest representable instant. It takes no argument.',
         'endoftime' => 'The highest representable instant. It takes no argument.',
         'gettestnow' => 'Returns the configured test clock; it is a getter, not a factory over an argument.',
+        'createfromtime' => 'Assembles a time from components. It delegates to create() with a null $year, and $year is the only slot create() ever parses; a $hour reaches sprintf() as a component.',
+        'createstrict' => 'Declares ?int components, so no string reaches create() as $year and its parse branch cannot be taken.',
+        'createsafe' => 'Rejects every component that is not an int before it calls create(), so a string never reaches the parse branch.',
     ];
 
     private const string IDENTIFIER = 'forbidAdHocDateParsing.stringParsedOutsideBoundary';
@@ -201,13 +219,23 @@ final class ForbidAdHocDateParsingRule implements Rule
     /**
      * Static factory methods that interpret a STRING, mapped to the SLOT that
      * carries it — the accepted parameter spellings and the position. The names
-     * alone do not discriminate: `create`, `createFromDate`, `createFromTime`,
-     * `createStrict` and `createSafe` also accept integer components, `make`
-     * and `parse` also re-wrap an existing value, and every one of them is a
-     * clock read with no argument at all — Carbon's `create()` delegates to
-     * `parse()` exactly when its `$year` is a non-numeric string. The gate in
-     * `decodedSlotMayBeAString()` is what turns a name here into a finding, so
-     * the list stays wide and the gate stays narrow.
+     * alone do not discriminate: `create`, `createFromDate` and
+     * `createMidnightDate` also accept integer components, `make` and `parse`
+     * also re-wrap an existing value, and every one of them is a clock read
+     * with no argument at all. What earns those three a place here is the ONE
+     * mechanism: they put the string in `$year`, and Carbon's `create()`
+     * delegates to `parse()` exactly when its `$year` is a non-numeric string.
+     * The gate in `decodedSlotMayBeAString()` is what turns a name here into a
+     * finding, so the list stays wide and the gate stays narrow.
+     *
+     * The same mechanism is why `createFromTime`, `createStrict` and
+     * `createSafe` are NOT here and sit on `NON_DECODING_FACTORIES` instead:
+     * a component that is not `$year` is never parsed, `?int` admits no string
+     * to parse, and a body that rejects every non-`int` component before it
+     * calls `create()` never reaches the parse branch. Each of those three
+     * carries its mechanism as its allowlist reason, and
+     * `testNoAllowedFactoryCanDecodeAStringInADecodedSlot` checks the claim by
+     * CALLING them rather than by reading their signatures.
      *
      * The slot is NOT argument zero for the `*FromFormat` family: the format
      * string sits there and the decoded value is the `$time` after it, two
@@ -243,11 +271,8 @@ final class ForbidAdHocDateParsingRule implements Rule
         'createfromtimestring' => [['time'], 0],
         'createfromdate' => [['year'], 0],
         'createmidnightdate' => [['year'], 0],
-        'createfromtime' => [['hour'], 0],
         'create' => [['year'], 0],
         'make' => [['var'], 0],
-        'createstrict' => [['year'], 0],
-        'createsafe' => [['year'], 0],
     ];
 
     /**
@@ -482,8 +507,16 @@ final class ForbidAdHocDateParsingRule implements Rule
 
     /**
      * The TYPE that reaches the decoded slot, addressed by NAME first and by
-     * position second — the reader `ForbidCredentialCastBypassRule` uses, for
-     * the same reason. Null means no argument reaches the slot at all.
+     * position second. Null means no argument reaches the slot at all.
+     *
+     * `ForbidCredentialCastBypassRule::argumentAt()` is the reader this one was
+     * modelled on, and is no longer the same shape. That one hands back an `Arg`
+     * and its caller reads the type of the argument's value, which holds only
+     * while every argument fills exactly one parameter; this one returns a TYPE
+     * because an unpack breaks that correspondence. The sibling carries the same
+     * blind spot on a payload spread, and WR-1307 holds it together with the
+     * question of whether either rule should read PHPStan's own resolved
+     * parameter binding instead of mapping arguments by hand.
      *
      * A named argument does not sit at its parameter's position:
      * `create(month: 1, year: $raw)` puts the decoded value at index 1, so

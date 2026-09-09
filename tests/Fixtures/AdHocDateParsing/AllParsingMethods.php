@@ -12,10 +12,16 @@ use DateTimeImmutable;
  * Denominator fixture: every entry of `PARSING_METHODS` and
  * `PARSING_FUNCTIONS`, plus both native constructors and the static
  * `DateTime::createFromFormat` form, each on its own line — each handed a
- * STRING in its decoded slot, because the component factories (`create`,
- * `createFromDate`, …) delegate to `parse()` when the year is a non-numeric
- * string and are silent on integer components (see
- * `ComponentFactoriesAndRewraps`).
+ * STRING in its decoded slot.
+ *
+ * The three component factories here (`create`, `createFromDate`,
+ * `createMidnightDate`) belong in this list because the string lands in
+ * `$year`, and Carbon's `create()` delegates to `parse()` when `$year` is a
+ * non-numeric string; handed integer components instead they are silent (see
+ * `ComponentFactoriesAndRewraps`). The component factories that cannot reach
+ * that branch at all — `createFromTime`, `createStrict`, `createSafe` — are on
+ * `NON_DECODING_FACTORIES`, and `NonDecodingComponentFactories` hands each of
+ * them a string to keep it that way.
  *
  * The point is not coverage for its own sake. A method or function name
  * dropped from either list — by an edit or by a mutation operator removing an
@@ -39,11 +45,8 @@ final class AllParsingMethods
         CarbonImmutable::createFromTimeString($raw);
         CarbonImmutable::createFromDate($raw);
         CarbonImmutable::createMidnightDate($raw);
-        CarbonImmutable::createFromTime($raw);
         CarbonImmutable::create($raw);
         CarbonImmutable::make($raw);
-        CarbonImmutable::createStrict($raw);
-        CarbonImmutable::createSafe($raw);
     }
 
     public function everyFunction(string $raw): void
