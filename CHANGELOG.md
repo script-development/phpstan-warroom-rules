@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-09
+
 ### Added
 
 - `ForbidAdHocDateParsingRule` — new rule (war-room enforcement queue #222) forbidding the construction of a date/time value from a **string** anywhere outside the namespaces where the boundary decode is allowed to live. Registered in `extension.neon` with one new parameter, `dateParsingNamespaces` (default `['App\Support\Time', 'App\Support\DateTime', 'App\Casts']`). Identifier: `forbidAdHocDateParsing.stringParsedOutsideBoundary`. Doctrine: **ADR-0020 Amendment 1** (Semantic Boundary Types — "decoding happens once, at the boundary") + **ADR-0031** (instant vs wall-clock), which supplies the semantics the boundary type is obliged to carry.
@@ -249,7 +251,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.9.0
 [0.8.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.8.0
 [0.7.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.7.0
 [0.6.1]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.6.1
