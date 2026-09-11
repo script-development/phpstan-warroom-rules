@@ -47,7 +47,7 @@ namespace App\Support {
         }
 
         // Nullable UNION return — still a nullable scalar contract.
-        public function scalar(mixed $leaf): string|int|null
+        public function scalar(mixed $leaf): int|string|null
         {
             return \is_string($leaf) || \is_int($leaf) ? $leaf : null;
         }

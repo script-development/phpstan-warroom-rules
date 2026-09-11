@@ -6,9 +6,7 @@ namespace App\Imports;
 
 final class PlainAccessFallback
 {
-    /**
-     * @var array<string, string>
-     */
+    /** @var array<string, string> */
     private array $config = [];
 
     private ?string $label = null;

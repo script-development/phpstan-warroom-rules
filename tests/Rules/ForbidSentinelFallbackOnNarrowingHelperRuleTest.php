@@ -79,7 +79,7 @@ final class ForbidSentinelFallbackOnNarrowingHelperRuleTest extends RuleTestCase
     {
         $this->analyse(
             [__DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/PlainFunctionCoalesce.php'],
-            [[sprintf(self::MESSAGE, 'App\Support\leafText', '??', "''"), 21]],
+            [[sprintf(self::MESSAGE, 'App\Support\leafText', '??', "''"), 24]],
         );
     }
 

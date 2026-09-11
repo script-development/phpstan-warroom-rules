@@ -89,11 +89,12 @@ use function var_export;
  *      probe on the non-null remainder), never by string-comparing type names.
  *
  * The right-hand side must be a LITERAL sentinel — a scalar literal (`''`,
- * `0`, `0.0`, `'unknown'`), `true` / `false`, a class constant, or an empty
- * array. A non-literal right side (a variable, a method call, a coalescing
- * chain) is left alone on purpose: the fallback may itself be a legitimate
- * nullable, and flagging it is the false-positive-rich half of the shape
- * (ADR-0021 posture — false negatives acceptable, false positives are not).
+ * `0`, `0.0`, `'unknown'`), `true` / `false`, a class constant, a BARE GLOBAL
+ * CONSTANT (`?? SOME_APP_DEFAULT`), or an empty array. A non-literal right side
+ * (a variable, a method call, a coalescing chain) is left alone on purpose: the
+ * fallback may itself be a legitimate nullable, and flagging it is the
+ * false-positive-rich half of the shape (ADR-0021 posture — false negatives
+ * acceptable, false positives are not).
  *
  * `getNodeType()` is `Expr` rather than a narrower node because the two shapes
  * this rule must see — `Coalesce` (a `BinaryOp`) and the short `Ternary` — have
@@ -196,6 +197,14 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
      * `null` itself is NOT a sentinel — it preserves the failure signal — and a
      * non-empty array literal is out of scope (its emptiness, not its content,
      * is what makes `[]` a plausible-looking value).
+     *
+     * A BARE GLOBAL CONSTANT (`?? SOME_APP_DEFAULT`) counts, for the same reason
+     * a class constant does: it names one fixed, plausible value decided away
+     * from the unreadable input, which is the failure this rule exists to see.
+     * `true` / `false` reach this branch the same way. There is deliberately no
+     * allowlist of constant names — a constant that is genuinely the caller's
+     * own default is the non-literal half of the shape and should be written as
+     * one (`?? $default`).
      */
     private function describeSentinel(Expr $expr): ?string
     {
@@ -322,6 +331,9 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
     private function isFirstParty(string $owner): bool
     {
         foreach ($this->narrowingHelperNamespacePrefixes as $prefix) {
+            // `mb_rtrim`, not `rtrim`: Pint's `mb_str_functions` fixer rewrites
+            // the ASCII spelling on sight, and ForbidAdHocDateParsingRule
+            // normalises its own namespace prefixes with the same call.
             if (str_starts_with($owner, mb_rtrim($prefix, '\\') . '\\')) {
                 return true;
             }
