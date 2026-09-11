@@ -331,9 +331,7 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
     private function isFirstParty(string $owner): bool
     {
         foreach ($this->narrowingHelperNamespacePrefixes as $prefix) {
-            // `mb_rtrim`, not `rtrim`: Pint's `mb_str_functions` fixer rewrites
-            // the ASCII spelling on sight, and ForbidAdHocDateParsingRule
-            // normalises its own namespace prefixes with the same call.
+            // `mb_rtrim`, not `rtrim`: Pint's `mb_str_functions` fixer rewrites the ASCII spelling.
             if (str_starts_with($owner, mb_rtrim($prefix, '\\') . '\\')) {
                 return true;
             }
