@@ -6,6 +6,7 @@ namespace App\Actions\CredentialCastBypass;
 
 use App\Models\CredentialCastBypass\Article;
 use App\Models\CredentialCastBypass\ComposedCastModel;
+use App\Models\CredentialCastBypass\EmptyCastMapModel;
 use App\Models\CredentialCastBypass\NearMissCastModel;
 use App\Models\CredentialCastBypass\NestedLiteralCastModel;
 use App\Models\CredentialCastBypass\OverridingVault;
@@ -129,6 +130,17 @@ final class CleanWrites
     public function nonCredentialColumnOfAComposedCastMap(): void
     {
         ComposedCastModel::query()->update(['composed_count' => 3]);
+    }
+
+    /**
+     * A `casts()` that genuinely `return []`s is a READABLE declaration of an
+     * empty map, not an unreadable one — the false-positive control for the
+     * stripped-body guard (WR-1462), which fires on a body carrying no return
+     * at all.
+     */
+    public function writeToAModelWhoseCastsReturnsAnEmptyArray(): void
+    {
+        EmptyCastMapModel::query()->update(['passphrase' => 'plain']);
     }
 
     /**

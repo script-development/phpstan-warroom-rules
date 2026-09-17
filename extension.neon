@@ -189,7 +189,17 @@ services:
     -
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidCredentialCastBypassRule
         arguments:
-            parser: @defaultAnalysisParser
+            # WR-1462 — NOT @defaultAnalysisParser. That service is
+            # CachedParser(PathRoutingParser), and PathRoutingParser sends any
+            # file outside the current invocation's analysed set through
+            # CleaningParser, which empties every method body. A model the
+            # analysed set does not contain then reads as "declares no casts"
+            # and this rule reports nothing at all. Measured inert on three
+            # consumers, one of them under a full project run with a warm
+            # result cache. The rich parser keeps bodies whatever the analysed
+            # set is; cost is one uncached parse per model per run, bounded by
+            # the rule's own per-FQCN cache.
+            parser: @currentPhpVersionRichParser
             credentialCastTableModels: %credentialCastTableModels%
         tags: [phpstan.rules.rule]
     -
