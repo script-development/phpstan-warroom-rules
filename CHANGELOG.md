@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-09-21
+
 ### Fixed
 
 - `ForbidCredentialCastBypassRule` — the rule was **inert in consumers**: it read a model's cast map through a parser that strips method bodies for any file outside the current invocation's analysed set, resolved the map as EMPTY, and reported "no credential casts" **silently**, with none of its three instrument-fault identifiers. `extension.neon` now wires `@currentPhpVersionRichParser`, and a `casts()` body carrying no `return` at all is reported as `forbidCredentialCastBypass.castMapIncomplete` instead of read as a castless model. **Versioning: PATCH** — a false negative fixed; nothing that passed under a fresh full run now fails. War-room WR-1462.
@@ -265,7 +267,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.9.1
 [0.9.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.9.0
 [0.8.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.8.0
 [0.7.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.7.0
