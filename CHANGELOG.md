@@ -6,11 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-## [0.9.1] — 2026-09-21
+## [0.10.0] — 2026-09-21
 
 ### Fixed
 
-- `ForbidCredentialCastBypassRule` — the rule was **inert in consumers**: it read a model's cast map through a parser that strips method bodies for any file outside the current invocation's analysed set, resolved the map as EMPTY, and reported "no credential casts" **silently**, with none of its three instrument-fault identifiers. `extension.neon` now wires `@currentPhpVersionRichParser`, and a `casts()` body carrying no `return` at all is reported as `forbidCredentialCastBypass.castMapIncomplete` instead of read as a castless model. **Versioning: PATCH** — a false negative fixed; nothing that passed under a fresh full run now fails. War-room WR-1462.
+- `ForbidCredentialCastBypassRule` — the rule was **inert in consumers**: it read a model's cast map through a parser that strips method bodies for any file outside the current invocation's analysed set, resolved the map as EMPTY, and reported "no credential casts" **silently**, with none of its three instrument-fault identifiers. `extension.neon` now wires `@currentPhpVersionRichParser`, and a `casts()` body carrying no `return` at all is reported as `forbidCredentialCastBypass.castMapIncomplete` instead of read as a castless model. **Versioning: MAJOR (0.x minor bump — `^0.9` excludes it; each consumer adopts on its own `^0.10` pin-bump PR).** PR #75 declared this PATCH on the carve-out that a *fresh full run* is unchanged; reclassified at release (#76, crit finding `ee96aab335ae`): the contract counts new errors in code that previously passed, and every WARM run after the update — a local `composer phpstan`, the pre-commit and pre-push hooks — reports a builder write against an untouched model for the first time. Same shape as the v0.4.0 no-op fixes and the `EnforceCurrentUserAttributeRule` ancestry-gate fix, both shipped behind a pin bump. War-room WR-1462 / WR-1475.
 
   **Mechanism.** `@defaultAnalysisParser` is `CachedParser(PathRoutingParser)`. `PathRoutingParser::parseFile()` routes a file that is not in `setAnalysedFiles()` through `currentPhpVersionSimpleParser`, which production wires to `CleaningParser`; its `CleaningVisitor` sets `ClassMethod::$stmts = []`. The rule's `collectReturnedArrays()` then walked a body with **no `Return_` node in it**, so the branch that sets `$complete = false` was never REACHED — the map resolved empty with `$complete` still `true`, and the rule concluded the model declares no credential casts. Every other half of the resolution worked: the receiver type, the payload columns, the declaring class, the file and the start line all resolved. Only the body was gone, and **"no array literal found" was indistinguishable from "no return statement found"** while only the first is benign.
 
@@ -20,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
   **Teeth.** The reproduction was RED on `main` before the fix — the stripped model's `encrypted` write reported nothing at all — and the sibling model in the same run still fired normally, so a fix that reported every model as incomplete fails it too. The false-positive direction is pinned separately: a `casts()` that genuinely returns an empty array has a return carrying an array literal, so it is a readable declaration of an empty map and stays silent. Nothing in the suite previously proved this rule resolved from the shipped `extension.neon` at all; a container-resolution test now asserts the wired parser's CLASS and then runs the NEON-resolved rule end to end, so neither an unresolvable service name nor a regression to the cleaning path can ship.
 
-  **Consumer impact.** A consumer on `^0.9` picks this up on `composer update` with **no pin change**. Expect the rule to start reporting where it previously reported nothing — those are findings the `^0.9` adoption wave measured as zero and cannot treat as clean, and any 0.9 adoption report whose credential-cast zero was not positive-controlled needs re-probing.
+  **Consumer impact.** A consumer on `^0.9` does NOT pick this up — the caret excludes the next minor; adoption is a `^0.10` pin-bump PR per territory, run with the credential-cast positive control cold. Expect the rule to start reporting where it previously reported nothing — those are findings the `^0.9` adoption wave measured as zero and cannot treat as clean, and any 0.9 adoption report whose credential-cast zero was not positive-controlled needs re-probing.
 
 ## [0.9.0] — 2026-09-09
 
@@ -267,8 +267,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.9.1...HEAD
-[0.9.1]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.9.1
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.10.0
 [0.9.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.9.0
 [0.8.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.8.0
 [0.7.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.7.0
