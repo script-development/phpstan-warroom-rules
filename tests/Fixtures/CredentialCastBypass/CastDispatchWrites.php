@@ -18,6 +18,7 @@ use App\Models\CredentialCastBypass\Dispatch\MidReplacing;
 use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedInVariable;
 use App\Models\CredentialCastBypass\Dispatch\PassThroughOverride;
 use App\Models\CredentialCastBypass\Dispatch\PropertyBase;
+use App\Models\CredentialCastBypass\Dispatch\PropertyThenClassCastMethod;
 use App\Models\CredentialCastBypass\Dispatch\PropertyThenMethod;
 use App\Models\CredentialCastBypass\Dispatch\RedeclaringProperty;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverride;
@@ -130,6 +131,11 @@ final class CastDispatchWrites
     public function propertyThenMethod(): void
     {
         PropertyThenMethod::query()->update(['password' => 'raw']);
+    }
+
+    public function propertyThenClassCastMethod(): void
+    {
+        PropertyThenClassCastMethod::query()->update(['password' => 'raw']);
     }
 
     public function traitMethodAndClassProperty(): void

@@ -5,6 +5,8 @@ declare(strict_types = 1);
 namespace ScriptDevelopment\PhpstanWarroomRules\Rules;
 
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
+use Illuminate\Database\Eloquent\Casts\AsEncryptedArrayObject;
+use Illuminate\Database\Eloquent\Casts\AsEncryptedCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\Query\Builder as QueryBuilder;
@@ -138,7 +140,7 @@ use function sprintf;
  * would mean instantiating an Eloquent model inside the analyser. The rule
  * injects a PHPStan parser, parses the file `ClassReflection::getFileName()`
  * names, locates the class by resolved `namespacedName`, and collects
- * `'column' => 'cast'` string pairs.
+ * `'column' => 'cast'` pairs — a `Cast::class` value read as its class name.
  *
  * **The injected parser must not strip method bodies, and that is a wiring
  * constraint, not a preference (WR-1462).** `@defaultAnalysisParser` is
@@ -250,10 +252,12 @@ use function sprintf;
  * and were fixed instead.
  *
  *   - **Class-based encrypted casts** — `AsEncryptedArrayObject::class`,
- *     `AsEncryptedCollection::class` and friends appear as `::class` constant
- *     fetches rather than the string values this rule matches. They carry the
- *     same bypass risk; a consumer needing them covered restates the column in
- *     string form or relies on the per-territory arch test.
+ *     `AsEncryptedCollection::class` and friends are read into the map (a
+ *     class cast replaces an earlier string cast on the same column, as at
+ *     runtime), but this rule's write check matches only the `hashed` /
+ *     `encrypted` string casts. They carry the same bypass risk; a consumer
+ *     needing them covered restates the column in string form or relies on the
+ *     per-territory arch test.
  *   - **Dynamic payloads and dynamic keys** — not a constant array type, so
  *     the keys are not statically known.
  *   - **`upsert()`'s third argument** (the update-column list) — its column
@@ -416,10 +420,22 @@ final class ForbidCredentialCastBypassRule implements Rule
     private const array CREDENTIAL_CASTS = ['hashed', 'encrypted'];
 
     /**
+     * Class casts that encrypt the stored value. Read ONLY by
+     * `encryptedAttributesOf()`; this rule's own write check still matches
+     * string casts alone (see the out-of-scope list).
+     *
+     * @var list<string>
+     */
+    private const array ENCRYPTING_CAST_CLASSES = [
+        AsEncryptedArrayObject::class,
+        AsEncryptedCollection::class,
+    ];
+
+    /**
      * Cast resolutions already computed this run, keyed by model FQCN. A model
      * is parsed once even when a hundred call sites write to it.
      *
-     * @var array<string, array{casts: array<string, string>, unreadable: list<string>, incomplete: list<string>, missing: bool}>
+     * @var array<string, array{casts: array<string, string>, encrypted: list<string>, unreadable: list<string>, incomplete: list<string>, missing: bool}>
      */
     private array $castCache = [];
 
@@ -508,6 +524,26 @@ final class ForbidCredentialCastBypassRule implements Rule
         }
 
         return $errors;
+    }
+
+    /**
+     * The attributes of `$modelFqcn` whose effective cast ENCRYPTS the stored
+     * value — `encrypted`, an `encrypted:` variant, or one of
+     * `ENCRYPTING_CAST_CLASSES` — resolved by the same declaration walk this
+     * rule's write check uses, so the answer follows PHP's cast resolution: a
+     * later class cast replaces an earlier string cast on the same column.
+     * `hashed` is not included: a one-way hash is not a secret that can be
+     * read back.
+     *
+     * A declaring source that cannot be read contributes nothing, so a model
+     * whose casts cannot be read at all yields an empty list; this rule
+     * reports that source on every builder write to the model.
+     *
+     * @return list<string>
+     */
+    public function encryptedAttributesOf(string $modelFqcn): array
+    {
+        return $this->castResolutionFor($modelFqcn)['encrypted'];
     }
 
     /**
@@ -818,7 +854,7 @@ final class ForbidCredentialCastBypassRule implements Rule
      * inventing a credential cast, one calling a readable declaration
      * unreadable — each masked in the obvious fixtures by a key collision.
      *
-     * @return array{casts: array<string, string>, unreadable: list<string>, incomplete: list<string>, missing: bool}
+     * @return array{casts: array<string, string>, encrypted: list<string>, unreadable: list<string>, incomplete: list<string>, missing: bool}
      */
     private function castResolutionFor(string $modelFqcn): array
     {
@@ -826,7 +862,7 @@ final class ForbidCredentialCastBypassRule implements Rule
             return $this->castCache[$modelFqcn];
         }
 
-        $empty = ['casts' => [], 'unreadable' => [], 'incomplete' => [], 'missing' => false];
+        $empty = ['casts' => [], 'encrypted' => [], 'unreadable' => [], 'incomplete' => [], 'missing' => false];
         $this->castCache[$modelFqcn] = $empty;
 
         // The class cannot be absent on the GENERIC path — that FQCN came out
@@ -835,7 +871,7 @@ final class ForbidCredentialCastBypassRule implements Rule
         // does not exist. Returning the "no mapping" answer here would let a
         // typo disarm the rule permanently and silently.
         if (!$this->reflectionProvider->hasClass($modelFqcn)) {
-            $resolution = ['casts' => [], 'unreadable' => [], 'incomplete' => [], 'missing' => true];
+            $resolution = ['casts' => [], 'encrypted' => [], 'unreadable' => [], 'incomplete' => [], 'missing' => true];
             $this->castCache[$modelFqcn] = $resolution;
 
             return $resolution;
@@ -853,15 +889,21 @@ final class ForbidCredentialCastBypassRule implements Rule
         );
 
         $credentialCasts = [];
+        $encrypted = [];
 
         foreach ($casts as $column => $cast) {
             if ($this->isCredentialCast($cast)) {
                 $credentialCasts[$column] = $cast;
             }
+
+            if ($this->isEncryptingCast($cast)) {
+                $encrypted[] = $column;
+            }
         }
 
         $resolution = [
             'casts' => $credentialCasts,
+            'encrypted' => $encrypted,
             // Both halves walk the same sources, so a source that cannot be
             // read is reached twice and would otherwise be named twice in one
             // message.
@@ -1252,6 +1294,17 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
+     * Whether a cast value encrypts the stored value: `encrypted`, an
+     * `encrypted:` variant, or one of `ENCRYPTING_CAST_CLASSES`.
+     */
+    private function isEncryptingCast(string $cast): bool
+    {
+        return $cast === 'encrypted'
+            || str_starts_with($cast, 'encrypted:')
+            || in_array($cast, self::ENCRYPTING_CAST_CLASSES, true);
+    }
+
+    /**
      * The `$casts` PROPERTY default declared by ONE source, read from its PHP
      * because a property default is not what reflection hands back on an
      * unconstructed analyser-side class.
@@ -1507,9 +1560,14 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * `'key' => 'value'` pairs of an array literal. Non-string keys and
-     * non-string values (a `::class` constant fetch, a computed expression) are
-     * skipped — see the class docblock's out-of-scope list.
+     * `'key' => 'value'` pairs of an array literal, a `Cast::class` value read
+     * as the class name. Non-string keys and computed values are skipped — see
+     * the class docblock's out-of-scope list.
+     *
+     * A class cast is kept rather than skipped because it REPLACES whatever an
+     * earlier declaration said about the same column: skipping it let a
+     * `$casts` string cast survive a `casts()` class cast that overrides it at
+     * runtime (the `PropertyThenClassCastMethod` shape).
      *
      * @return array<string, string>
      */
@@ -1522,8 +1580,19 @@ final class ForbidCredentialCastBypassRule implements Rule
         $pairs = [];
 
         foreach ($expr->items as $item) {
-            if ($item->key instanceof String_ && $item->value instanceof String_) {
+            if (!$item->key instanceof String_) {
+                continue;
+            }
+
+            if ($item->value instanceof String_) {
                 $pairs[$item->key->value] = $item->value->value;
+            } elseif (
+                $item->value instanceof Expr\ClassConstFetch
+                && $item->value->class instanceof Node\Name
+                && $item->value->name instanceof Identifier
+                && $item->value->name->toLowerString() === 'class'
+            ) {
+                $pairs[$item->key->value] = $item->value->class->toString();
             }
         }
 

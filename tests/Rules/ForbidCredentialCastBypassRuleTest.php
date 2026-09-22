@@ -143,6 +143,9 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         // `array_merge($this->casts, $this->casts())` — the method always wins,
         // whichever form the author wrote first.
         'PropertyThenMethod' => ['payload' => ['password'], 'naive' => []],
+        // The same with a `::class` cast, which the string-only reading skipped,
+        // letting the property's replaced credential cast survive.
+        'PropertyThenClassCastMethod' => ['payload' => ['password'], 'naive' => ['password']],
         // The method half wins even when the method comes from a TRAIT and the
         // property from the class — a shape no formatter can reorder away.
         'TraitMethodAndClassProperty' => ['payload' => ['password'], 'naive' => ['password']],
@@ -500,6 +503,32 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
                 28,
             ],
         ]);
+    }
+
+    /**
+     * `encryptedAttributesOf()` answers from the same resolved map as the write
+     * check: every encrypting form, `hashed` left out, a class cast replacing an
+     * earlier string cast, and nothing at all when the source cannot be read —
+     * the last against the same model read normally, so the empty list is the
+     * unreadable branch and not a model that encrypts nothing.
+     */
+    public function testEncryptedAttributesFollowTheResolvedCastMap(): void
+    {
+        $namespace = 'App\Models\CredentialCastBypass\Encrypting\\';
+        $rule = $this->getRule();
+
+        self::assertInstanceOf(ForbidCredentialCastBypassRule::class, $rule);
+        self::assertSame(
+            ['plain_secret', 'typed_secret', 'settings', 'history'],
+            $rule->encryptedAttributesOf($namespace . 'EveryEncryptingForm'),
+        );
+        self::assertSame(['kept'], $rule->encryptedAttributesOf($namespace . 'ClassCastOverridesEncrypted'));
+
+        $this->unparsableFileSuffix = 'CredentialCastBypass/EncryptingCastModels.php';
+        $unreadable = $this->getRule();
+
+        self::assertInstanceOf(ForbidCredentialCastBypassRule::class, $unreadable);
+        self::assertSame([], $unreadable->encryptedAttributesOf($namespace . 'EveryEncryptingForm'));
     }
 
     /**

@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- `ForbidCredentialCastBypassRule` — a `casts()` entry whose value is a `Cast::class` constant was skipped, so a `$casts` string cast on the same column survived in the resolved map although at runtime the method's class cast replaces it. `$casts = ['password' => 'hashed']` overridden by `casts(): ['password' => AsStringable::class]` was reported as a `hashed` bypass it is not. Class casts are now read as their class name; the write check still matches only `hashed` / `encrypted` strings. New shape `PropertyThenClassCastMethod` in `CastDispatchShapes.php`. False-positive narrowing.
+
 ## [0.10.0] — 2026-09-21
 
 ### Fixed

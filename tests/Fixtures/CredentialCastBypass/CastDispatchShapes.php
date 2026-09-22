@@ -4,6 +4,7 @@ declare(strict_types = 1);
 
 namespace App\Models\CredentialCastBypass\Dispatch;
 
+use Illuminate\Database\Eloquent\Casts\AsStringable;
 use Illuminate\Database\Eloquent\Model;
 
 /**
@@ -226,6 +227,22 @@ class PropertyThenMethod extends Model
     protected function casts(): array
     {
         return ['password' => 'string'];
+    }
+}
+
+/** A `::class` cast in `casts()` replaces the property's credential cast on
+ * the same column, exactly as a string cast would. */
+class PropertyThenClassCastMethod extends Model
+{
+    /** @var array<string, string> */
+    protected $casts = ['password' => 'hashed'];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => AsStringable::class];
     }
 }
 
