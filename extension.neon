@@ -203,5 +203,13 @@ services:
             credentialCastTableModels: %credentialCastTableModels%
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Collectors\CacheKeyTaintCollector
+        tags: [phpstan.collector]
+    -
+        # Reads model casts through the ForbidCredentialCastBypassRule service
+        # above (autowired by type), so it inherits that rule's parser wiring.
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidCredentialDerivedCacheKeyRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Type\ConnectionTransactionReturnTypeExtension
         tags: [phpstan.broker.dynamicMethodReturnTypeExtension]

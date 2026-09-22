@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `ForbidCredentialDerivedCacheKeyRule` + `CacheKeyTaintCollector` — identifier `forbidCredentialDerivedCacheKey.keyFromEncryptedAttribute`. Reports a cache key derived from an Eloquent attribute whose cast encrypts it (`encrypted`, `encrypted:*`, `AsEncryptedArrayObject`, `AsEncryptedCollection`), raw or concatenated, interpolated, hashed, or carried through a value object built in another class. Sinks: the key argument of any call on a type in the `Illuminate\Contracts\Cache` / `Illuminate\Cache` families, the `Cache` facade, the `cache()` helper, and `RateLimiter` (instance and facade). Collectors carry the flow across methods and classes; a call into analysed code resolves through the callee's return summary for that call site's arguments. The cast map is `ForbidCredentialCastBypassRule`'s, resolved at rule time, so a changed `casts()` body is picked up on a warm result cache. Default ON, no parameters — a consumer with no encrypted casts sees nothing. Doctrine: war-room Principle 10; ISO 27001 A.5.33. Seed: war-room enforcement queue #24, laravel-skeleton PR #48, whose 26-file fixture corpus is ported here. **Versioning: a new rule — the 0.x minor bump every consumer adopts on its own pin-bump PR, and it WILL report new errors on a territory that keys a cache from an encrypted attribute. That is the point: each is a Principle 10 violation to fix (key by the entity's id) or to suppress with a recorded reason.**
+
 ### Fixed
 
 - `ForbidCredentialCastBypassRule` — a `casts()` entry whose value is a `Cast::class` constant was skipped, so a `$casts` string cast on the same column survived in the resolved map although at runtime the method's class cast replaces it. `$casts = ['password' => 'hashed']` overridden by `casts(): ['password' => AsStringable::class]` was reported as a `hashed` bypass it is not. Class casts are now read as their class name; the write check still matches only `hashed` / `encrypted` strings. New shape `PropertyThenClassCastMethod` in `CastDispatchShapes.php`. False-positive narrowing.
