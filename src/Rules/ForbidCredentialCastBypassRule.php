@@ -136,10 +136,23 @@ use function sprintf;
  * neither shape is reachable through reflection alone: the modern
  * `protected function casts(): array` form needs a method body, and invoking it
  * would mean instantiating an Eloquent model inside the analyser. The rule
- * injects PHPStan's own analysis parser (`@defaultAnalysisParser` — cached, so
- * a model file is parsed once per run), parses the file
- * `ClassReflection::getFileName()` names, locates the class by resolved
- * `namespacedName`, and collects `'column' => 'cast'` string pairs.
+ * injects a PHPStan parser, parses the file `ClassReflection::getFileName()`
+ * names, locates the class by resolved `namespacedName`, and collects
+ * `'column' => 'cast'` string pairs.
+ *
+ * **The injected parser must not strip method bodies, and that is a wiring
+ * constraint, not a preference (WR-1462).** `@defaultAnalysisParser` is
+ * `CachedParser(PathRoutingParser)`, and `PathRoutingParser` routes any file
+ * OUTSIDE the current invocation's analysed set through `CleaningParser`, whose
+ * `CleaningVisitor` sets `ClassMethod::$stmts = []`. A model that is not itself
+ * being analysed — the ordinary case, since the file under analysis is the one
+ * doing the writing, and a warm result cache narrows the analysed set to the
+ * CHANGED files even in a full project run — then arrives with an empty
+ * `casts()` body. `extension.neon` therefore wires
+ * `@currentPhpVersionRichParser`, which keeps bodies whatever the analysed set
+ * is, and a container-resolution test asserts the wired parser's class rather
+ * than trusting the NEON. The cost of the uncached parser is one parse per
+ * model per run, bounded by this rule's own per-FQCN cache.
  *
  * **What it does with them is PHP's own resolution, not a merge.** Laravel
  * builds the effective map once — `array_merge($this->casts, $this->casts())`
@@ -194,23 +207,33 @@ use function sprintf;
  * expression — but never from inside an already-collected array, so a
  * nested-array cast value stays a value rather than becoming a second cast map.
  *
- * Three failure modes are each reported under their OWN identifier, because
- * MISSING, FAILED and MISCONFIGURED must not arrive as the same (silent)
- * outcome, and each has a different remediation:
+ * Failure modes are each reported under their OWN identifier, because MISSING,
+ * FAILED and MISCONFIGURED must not arrive as the same (silent) outcome, and
+ * each has a different remediation:
  *
  *   - **`…modelSourceUnreadable`** — a declaring source whose PHP cannot be
  *     located or parsed. Fix the source.
- *   - **`…castMapIncomplete`** — the source WAS read, but a `casts()` return or
- *     a `$casts` default carries no array literal at all (`return self::CASTS;`,
- *     `return $this->buildCasts();`). Restate the credential columns literally.
+ *   - **`…castMapIncomplete`** — the source WAS read, but the declaration it
+ *     carries cannot be interpreted as a map. TWO shapes reach it. Either a
+ *     `casts()` return or a `$casts` default carries no array literal at all
+ *     (`return self::CASTS;`, `return $this->buildCasts();`) — restate the
+ *     credential columns literally. Or the `casts()` body carries no `return`
+ *     whatsoever, which no valid PHP can, since the method declares an `array`
+ *     return type: the source handed to this rule is then not the source that
+ *     runs, and the remediation is the analysis WIRING (see the parser
+ *     constraint above), not the model.
  *   - **`…configuredModelMissing`** — `credentialCastTableModels` maps a table
  *     to a class that does not exist. Fix the parameter. Reachable only from the
  *     config map: an FQCN taken from a resolved generic type always exists.
  *
- * All three are reported REGARDLESS of the payload, because with an incomplete
- * map the rule cannot claim the payload is clean. Treating any of them as
- * "declares no casts" would fail OPEN on exactly the models this rule exists to
- * guard, and would make MISSING indistinguishable from FAILED.
+ * All are reported REGARDLESS of the payload, because with an incomplete map
+ * the rule cannot claim the payload is clean. Treating any of them as "declares
+ * no casts" would fail OPEN on exactly the models this rule exists to guard,
+ * and would make MISSING indistinguishable from FAILED. The body-with-no-return
+ * shape is the one that HAD no identifier and did exactly that: measured inert
+ * on three consumer territories on 2026-09-16, one of them under a full project
+ * run, reporting `[OK] No errors` over four injected plaintext-credential
+ * writes.
  *
  * A cast counts as credential-bearing when its value is exactly `hashed`,
  * exactly `encrypted`, or begins with `encrypted:` (`encrypted:array`,
@@ -1366,25 +1389,52 @@ final class ForbidCredentialCastBypassRule implements Rule
      * literal at all, so the caller can report an incomplete cast map instead
      * of silently reading it as "declares nothing".
      *
+     * It is ALSO set to FALSE when the body carries no `return` at all, which
+     * is not a shape valid PHP can have: `casts(): array` declares an `array`
+     * return type, so a body that falls off the end is a TypeError at runtime.
+     * A body with no return therefore means the source we were handed is not
+     * the source that runs — the WR-1462 case, where a parser routed the file
+     * through PHPStan's `CleaningParser` and every statement was removed.
+     * Without this the emptied body reached the collector, no `Return_` was
+     * found, the branch below was never REACHED, and the map resolved empty
+     * with `$complete` still TRUE — a silent fail-open on the one rule whose
+     * value is catching an unnoticed plaintext credential write. Measured
+     * inert on three consumer territories, one under a full project run.
+     *
      * @return list<Expr\Array_>
      */
     private function returnedArrays(ClassMethod $method, bool &$complete): array
     {
         $arrays = [];
+        $sawReturn = false;
 
-        $this->collectReturnedArrays($this->childNodes($method), $arrays, $complete);
+        $this->collectReturnedArrays($this->childNodes($method), $arrays, $complete, $sawReturn);
+
+        if (!$sawReturn) {
+            $complete = false;
+        }
 
         return $arrays;
     }
 
     /**
+     * `$sawReturn` records whether ANY `return` statement was seen, so the
+     * caller can tell a body that declares an empty map (`return [];` — a
+     * return carrying a literal) from a body that was never there at all (no
+     * return, and no valid PHP shape that explains it). A flag rather than a
+     * count deliberately: the caller only ever asks "any?", and a counter's
+     * increment is an equivalent mutant under that predicate — `++` and `--`
+     * are indistinguishable when the only test is against zero.
+     *
      * @param list<Node>        $nodes
      * @param list<Expr\Array_> $arrays
      */
-    private function collectReturnedArrays(array $nodes, array &$arrays, bool &$complete): void
+    private function collectReturnedArrays(array $nodes, array &$arrays, bool &$complete, bool &$sawReturn): void
     {
         foreach ($nodes as $node) {
             if ($node instanceof Return_) {
+                $sawReturn = true;
+
                 if ($node->expr === null) {
                     continue;
                 }
@@ -1420,7 +1470,7 @@ final class ForbidCredentialCastBypassRule implements Rule
                 continue;
             }
 
-            $this->collectReturnedArrays($this->childNodes($node), $arrays, $complete);
+            $this->collectReturnedArrays($this->childNodes($node), $arrays, $complete, $sawReturn);
         }
     }
 
