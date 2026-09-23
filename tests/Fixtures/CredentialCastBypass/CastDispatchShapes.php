@@ -4,6 +4,8 @@ declare(strict_types = 1);
 
 namespace App\Models\CredentialCastBypass\Dispatch;
 
+use Illuminate\Database\Eloquent\Casts\AsEncryptedArrayObject;
+use Illuminate\Database\Eloquent\Casts\AsEncryptedCollection;
 use Illuminate\Database\Eloquent\Casts\AsStringable;
 use Illuminate\Database\Eloquent\Model;
 
@@ -445,6 +447,60 @@ class ConditionalReturnsDisagreeing extends Model
         }
 
         return ['password' => 'hashed'];
+    }
+}
+
+/**
+ * crit `50c32bffef61`: an ENCRYPTING class cast replacing an `encrypted` string
+ * cast. The column still encrypts on the model path, so a builder write stores
+ * it in plaintext — reading only the string casts dropped it the moment the
+ * class cast replaced the string one.
+ */
+class PropertyEncryptedThenEncryptingClassCastMethod extends Model
+{
+    /** @var array<string, string> */
+    protected $casts = ['secret' => 'encrypted'];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['secret' => AsEncryptedArrayObject::class];
+    }
+}
+
+/**
+ * An encrypting class cast declared alone, with no string cast to fall back
+ * on.
+ */
+class EncryptingCollectionClassCast extends Model
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['secret' => AsEncryptedCollection::class];
+    }
+}
+
+/**
+ * The string forms Laravel resolves to the same caster: `Class:arguments` (what
+ * `AsEncryptedCollection::using()` builds) and a leading-backslash,
+ * differently-cased class name, which `class_exists()` accepts.
+ */
+class EncryptingClassCastAsString extends Model
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'secret' => 'Illuminate\Database\Eloquent\Casts\AsEncryptedCollection:Illuminate\Support\Collection',
+            'history' => '\illuminate\database\eloquent\casts\asencryptedarrayobject',
+        ];
     }
 }
 
