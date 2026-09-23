@@ -8,6 +8,8 @@ use App\Models\CredentialCastBypass\Dispatch\ComposingOverride;
 use App\Models\CredentialCastBypass\Dispatch\ComposingOverrideShadowingParent;
 use App\Models\CredentialCastBypass\Dispatch\ConditionalReturnsDisagreeing;
 use App\Models\CredentialCastBypass\Dispatch\DiscardedParentCastsCall;
+use App\Models\CredentialCastBypass\Dispatch\EncryptingClassCastAsString;
+use App\Models\CredentialCastBypass\Dispatch\EncryptingCollectionClassCast;
 use App\Models\CredentialCastBypass\Dispatch\GrandMethodBase;
 use App\Models\CredentialCastBypass\Dispatch\InheritedMethod;
 use App\Models\CredentialCastBypass\Dispatch\InheritedProperty;
@@ -18,6 +20,8 @@ use App\Models\CredentialCastBypass\Dispatch\MidReplacing;
 use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedInVariable;
 use App\Models\CredentialCastBypass\Dispatch\PassThroughOverride;
 use App\Models\CredentialCastBypass\Dispatch\PropertyBase;
+use App\Models\CredentialCastBypass\Dispatch\PropertyEncryptedThenEncryptingClassCastMethod;
+use App\Models\CredentialCastBypass\Dispatch\PropertyThenClassCastMethod;
 use App\Models\CredentialCastBypass\Dispatch\PropertyThenMethod;
 use App\Models\CredentialCastBypass\Dispatch\RedeclaringProperty;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverride;
@@ -132,6 +136,11 @@ final class CastDispatchWrites
         PropertyThenMethod::query()->update(['password' => 'raw']);
     }
 
+    public function propertyThenClassCastMethod(): void
+    {
+        PropertyThenClassCastMethod::query()->update(['password' => 'raw']);
+    }
+
     public function traitMethodAndClassProperty(): void
     {
         TraitMethodAndClassProperty::query()->update(['password' => 'raw']);
@@ -164,6 +173,21 @@ final class CastDispatchWrites
             'mid_plain' => 'raw',
             'leaf_secret' => 'raw',
         ]);
+    }
+
+    public function propertyEncryptedThenEncryptingClassCastMethod(): void
+    {
+        PropertyEncryptedThenEncryptingClassCastMethod::query()->update(['secret' => 'raw']);
+    }
+
+    public function encryptingCollectionClassCast(): void
+    {
+        EncryptingCollectionClassCast::query()->update(['secret' => 'raw']);
+    }
+
+    public function encryptingClassCastAsString(): void
+    {
+        EncryptingClassCastAsString::query()->update(['secret' => 'raw', 'history' => 'raw']);
     }
 
     public function mergesCastsInConstructor(): void
