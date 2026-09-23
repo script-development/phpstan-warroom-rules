@@ -98,6 +98,45 @@ final class ForbidSentinelFallbackOnNarrowingHelperRuleTest extends RuleTestCase
         );
     }
 
+    public function testFlagsBareGlobalConstantSentinel(): void
+    {
+        // A namespaced `const` fetched unqualified renders as written.
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/GlobalConstantSentinel.php'],
+            [[sprintf(self::MESSAGE, self::READER_TEXT, '??', 'LEAF_DEFAULT'), 20]],
+        );
+    }
+
+    public function testFlagsHelperWithUntypedParameter(): void
+    {
+        // An untyped parameter resolves to `mixed` — the same boundary tell.
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/UntypedParameterHelper.php'],
+            [[sprintf(self::MESSAGE, 'App\Support\LeafReader::raw', '??', "''"), 18]],
+        );
+    }
+
+    public function testFlagsUnionReceiverWhoseFirstBranchIsForeign(): void
+    {
+        // `ForeignReader|LeafReader`: a merged union reflection reports the
+        // FIRST branch's declaring class, which would hide the App helper.
+        // The all-foreign union in the same fixture stays silent.
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/UnionReceiverForeignFirst.php'],
+            [[sprintf(self::MESSAGE, self::READER_TEXT, '??', "''"), 17]],
+        );
+    }
+
+    public function testIgnoresNullValuedConstantFallback(): void
+    {
+        // A constant whose value is null is `?? null` by name — it preserves
+        // the failure signal, class constant and global constant alike.
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/NullValuedConstantFallback.php'],
+            [],
+        );
+    }
+
     public function testIgnoresNullFallback(): void
     {
         // `?? null` preserves the failure signal — the remediation, not the violation.

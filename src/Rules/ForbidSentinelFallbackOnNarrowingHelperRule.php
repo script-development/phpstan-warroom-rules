@@ -73,7 +73,9 @@ use function var_export;
  *
  *   1. The declaring class (method / static call) or the function FQN (plain
  *      function) sits under a configured namespace prefix
- *      (`narrowingHelperNamespacePrefixes`, default `App\`). This is the
+ *      (`narrowingHelperNamespacePrefixes`, default `App\`). A union receiver
+ *      (`Vendor\Reader|App\Support\LeafReader`) is resolved per class branch,
+ *      and fires when ANY branch's method passes all three checks. This is the
  *      non-vendor gate: `filter_var(...) ?? ''` and any framework call are
  *      structurally out of scope, because a vendor helper's null contract is not
  *      ours to reason about.
@@ -90,7 +92,8 @@ use function var_export;
  *
  * The right-hand side must be a LITERAL sentinel — a scalar literal (`''`,
  * `0`, `0.0`, `'unknown'`), `true` / `false`, a class constant, a BARE GLOBAL
- * CONSTANT (`?? SOME_APP_DEFAULT`), or an empty array. A non-literal right side
+ * CONSTANT (`?? SOME_APP_DEFAULT`), or an empty array. A constant whose value
+ * is `null` is not a sentinel — it is `?? null` by name. A non-literal right side
  * (a variable, a method call, a coalescing chain) is left alone on purpose: the
  * fallback may itself be a legitimate nullable, and flagging it is the
  * false-positive-rich half of the shape (ADR-0021 posture — false negatives
@@ -99,9 +102,9 @@ use function var_export;
  * `getNodeType()` is `Expr` rather than a narrower node because the two shapes
  * this rule must see — `Coalesce` (a `BinaryOp`) and the short `Ternary` — have
  * no common ancestor below `Expr`. Both are matched by an instanceof guard on
- * the first line, and the cheap AST-only sentinel check runs before any
- * reflection work, so the per-node cost on non-matching expressions is one
- * instanceof.
+ * the first line, and the cheap sentinel check (AST-only bar a constant's
+ * type) runs before any call reflection, so the per-node cost on non-matching
+ * expressions is one instanceof.
  *
  * Deliberate misses:
  *
@@ -165,8 +168,9 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
             return [];
         }
 
-        // AST-only, and cheapest of the two gates — run it before any reflection.
-        $sentinel = $this->describeSentinel($fallback);
+        // Cheapest of the two gates (AST-only except a constant's type) — run it
+        // before any call reflection.
+        $sentinel = $this->describeSentinel($fallback, $scope);
 
         if ($sentinel === null) {
             return [];
@@ -205,19 +209,26 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
      * allowlist of constant names — a constant that is genuinely the caller's
      * own default is the non-literal half of the shape and should be written as
      * one (`?? $default`).
+     *
+     * A constant whose resolved value is `null` (`const MISSING = null`,
+     * `Foo::NONE = null`) is NOT a sentinel: it is `?? null` under a name, and
+     * preserves the failure signal the same way. The `null` literal itself is
+     * a `ConstFetch` and is dropped by the same type check.
      */
-    private function describeSentinel(Expr $expr): ?string
+    private function describeSentinel(Expr $expr, Scope $scope): ?string
     {
         if ($expr instanceof String_ || $expr instanceof Int_ || $expr instanceof Float_) {
             return var_export($expr->value, true);
         }
 
         if ($expr instanceof ConstFetch) {
-            return $expr->name->toLowerString() === 'null' ? null : $expr->name->toString();
+            return $scope->getType($expr)->isNull()->yes() ? null : $expr->name->toString();
         }
 
         if ($expr instanceof ClassConstFetch && $expr->class instanceof Name && $expr->name instanceof Identifier) {
-            return $expr->class->toString() . '::' . $expr->name->toString();
+            return $scope->getType($expr)->isNull()->yes()
+                ? null
+                : $expr->class->toString() . '::' . $expr->name->toString();
         }
 
         if ($expr instanceof Array_) {
@@ -251,16 +262,25 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
             // bare class). Stripping null again would be an unreachable branch.
             $calledOnType = $scope->getType($expr->var);
 
-            if (!$calledOnType->hasMethod($methodName)->yes()) {
-                return null;
+            // Per class branch, not `$calledOnType->getMethod()`: on a union
+            // receiver that returns one merged reflection whose declaring
+            // class is the FIRST branch's, so `Vendor\Reader|App\LeafReader`
+            // would be judged by the vendor class alone. Any branch that is a
+            // narrowing helper is enough — at runtime the object may be it.
+            foreach ($calledOnType->getObjectClassReflections() as $classReflection) {
+                if (!$classReflection->hasMethod($methodName)) {
+                    continue;
+                }
+
+                $method = $classReflection->getMethod($methodName, $scope);
+                $owner = $method->getDeclaringClass()->getName();
+
+                if ($this->isNarrowingHelper($owner, $method->getVariants())) {
+                    return $owner . '::' . $methodName;
+                }
             }
 
-            $method = $calledOnType->getMethod($methodName, $scope);
-            $owner = $method->getDeclaringClass()->getName();
-
-            return $this->isNarrowingHelper($owner, $method->getVariants())
-                ? $owner . '::' . $methodName
-                : null;
+            return null;
         }
 
         if ($expr instanceof StaticCall) {

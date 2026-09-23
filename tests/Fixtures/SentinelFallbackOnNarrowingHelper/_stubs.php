@@ -17,8 +17,14 @@ declare(strict_types = 1);
 //   - `ConfigLookup::get()` — a lookup, not a boundary reader: its only `mixed`
 //     parameter is OPTIONAL (the caller's own default), so it is not handed
 //     unvalidated external data; must never fire.
+//   - `LeafReader::raw()` — the narrowing shape with an UNTYPED parameter,
+//     which resolves to `mixed`; must fire.
+//   - `LeafReader::NONE` — a null-valued constant: `?? LeafReader::NONE` is
+//     `?? null` by name and must never fire.
 //   - `Application\Support\ImposterReader` — sits under a namespace that only
 //     LOOKS like the configured `App\` prefix; pins the namespace-boundary match.
+//   - `Vendor\Support\ForeignReader` — a foreign class with the exact narrowing
+//     signature, for union receivers that list it FIRST.
 //
 // The plain-function case lives in its own fixture file rather than here,
 // because a function is not classmap-autoloadable — it is only visible to
@@ -28,6 +34,8 @@ namespace App\Support {
     final class LeafReader
     {
         public const string UNKNOWN = 'unknown';
+
+        public const null NONE = null;
 
         // The narrowing shape: mixed external data in, nullable scalar out.
         // null means "this input was unreadable".
@@ -44,6 +52,12 @@ namespace App\Support {
         public function flag(mixed $leaf): ?bool
         {
             return \is_bool($leaf) ? $leaf : null;
+        }
+
+        // Untyped parameter — implicit `mixed`, the same boundary contract.
+        public function raw($leaf): ?string
+        {
+            return \is_string($leaf) ? $leaf : null;
         }
 
         // Nullable UNION return — still a nullable scalar contract.
@@ -97,6 +111,17 @@ namespace App\Support {
 namespace Application\Support {
     // Namespace-boundary decoy: `Application\` must NOT match the `App\` prefix.
     final class ImposterReader
+    {
+        public function text(mixed $leaf): ?string
+        {
+            return \is_string($leaf) ? $leaf : null;
+        }
+    }
+}
+
+namespace Vendor\Support {
+    // Foreign twin of `LeafReader::text()`: same signature, outside `App\`.
+    final class ForeignReader
     {
         public function text(mixed $leaf): ?string
         {
