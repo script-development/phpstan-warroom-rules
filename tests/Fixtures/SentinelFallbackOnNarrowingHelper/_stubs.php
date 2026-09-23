@@ -19,6 +19,11 @@ declare(strict_types = 1);
 //     unvalidated external data; must never fire.
 //   - `Application\Support\ImposterReader` — sits under a namespace that only
 //     LOOKS like the configured `App\` prefix; pins the namespace-boundary match.
+//   - `App\Support\CsvReader` / `App\Support\LeafSource` — a second narrowing
+//     class and a narrowing interface, for union receivers.
+//   - `Acme\Vendor\*` — foreign classes for union receivers. PHPStan keeps a
+//     union's members in source order, and Pint's `ordered_types` sorts them by
+//     short name, so the class names fix which branch comes first.
 //
 // The plain-function case lives in its own fixture file rather than here,
 // because a function is not classmap-autoloadable — it is only visible to
@@ -77,6 +82,19 @@ namespace App\Support {
         }
     }
 
+    final class CsvReader
+    {
+        public function text(mixed $leaf): ?string
+        {
+            return \is_string($leaf) ? $leaf : null;
+        }
+    }
+
+    interface LeafSource
+    {
+        public function text(mixed $leaf): ?string;
+    }
+
     // Nullable-scalar return like a narrowing helper, but its only `mixed`
     // parameter is OPTIONAL — the caller's own default, not external data. A
     // lookup, not a boundary reader; `?? ''` on it is idiomatic and must never
@@ -102,5 +120,45 @@ namespace Application\Support {
         {
             return \is_string($leaf) ? $leaf : null;
         }
+    }
+}
+
+namespace Acme\Vendor {
+    // Same narrowing shape as `LeafReader::text()`, outside the first-party
+    // namespaces — silent on its own.
+    final class ForeignReader
+    {
+        public function text(mixed $leaf): ?string
+        {
+            return \is_string($leaf) ? $leaf : null;
+        }
+    }
+
+    final class OtherForeignReader
+    {
+        public function text(mixed $leaf): ?string
+        {
+            return \is_string($leaf) ? $leaf : null;
+        }
+    }
+
+    // Sorts after `LeafReader`, so `LeafReader|XmlReader` keeps the first-party
+    // branch first under Pint's `ordered_types`.
+    final class XmlReader
+    {
+        public function text(mixed $leaf): ?string
+        {
+            return \is_string($leaf) ? $leaf : null;
+        }
+    }
+
+    interface ForeignSource
+    {
+        public function text(mixed $leaf): ?string;
+    }
+
+    final class BareReader
+    {
+        public function other(): void {}
     }
 }

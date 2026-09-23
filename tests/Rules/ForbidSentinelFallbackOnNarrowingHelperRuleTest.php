@@ -193,6 +193,33 @@ final class ForbidSentinelFallbackOnNarrowingHelperRuleTest extends RuleTestCase
         );
     }
 
+    public function testFlagsUnionReceiverWhenAnyBranchIsANarrowingHelper(): void
+    {
+        // crit `fc81a618a913`: a union's type-level method reflection reports
+        // only the FIRST branch's declaring class. Each branch is resolved on its
+        // own, and the message names the first branch that qualifies.
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/UnionReceiverCoalesce.php'],
+            [
+                [sprintf(self::MESSAGE, self::READER_TEXT, '??', "''"), 19],
+                [sprintf(self::MESSAGE, self::READER_TEXT, '??', "''"), 24],
+                [sprintf(self::MESSAGE, 'App\Support\CsvReader::text', '??', "''"), 29],
+                [sprintf(self::MESSAGE, 'App\Support\LeafSource::text', '??', "''"), 34],
+                [sprintf(self::MESSAGE, self::READER_TEXT, '??', "''"), 39],
+                [sprintf(self::MESSAGE, self::READER_TEXT, '??', "''"), 44],
+                [sprintf(self::MESSAGE, 'App\Support\LeafSource::text', '??', "''"), 49],
+            ],
+        );
+    }
+
+    public function testIgnoresUnionReceiverWithNoNarrowingBranch(): void
+    {
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/SentinelFallbackOnNarrowingHelper/UnionReceiverForeignOnly.php'],
+            [],
+        );
+    }
+
     public function testRuleResolvesFromExtensionNeonAndFires(): void
     {
         // Container-resolved: exercises the SHIPPED

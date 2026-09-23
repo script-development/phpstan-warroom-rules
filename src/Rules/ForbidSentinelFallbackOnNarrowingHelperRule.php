@@ -111,6 +111,8 @@ use function var_export;
  *   - A helper result laundered through a variable
  *     (`$name = text($leaf); $name ?? ''`) — provenance is gone at the coalesce;
  *     closing it needs data-flow tracking, not a wider matcher.
+ *   - A static call through a variable class (`$reader::text($leaf)`) — only a
+ *     `Name` class operand is resolved.
  *
  * Known residual false positive: a first-party helper that takes a REQUIRED
  * `mixed` (or untyped) key AND returns a nullable scalar still matches even when
@@ -249,18 +251,25 @@ final class ForbidSentinelFallbackOnNarrowingHelperRule implements Rule
             // nullable parameter, a nullable method-call receiver, a chained
             // `?->…?->`, and a nullable array offset — every one resolves to the
             // bare class). Stripping null again would be an unreachable branch.
-            $calledOnType = $scope->getType($expr->var);
+            //
+            // Each branch of a union / intersection receiver is resolved on its
+            // own: the type-level method reflection of a union reports only the
+            // FIRST branch's declaring class, so a foreign first branch would hide
+            // a first-party helper behind it.
+            foreach ($scope->getType($expr->var)->getObjectClassReflections() as $classReflection) {
+                if (!$classReflection->hasMethod($methodName)) {
+                    continue;
+                }
 
-            if (!$calledOnType->hasMethod($methodName)->yes()) {
-                return null;
+                $method = $classReflection->getMethod($methodName, $scope);
+                $owner = $method->getDeclaringClass()->getName();
+
+                if ($this->isNarrowingHelper($owner, $method->getVariants())) {
+                    return $owner . '::' . $methodName;
+                }
             }
 
-            $method = $calledOnType->getMethod($methodName, $scope);
-            $owner = $method->getDeclaringClass()->getName();
-
-            return $this->isNarrowingHelper($owner, $method->getVariants())
-                ? $owner . '::' . $methodName
-                : null;
+            return null;
         }
 
         if ($expr instanceof StaticCall) {
