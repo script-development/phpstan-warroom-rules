@@ -189,10 +189,10 @@ use function sprintf;
  * cast wins, because source order is not a fact about which branch runs.
  *
  * Why this is spelled out at this length: merging every declaration in the
- * ancestry and letting the leaf win reads plausible and is wrong on NINE of the
- * twenty-three shapes in `CastDispatchShapes.php` — eight inventing a credential
- * cast the model does not have, the ninth calling a readable declaration
- * unreadable. Resolving the method half by first match over the imported traits
+ * ancestry and letting the leaf win reads plausible and was wrong on NINE of the
+ * twenty-three shapes `CastDispatchShapes.php` first held — eight inventing a
+ * credential cast the model does not have, the ninth calling a readable
+ * declaration unreadable. Resolving the method half by first match over the imported traits
  * instead is wrong on two OTHERS, which is the point of keeping shapes for both
  * mistakes: a table that only refutes the reading you have already abandoned
  * measures nothing. The test beside that fixture computes its expectation from
@@ -237,9 +237,13 @@ use function sprintf;
  * run, reporting `[OK] No errors` over four injected plaintext-credential
  * writes.
  *
- * A cast counts as credential-bearing when its value is exactly `hashed`,
- * exactly `encrypted`, or begins with `encrypted:` (`encrypted:array`,
- * `encrypted:collection`, `encrypted:object`).
+ * A cast counts as credential-bearing when its caster — the part before the
+ * first colon, as Laravel's `parseCasterClass()` reads it — is `hashed`,
+ * `encrypted` (`encrypted`, `encrypted:array`, `encrypted:collection`,
+ * `encrypted:object`), or an encrypting class cast (`AsEncryptedArrayObject`,
+ * `AsEncryptedCollection`, written as `::class` or as a string, with or
+ * without arguments). A class cast encrypts on the model path exactly as the
+ * string form does, and a builder write bypasses it the same way.
  *
  * Suppression: standard PHPStan inline-ignore mechanism on the rule's
  * identifier `forbidCredentialCastBypass.castBypassedByBuilderWrite`.
@@ -251,13 +255,10 @@ use function sprintf;
  * Three shapes that once lived here as "documented limits" were false positives
  * and were fixed instead.
  *
- *   - **Class-based encrypted casts** — `AsEncryptedArrayObject::class`,
- *     `AsEncryptedCollection::class` and friends are read into the map (a
- *     class cast replaces an earlier string cast on the same column, as at
- *     runtime), but this rule's write check matches only the `hashed` /
- *     `encrypted` string casts. They carry the same bypass risk; a consumer
- *     needing them covered restates the column in string form or relies on the
- *     per-territory arch test.
+ *   - **A cast value built by a call** — `AsEncryptedCollection::of(X::class)`,
+ *     `AsCollection::using(…)`, a concatenation. The caster is not a literal,
+ *     so the column reads as uncast by this declaration, and an earlier
+ *     declaration's cast on it survives in the map.
  *   - **Dynamic payloads and dynamic keys** — not a constant array type, so
  *     the keys are not statically known.
  *   - **`upsert()`'s third argument** (the update-column list) — its column
@@ -410,19 +411,19 @@ final class ForbidCredentialCastBypassRule implements Rule
      */
     private const string CASTS_MEMBER = 'casts';
 
-    /**
-     * Cast values that mean "the model layer transforms this value on write".
-     * `encrypted:array` / `encrypted:collection` / `encrypted:object` are
-     * matched by the prefix entry.
-     *
-     * @var list<string>
-     */
-    private const array CREDENTIAL_CASTS = ['hashed', 'encrypted'];
+    /** The caster that hashes the stored value one way. */
+    private const string HASHED_CAST = 'hashed';
 
     /**
-     * Class casts that encrypt the stored value. Read ONLY by
-     * `encryptedAttributesOf()`; this rule's own write check still matches
-     * string casts alone (see the out-of-scope list).
+     * The caster behind `encrypted` and its `encrypted:array` /
+     * `encrypted:collection` / `encrypted:object` variants.
+     */
+    private const string ENCRYPTED_CAST = 'encrypted';
+
+    /**
+     * Class casts whose caster encrypts on write. Pinned against the casts
+     * `illuminate/database` ships by
+     * `testEncryptingCastClassesMatchTheCastsLaravelShips`.
      *
      * @var list<string>
      */
@@ -849,8 +850,8 @@ final class ForbidCredentialCastBypassRule implements Rule
      * two appear in the source file.
      *
      * Measured against PHP's own answer over the twenty-three declaration shapes
-     * in `CastDispatchShapes.php` (war-room enforcement #217): reading this as
-     * "merge every declaration, leaf wins" is wrong on nine of them — eight
+     * `CastDispatchShapes.php` first held (war-room enforcement #217): reading
+     * this as "merge every declaration, leaf wins" was wrong on nine of them — eight
      * inventing a credential cast, one calling a readable declaration
      * unreadable — each masked in the obvious fixtures by a key collision.
      *
@@ -1278,14 +1279,30 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * Whether a cast value means "the model layer transforms this on write" —
-     * exactly `hashed`, exactly `encrypted`, or an `encrypted:` variant
-     * (`encrypted:array`, `encrypted:collection`, `encrypted:object`).
+     * Whether a cast value means "the model layer transforms this on write":
+     * `hashed`, or any cast `isEncryptingCast()` accepts.
      */
     private function isCredentialCast(string $cast): bool
     {
-        foreach (self::CREDENTIAL_CASTS as $credentialCast) {
-            if ($cast === $credentialCast || str_starts_with($cast, $credentialCast . ':')) {
+        return $this->casterOf($cast) === self::HASHED_CAST || $this->isEncryptingCast($cast);
+    }
+
+    /**
+     * Whether a cast value encrypts the stored value: the `encrypted` caster in
+     * any variant, or one of `ENCRYPTING_CAST_CLASSES` — matched as
+     * `class_exists()` resolves a class name, ignoring a leading backslash and
+     * case.
+     */
+    private function isEncryptingCast(string $cast): bool
+    {
+        $caster = $this->casterOf($cast);
+
+        if ($caster === self::ENCRYPTED_CAST) {
+            return true;
+        }
+
+        foreach (self::ENCRYPTING_CAST_CLASSES as $class) {
+            if (strcasecmp(mb_ltrim($caster, '\\'), $class) === 0) {
                 return true;
             }
         }
@@ -1294,14 +1311,12 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * Whether a cast value encrypts the stored value: `encrypted`, an
-     * `encrypted:` variant, or one of `ENCRYPTING_CAST_CLASSES`.
+     * The caster a cast value names — everything before the first colon, which
+     * is how Laravel's `parseCasterClass()` splits `Caster:arguments`.
      */
-    private function isEncryptingCast(string $cast): bool
+    private function casterOf(string $cast): string
     {
-        return $cast === 'encrypted'
-            || str_starts_with($cast, 'encrypted:')
-            || in_array($cast, self::ENCRYPTING_CAST_CLASSES, true);
+        return explode(':', $cast, 2)[0];
     }
 
     /**

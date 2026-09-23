@@ -26,18 +26,23 @@ use function array_key_exists;
 use function array_keys;
 use function array_map;
 use function array_values;
+use function basename;
 use function count;
 use function dirname;
 use function explode;
 use function file_get_contents;
+use function glob;
 use function in_array;
 use function is_array;
 use function is_string;
+use function mb_ltrim;
+use function mb_strtolower;
 use function preg_match;
 use function preg_match_all;
 use function realpath;
+use function sort;
 use function sprintf;
-use function str_starts_with;
+use function str_contains;
 
 /**
  * @extends RuleTestCase<ForbidCredentialCastBypassRule>
@@ -160,6 +165,11 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             'payload' => ['grand_secret', 'mid_plain', 'leaf_secret'],
             'naive' => ['grand_secret', 'leaf_secret'],
         ],
+        // crit `50c32bffef61`: an encrypting CLASS cast still encrypts, so a
+        // builder write bypasses it exactly as it bypasses the string form.
+        'PropertyEncryptedThenEncryptingClassCastMethod' => ['payload' => ['secret'], 'naive' => ['secret']],
+        'EncryptingCollectionClassCast' => ['payload' => ['secret'], 'naive' => ['secret']],
+        'EncryptingClassCastAsString' => ['payload' => ['secret', 'history'], 'naive' => ['secret', 'history']],
     ];
 
     /**
@@ -542,6 +552,27 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         return [
             __DIR__ . '/../../extension.neon',
         ];
+    }
+
+    /**
+     * The rule's encrypting class casts are exactly the ones Laravel ships: a
+     * class added upstream that encrypts on write would otherwise be a column
+     * this rule reads as uncast.
+     */
+    public function testEncryptingCastClassesMatchTheCastsLaravelShips(): void
+    {
+        $shipped = $this->encryptingCastClassesInLaravel();
+
+        self::assertContains('illuminate\database\eloquent\casts\asencryptedcollection', $shipped);
+
+        $listed = (new ReflectionClass(ForbidCredentialCastBypassRule::class))->getConstant('ENCRYPTING_CAST_CLASSES');
+
+        self::assertIsArray($listed);
+
+        $listed = array_map(mb_strtolower(...), $listed);
+        sort($listed);
+
+        self::assertSame($shipped, $listed);
     }
 
     /**
@@ -1048,17 +1079,63 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
 
         $credentialCasts = [];
 
+        $encryptingClasses = $this->encryptingCastClassesInLaravel();
+
         foreach (array_merge($property, $dispatched) as $column => $cast) {
             if (!is_string($column) || !is_string($cast)) {
                 continue;
             }
 
-            if ($cast === 'hashed' || $cast === 'encrypted' || str_starts_with($cast, 'encrypted:')) {
+            // Laravel's own `parseCasterClass()`: the caster is what precedes
+            // the first colon, and `class_exists()` ignores a leading
+            // backslash and case.
+            $castType = explode(':', $cast, 2)[0];
+
+            if (
+                $castType === 'hashed'
+                || $castType === 'encrypted'
+                || in_array(mb_strtolower(mb_ltrim($castType, '\\')), $encryptingClasses, true)
+            ) {
                 $credentialCasts[$column] = $cast;
             }
         }
 
         return $credentialCasts;
+    }
+
+    /**
+     * The Eloquent class casts whose caster ENCRYPTS on write, read off the
+     * installed `illuminate/database` rather than listed, lower-cased: every
+     * `Eloquent/Casts` class whose source calls `Crypt::encryptString(`.
+     *
+     * @return list<string>
+     */
+    private function encryptingCastClassesInLaravel(): array
+    {
+        $installPath = InstalledVersions::getInstallPath('illuminate/database');
+
+        self::assertIsString($installPath);
+
+        $files = glob($installPath . '/Eloquent/Casts/*.php');
+
+        self::assertIsArray($files);
+        self::assertNotSame([], $files, 'No Eloquent cast classes found — the scan is reading the wrong directory.');
+
+        $classes = [];
+
+        foreach ($files as $file) {
+            $source = file_get_contents($file);
+
+            self::assertIsString($source);
+
+            if (str_contains($source, 'Crypt::encryptString(')) {
+                $classes[] = mb_strtolower('Illuminate\Database\Eloquent\Casts\\' . basename($file, '.php'));
+            }
+        }
+
+        sort($classes);
+
+        return $classes;
     }
 
     /**
