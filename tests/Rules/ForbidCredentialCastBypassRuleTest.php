@@ -8,11 +8,17 @@ use Composer\InstalledVersions;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use PhpParser\Node;
+use PhpParser\Node\Stmt\ClassMethod;
+use PHPStan\Parser\CleaningParser;
 use PHPStan\Parser\Parser;
+use PHPStan\Parser\RichParser;
+use PHPStan\Php\PhpVersion;
 use PHPStan\Rules\Rule;
 use PHPStan\Testing\RuleTestCase;
 use ReflectionClass;
 use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidCredentialCastBypassRule;
+use ScriptDevelopment\PhpstanWarroomRules\Tests\Support\BodyStrippingParser;
 use ScriptDevelopment\PhpstanWarroomRules\Tests\Support\ThrowingParser;
 
 use function array_intersect;
@@ -25,6 +31,7 @@ use function dirname;
 use function explode;
 use function file_get_contents;
 use function in_array;
+use function is_array;
 use function is_string;
 use function preg_match;
 use function preg_match_all;
@@ -56,6 +63,10 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
     private const string UNINTERPRETABLE_CAST_WRITES = __DIR__ . '/../Fixtures/CredentialCastBypass/UninterpretableCastWrites.php';
 
     private const string CAST_DISPATCH_WRITES = __DIR__ . '/../Fixtures/CredentialCastBypass/CastDispatchWrites.php';
+
+    private const string STRIPPED_CAST_WRITES = __DIR__ . '/../Fixtures/CredentialCastBypass/StrippedCastWrites.php';
+
+    private const string STRIPPED_CAST_MODEL = __DIR__ . '/../Fixtures/CredentialCastBypass/StrippedCastModel.php';
 
     private const string DISPATCH_NAMESPACE = 'App\Models\CredentialCastBypass\Dispatch\\';
 
@@ -163,6 +174,28 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
      * the classmap for the whole suite).
      */
     private ?string $unparsableFileSuffix = null;
+
+    /**
+     * When set, `getRule()` injects a parser that routes any file whose path
+     * ends with this suffix through PHPStan's real `CleaningParser` — the AST a
+     * consumer gets for a model OUTSIDE the current invocation's analysed set.
+     *
+     * This cannot be reproduced through `analyse()` alone, however the analysed
+     * list is arranged: `PHPStan\Testing\TestCase.neon` overrides
+     * `currentPhpVersionSimpleParser!` to `@currentPhpVersionRichParser`, so the
+     * path-routing parser's not-analysed branch hands back an UN-stripped AST in
+     * every `RuleTestCase`. That override is why this rule's whole fixture
+     * corpus passed while the shipped rule was inert in consumers, and it is
+     * asserted below rather than left as a comment.
+     */
+    private ?string $bodyStrippedFileSuffix = null;
+
+    /**
+     * When set, `getRule()` returns this instance instead of constructing one —
+     * so the container-resolution test can run the NEON-wired rule end to end
+     * rather than only inspecting it.
+     */
+    private ?ForbidCredentialCastBypassRule $ruleOverride = null;
 
     // ---------------------------------------------------------------- RED ---
 
@@ -279,6 +312,207 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
     public function testTheSameWriteIsSilentWhenTheModelSourceParses(): void
     {
         $this->analyse([self::SINGLE_UNCAST_WRITE], []);
+    }
+
+    /**
+     * WR-1462. The fourth outcome, and the one the rule's three fault
+     * identifiers did NOT cover: a source that parses FINE and comes back with
+     * the method body removed.
+     *
+     * `@defaultAnalysisParser` is `CachedParser(PathRoutingParser)`, and
+     * `PathRoutingParser` sends any file outside the current invocation's
+     * analysed set through `CleaningParser`, whose `CleaningVisitor` sets
+     * `ClassMethod::$stmts = []`. `collectReturnedArrays()` then walks a body
+     * with no `Return_` in it at all — so the branch that sets
+     * `$complete = false` is never REACHED, the map resolves empty with
+     * `complete = true`, and the rule concludes the model carries no credential
+     * casts. No identifier fires, because from the rule's point of view nothing
+     * failed.
+     *
+     * Measured in three consumers on 2026-09-16: ublgenie was inert under its
+     * FULL `composer phpstan` run (four injected violations, `[OK] No errors`);
+     * isms and entreezuil were inert under a single-file invocation. A warm
+     * PHPStan result cache is enough to produce it in a full run, because the
+     * analysed set is then the CHANGED files — which is exactly the PR shape a
+     * plaintext-credential write arrives in: the writing file changed, the model
+     * did not.
+     *
+     * `Article` declares no credential cast, so the payload is irrelevant and
+     * the site is silent when the body is readable (the test directly above).
+     * Stripping it must turn the SAME site loud, because an unreadable map
+     * cannot support the claim that the payload is clean.
+     */
+    public function testACastsBodyStrippedByThePathRoutingParserIsReportedRatherThanReadAsCastless(): void
+    {
+        $this->bodyStrippedFileSuffix = 'CredentialCastBypass/Article.php';
+
+        $this->analyse([self::SINGLE_UNCAST_WRITE], [
+            [
+                sprintf(
+                    self::INCOMPLETE_MESSAGE,
+                    'App\Models\CredentialCastBypass\Article',
+                    'App\Models\CredentialCastBypass\Article',
+                ),
+                18,
+            ],
+        ]);
+    }
+
+    /**
+     * A credential column on a stripped model is reported too — under the fault
+     * identifier, not under the bypass one. The rule cannot know the column is
+     * cast, so claiming the bypass would be a guess; the honest answer is that
+     * the map is unreadable, and the consumer's remediation is the same either
+     * way.
+     *
+     * The discrimination this pins: `StrippedCastModel` is stripped and `ApiKey`
+     * is not, in ONE run. A fix that reported every model as incomplete, or that
+     * kept reading the stripped one as castless, fails this.
+     */
+    public function testOnlyTheStrippedModelIsReportedWhileASiblingModelStillFiresNormally(): void
+    {
+        $this->bodyStrippedFileSuffix = 'CredentialCastBypass/StrippedCastModel.php';
+
+        $this->analyse([self::STRIPPED_CAST_WRITES], [
+            [
+                sprintf(
+                    self::INCOMPLETE_MESSAGE,
+                    'App\Models\CredentialCastBypass\StrippedCastModel',
+                    'App\Models\CredentialCastBypass\StrippedCastModel',
+                ),
+                23,
+            ],
+            [
+                sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'),
+                28,
+            ],
+        ]);
+    }
+
+    /**
+     * The same two sites with nothing stripped: the credential cast IS read, so
+     * the write reports as a bypass rather than as a fault. Together with the
+     * test above this pins that the fault identifier is chosen by the READ, not
+     * by the model — the same file, the same line, a different outcome.
+     */
+    public function testBothSitesReportAsBypassesWhenNoSourceIsStripped(): void
+    {
+        $this->analyse([self::STRIPPED_CAST_WRITES], [
+            [
+                sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\StrippedCastModel', 'encrypted', 'update'),
+                23,
+            ],
+            [
+                sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'),
+                28,
+            ],
+        ]);
+    }
+
+    /**
+     * The upstream fact the guard rests on, asserted rather than documented: a
+     * `casts()` body comes back EMPTY through `CleaningParser`, and populated
+     * through the rich parser, for the same file.
+     *
+     * If a PHPStan release stopped stripping bodies, the guard would become
+     * unreachable and the three tests above would keep passing for the wrong
+     * reason. This one says so.
+     */
+    public function testPhpstanCleaningParserEmptiesACastsMethodBodyThatTheRichParserKeeps(): void
+    {
+        $model = self::STRIPPED_CAST_MODEL;
+
+        self::assertSame(
+            [1],
+            $this->castsBodyStatementCounts(self::richParser()->parseFile($model)),
+            'The rich parser no longer returns a populated casts() body for this fixture.',
+        );
+
+        self::assertSame(
+            [0],
+            $this->castsBodyStatementCounts($this->cleaningParser()->parseFile($model)),
+            'PHPStan CleaningParser no longer empties a casts() body — the stripped-AST guard may now be unreachable.',
+        );
+    }
+
+    /**
+     * Why `analyse()` alone cannot reach the branch above, asserted so nobody
+     * deletes the injected parser on the belief that passing only the writing
+     * fixture already covers it.
+     *
+     * `PHPStan\Testing\TestCase.neon` re-points `currentPhpVersionSimpleParser!`
+     * at `@currentPhpVersionRichParser`, so inside any `RuleTestCase` the
+     * path-routing parser's not-analysed branch returns a rich AST. Production
+     * wires that same service to `CleaningParser`. The suite was blind to a
+     * fleet-wide fail-open for exactly this reason.
+     */
+    public function testTheTestContainerReplacesTheCleaningParserSoAnalyseCannotReproduceAStrippedBody(): void
+    {
+        $routed = self::getContainer()->getService('currentPhpVersionSimpleParser');
+
+        self::assertInstanceOf(
+            RichParser::class,
+            $routed,
+            'The test container no longer overrides currentPhpVersionSimpleParser; analyse() may now reproduce a stripped body directly.',
+        );
+
+        self::assertSame(
+            [1],
+            $this->castsBodyStatementCounts($routed->parseFile(self::STRIPPED_CAST_MODEL)),
+            'The overridden not-analysed parser returned a stripped body, which the override exists to prevent.',
+        );
+    }
+
+    /**
+     * WR-1462, second half. `extension.neon` must wire this rule to a parser
+     * that does NOT strip bodies, and nothing in the suite proved the rule
+     * resolved from the shipped NEON at all before this.
+     *
+     * Both halves matter: a service name that does not resolve is a
+     * `ServiceNotFoundException` in 17 consumer codebases, and a service that
+     * resolves to the cached path-routing parser is the fail-open this fix
+     * exists to close. So the assertion is on the parser's CLASS, and the rule
+     * is then run end to end through the container-resolved instance.
+     */
+    public function testRuleResolvesFromExtensionNeonWithANonStrippingParser(): void
+    {
+        $rule = self::getContainer()->getByType(ForbidCredentialCastBypassRule::class);
+
+        $property = (new ReflectionClass($rule))->getProperty('parser');
+        $parser = $property->getValue($rule);
+
+        self::assertInstanceOf(
+            RichParser::class,
+            $parser,
+            'extension.neon wires this rule to a parser that routes non-analysed files through CleaningParser, which empties casts() bodies and makes the rule fail OPEN (WR-1462).',
+        );
+
+        $this->ruleOverride = $rule;
+
+        $this->analyse([self::SINGLE_UNCAST_WRITE], []);
+        $this->analyse([self::STRIPPED_CAST_WRITES], [
+            [
+                sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\StrippedCastModel', 'encrypted', 'update'),
+                23,
+            ],
+            [
+                sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'),
+                28,
+            ],
+        ]);
+    }
+
+    /**
+     * Load the shipped `extension.neon` so the container-resolution test can
+     * pull the rule out with its NEON-configured parser and parameter applied.
+     *
+     * @return array<int, string>
+     */
+    public static function getAdditionalConfigFiles(): array
+    {
+        return [
+            __DIR__ . '/../../extension.neon',
+        ];
     }
 
     /**
@@ -638,6 +872,10 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
 
     protected function getRule(): Rule
     {
+        if ($this->ruleOverride !== null) {
+            return $this->ruleOverride;
+        }
+
         $parser = self::getContainer()->getService('defaultAnalysisParser');
 
         self::assertInstanceOf(Parser::class, $parser);
@@ -646,11 +884,82 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             $parser = new ThrowingParser($parser, $this->unparsableFileSuffix);
         }
 
+        if ($this->bodyStrippedFileSuffix !== null) {
+            $fresh = self::getContainer()->getService('currentPhpVersionSimpleDirectParser');
+
+            self::assertInstanceOf(Parser::class, $fresh);
+
+            $parser = new BodyStrippingParser(
+                $parser,
+                $this->bodyStrippedFileSuffix,
+                $fresh,
+                self::getContainer()->getByType(PhpVersion::class),
+            );
+        }
+
         return new ForbidCredentialCastBypassRule(
             self::createReflectionProvider(),
             $parser,
             $this->tableModelOverride ?? [],
         );
+    }
+
+    /**
+     * The `casts()` body statement count for every `casts()` declaration among
+     * parsed statements, in source order — the discriminator between a rich
+     * parse and a cleaned one.
+     *
+     * @param array<Node> $nodes
+     *
+     * @return list<int>
+     */
+    private function castsBodyStatementCounts(array $nodes): array
+    {
+        $counts = [];
+
+        foreach ($nodes as $node) {
+            if ($node instanceof ClassMethod && $node->name->toString() === 'casts') {
+                $counts[] = $node->stmts === null ? -1 : count($node->stmts);
+            }
+
+            foreach ($node->getSubNodeNames() as $subNodeName) {
+                $subNode = $node->{$subNodeName};
+
+                foreach (is_array($subNode) ? $subNode : [$subNode] as $candidate) {
+                    if (!$candidate instanceof Node) {
+                        continue;
+                    }
+
+                    foreach ($this->castsBodyStatementCounts([$candidate]) as $count) {
+                        $counts[] = $count;
+                    }
+                }
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * PHPStan's real `CleaningParser` over a FRESH parser — never the container's
+     * cached one, whose nodes `CleaningVisitor` would empty in place.
+     */
+    private function cleaningParser(): Parser
+    {
+        $fresh = self::getContainer()->getService('currentPhpVersionSimpleDirectParser');
+
+        self::assertInstanceOf(Parser::class, $fresh);
+
+        return new CleaningParser($fresh, self::getContainer()->getByType(PhpVersion::class));
+    }
+
+    private static function richParser(): Parser
+    {
+        $parser = self::getContainer()->getService('currentPhpVersionRichParser');
+
+        self::assertInstanceOf(Parser::class, $parser);
+
+        return $parser;
     }
 
     /**
