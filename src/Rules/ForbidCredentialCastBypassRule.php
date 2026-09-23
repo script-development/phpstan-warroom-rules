@@ -37,12 +37,17 @@ use PHPStan\Type\TypeCombinator;
 
 use function array_key_exists;
 use function array_keys;
+use function array_map;
 use function array_reverse;
 use function count;
+use function explode;
 use function implode;
 use function in_array;
 use function is_array;
+use function is_string;
+use function mb_ltrim;
 use function sprintf;
+use function strcasecmp;
 
 /**
  * Forbids naming a `hashed`- or `encrypted`-cast Eloquent attribute as a key in
@@ -187,6 +192,9 @@ use function sprintf;
  * read and the union taken — a column some branch casts as a credential IS cast
  * on that path. Where branches disagree about the same column the CREDENTIAL
  * cast wins, because source order is not a fact about which branch runs.
+ * WITHIN one return, order IS the fact: a key the parent's map overwrites —
+ * `['password' => 'string', ...parent::casts()]`, `array_merge([…],
+ * parent::casts())`, `parent::casts() + […]` — keeps the parent's cast.
  *
  * Why this is spelled out at this length: merging every declaration in the
  * ancestry and letting the leaf win reads plausible and was wrong on NINE of the
@@ -1057,7 +1065,7 @@ final class ForbidCredentialCastBypassRule implements Rule
         array &$unreadable,
         array &$incomplete,
     ): array {
-        $maps = [];
+        $bodies = [];
         $current = $classReflection;
         $visited = [];
 
@@ -1105,13 +1113,14 @@ final class ForbidCredentialCastBypassRule implements Rule
             }
 
             $complete = true;
-            $maps[] = $this->castsFromReturns($node, $complete);
+            $inheritsParent = $this->contributesParentCasts($node);
+            $bodies[] = ['returns' => $this->returnedLayers($node, $complete), 'inheritsParent' => $inheritsParent];
 
             if (!$complete) {
                 $incomplete[] = $declaringClass;
             }
 
-            if (!$this->contributesParentCasts($node)) {
+            if (!$inheritsParent) {
                 break;
             }
 
@@ -1122,9 +1131,10 @@ final class ForbidCredentialCastBypassRule implements Rule
 
         $casts = [];
 
-        // Nearest declaration wins, so merge oldest-first.
-        foreach (array_reverse($maps) as $map) {
-            $casts = array_merge($casts, $map);
+        // Oldest body first: each body's `parent::casts()` evaluates to the map
+        // the body below it in the walk produced.
+        foreach (array_reverse($bodies) as $body) {
+            $casts = $this->castsOfBody($body['returns'], $body['inheritsParent'], $casts);
         }
 
         return $casts;
@@ -1187,7 +1197,12 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * The `column => cast` pairs one `casts()` body contributes.
+     * The map one `casts()` body returns, given the map its `parent::casts()`
+     * evaluates to.
+     *
+     * Each return is evaluated in its own layer order, so a key the parent's map
+     * overwrites at runtime is overwritten here too: `['password' => 'string',
+     * ...parent::casts()]` keeps the PARENT's cast.
      *
      * A body with SEVERAL returns (`if (…) { return [...]; } return [...];`) has
      * no single static answer, so every branch is read and the union is taken.
@@ -1197,24 +1212,52 @@ final class ForbidCredentialCastBypassRule implements Rule
      * than whichever appears last — source order is not a fact about which
      * branch runs.
      *
+     * A body that uses the parent's map somewhere no layer places it (a variable
+     * built up across statements) keeps the parent's map underneath its own.
+     *
+     * @param list<list<array<string, string>|null>> $returns
+     * @param array<string, string>                  $parentCasts
+     *
      * @return array<string, string>
      */
-    private function castsFromReturns(ClassMethod $method, bool &$complete): array
+    private function castsOfBody(array $returns, bool $inheritsParent, array $parentCasts): array
     {
         $casts = [];
 
-        foreach ($this->returnedArrays($method, $complete) as $array) {
-            foreach ($this->stringPairs($array) as $column => $cast) {
-                if (
-                    array_key_exists($column, $casts)
-                    && $this->isCredentialCast($casts[$column])
-                    && !$this->isCredentialCast($cast)
-                ) {
-                    continue;
-                }
+        foreach ($returns as $layers) {
+            $returned = [];
 
-                $casts[$column] = $cast;
+            foreach ($layers as $layer) {
+                $returned = array_merge($returned, $layer ?? $parentCasts);
             }
+
+            $casts = $this->unionPreferringCredentials($casts, $returned);
+        }
+
+        return $inheritsParent ? array_merge($parentCasts, $casts) : $casts;
+    }
+
+    /**
+     * `$casts` extended by `$branch`, where a column the two disagree on keeps
+     * whichever cast is a credential — the two are alternatives, not layers.
+     *
+     * @param array<string, string> $casts
+     * @param array<string, string> $branch
+     *
+     * @return array<string, string>
+     */
+    private function unionPreferringCredentials(array $casts, array $branch): array
+    {
+        foreach ($branch as $column => $cast) {
+            if (
+                array_key_exists($column, $casts)
+                && $this->isCredentialCast($casts[$column])
+                && !$this->isCredentialCast($cast)
+            ) {
+                continue;
+            }
+
+            $casts[$column] = $cast;
         }
 
         return $casts;
@@ -1449,9 +1492,8 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * Every array literal contributed by a `return` in a method body, including
-     * returns nested inside conditionals and literals nested inside a
-     * composition expression (`return array_merge(parent::casts(), [...]);`).
+     * The layers of every `return` in a method body, one list per return —
+     * including returns nested inside conditionals. See `layersOf()`.
      *
      * `$complete` is set to FALSE when a return statement contributes no array
      * literal at all, so the caller can report an incomplete cast map instead
@@ -1469,20 +1511,22 @@ final class ForbidCredentialCastBypassRule implements Rule
      * value is catching an unnoticed plaintext credential write. Measured
      * inert on three consumer territories, one under a full project run.
      *
-     * @return list<Expr\Array_>
+     * @return list<list<array<string, string>|null>>
      */
-    private function returnedArrays(ClassMethod $method, bool &$complete): array
+    private function returnedLayers(ClassMethod $method, bool &$complete): array
     {
-        $arrays = [];
+        $returns = [];
         $sawReturn = false;
+        $parentVariables = [];
 
-        $this->collectReturnedArrays($this->childNodes($method), $arrays, $complete, $sawReturn);
+        $this->collectParentCastsVariables($this->childNodes($method), $parentVariables);
+        $this->collectReturnedLayers($this->childNodes($method), $parentVariables, $returns, $complete, $sawReturn);
 
         if (!$sawReturn) {
             $complete = false;
         }
 
-        return $arrays;
+        return $returns;
     }
 
     /**
@@ -1494,11 +1538,17 @@ final class ForbidCredentialCastBypassRule implements Rule
      * increment is an equivalent mutant under that predicate — `++` and `--`
      * are indistinguishable when the only test is against zero.
      *
-     * @param list<Node>        $nodes
-     * @param list<Expr\Array_> $arrays
+     * @param list<Node>                             $nodes
+     * @param array<string, true>                    $parentVariables
+     * @param list<list<array<string, string>|null>> $returns
      */
-    private function collectReturnedArrays(array $nodes, array &$arrays, bool &$complete, bool &$sawReturn): void
-    {
+    private function collectReturnedLayers(
+        array $nodes,
+        array $parentVariables,
+        array &$returns,
+        bool &$complete,
+        bool &$sawReturn,
+    ): void {
         foreach ($nodes as $node) {
             if ($node instanceof Return_) {
                 $sawReturn = true;
@@ -1507,11 +1557,10 @@ final class ForbidCredentialCastBypassRule implements Rule
                     continue;
                 }
 
-                $returned = [];
+                $layers = $this->layersOf($node->expr, $parentVariables);
+                $returns[] = $layers;
 
-                $this->collectArrayLiterals([$node->expr], $returned);
-
-                if ($returned === []) {
+                if (!in_array(true, array_map(is_array(...), $layers), true)) {
                     // `return parent::casts();` carries no literal of its own
                     // and needs none — the ancestor's declaration is a
                     // resolvable chain link that dispatchedMethodCasts() walks.
@@ -1520,12 +1569,6 @@ final class ForbidCredentialCastBypassRule implements Rule
                     if (!$this->isParentCastsCall($node->expr) && !$this->capturesParentCastsCall($node->expr)) {
                         $complete = false;
                     }
-
-                    continue;
-                }
-
-                foreach ($returned as $array) {
-                    $arrays[] = $array;
                 }
 
                 continue;
@@ -1538,8 +1581,130 @@ final class ForbidCredentialCastBypassRule implements Rule
                 continue;
             }
 
-            $this->collectReturnedArrays($this->childNodes($node), $arrays, $complete, $sawReturn);
+            $this->collectReturnedLayers($this->childNodes($node), $parentVariables, $returns, $complete, $sawReturn);
         }
+    }
+
+    /**
+     * The variables a body assigns `parent::casts()` to directly
+     * (`$inherited = parent::casts();`), so a later `array_merge(…, $inherited)`
+     * places the parent's map where the variable sits.
+     *
+     * @param list<Node>          $nodes
+     * @param array<string, true> $variables
+     */
+    private function collectParentCastsVariables(array $nodes, array &$variables): void
+    {
+        foreach ($nodes as $node) {
+            if ($node instanceof FunctionLike || $node instanceof Class_) {
+                continue;
+            }
+
+            if (
+                $node instanceof Expr\Assign
+                && $node->var instanceof Expr\Variable
+                && is_string($node->var->name)
+                && $this->isParentCastsCall($node->expr)
+            ) {
+                $variables[$node->var->name] = true;
+            }
+
+            $this->collectParentCastsVariables($this->childNodes($node), $variables);
+        }
+    }
+
+    /**
+     * One returned expression as LAYERS in PHP's override order — a later layer
+     * overwrites an earlier one on a shared column — where `null` stands for the
+     * map `parent::casts()` returns. The order is what decides a column both the
+     * body and its parent cast:
+     *
+     *   - `[... , ...$x]` — items in source order, a spread where it sits;
+     *   - `array_merge($a, $b)` — arguments in order;
+     *   - `$a + $b` — the LEFT operand wins, so `$b` is the lower layer.
+     *
+     * Any other expression (a ternary, a helper call) contributes its array
+     * literals as ONE layer, read as alternatives like the branches of a body.
+     *
+     * @param array<string, true> $parentVariables
+     *
+     * @return list<array<string, string>|null>
+     */
+    private function layersOf(Expr $expr, array $parentVariables): array
+    {
+        if (
+            $this->isParentCastsCall($expr)
+            || ($expr instanceof Expr\Variable && is_string($expr->name) && array_key_exists($expr->name, $parentVariables))
+        ) {
+            return [null];
+        }
+
+        if ($expr instanceof Expr\Array_) {
+            $layers = [];
+            $pairs = [];
+
+            foreach ($expr->items as $item) {
+                if ($item->unpack) {
+                    $layers[] = $pairs;
+                    $pairs = [];
+
+                    foreach ($this->layersOf($item->value, $parentVariables) as $layer) {
+                        $layers[] = $layer;
+                    }
+
+                    continue;
+                }
+
+                $cast = $this->castValue($item->value);
+
+                if ($item->key instanceof String_ && $cast !== null) {
+                    $pairs[$item->key->value] = $cast;
+                }
+            }
+
+            $layers[] = $pairs;
+
+            return $layers;
+        }
+
+        if (
+            $expr instanceof Expr\FuncCall
+            && $expr->name instanceof Node\Name
+            && $expr->name->toLowerString() === 'array_merge'
+        ) {
+            $layers = [];
+
+            foreach ($expr->getArgs() as $arg) {
+                foreach ($this->layersOf($arg->value, $parentVariables) as $layer) {
+                    $layers[] = $layer;
+                }
+            }
+
+            return $layers;
+        }
+
+        if ($expr instanceof Expr\BinaryOp\Plus) {
+            return [
+                ...$this->layersOf($expr->right, $parentVariables),
+                ...$this->layersOf($expr->left, $parentVariables),
+            ];
+        }
+
+        $literals = [];
+
+        $this->collectArrayLiterals([$expr], $literals);
+
+        if ($literals === []) {
+            return [];
+        }
+
+        $alternatives = [];
+
+        foreach ($literals as $literal) {
+            $alternatives = $this->unionPreferringCredentials($alternatives, $this->stringPairs($literal));
+        }
+
+        return [$alternatives];
     }
 
     /**
@@ -1595,23 +1760,36 @@ final class ForbidCredentialCastBypassRule implements Rule
         $pairs = [];
 
         foreach ($expr->items as $item) {
-            if (!$item->key instanceof String_) {
-                continue;
-            }
+            $cast = $this->castValue($item->value);
 
-            if ($item->value instanceof String_) {
-                $pairs[$item->key->value] = $item->value->value;
-            } elseif (
-                $item->value instanceof Expr\ClassConstFetch
-                && $item->value->class instanceof Node\Name
-                && $item->value->name instanceof Identifier
-                && $item->value->name->toLowerString() === 'class'
-            ) {
-                $pairs[$item->key->value] = $item->value->class->toString();
+            if ($item->key instanceof String_ && $cast !== null) {
+                $pairs[$item->key->value] = $cast;
             }
         }
 
         return $pairs;
+    }
+
+    /**
+     * A cast value read from source: a string literal, or a `Cast::class`
+     * constant read as the class name. Anything computed is NULL.
+     */
+    private function castValue(Expr $value): ?string
+    {
+        if ($value instanceof String_) {
+            return $value->value;
+        }
+
+        if (
+            $value instanceof Expr\ClassConstFetch
+            && $value->class instanceof Node\Name
+            && $value->name instanceof Identifier
+            && $value->name->toLowerString() === 'class'
+        ) {
+            return $value->class->toString();
+        }
+
+        return null;
     }
 
     /**
