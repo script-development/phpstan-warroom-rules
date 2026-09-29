@@ -22,6 +22,7 @@ use PhpParser\Node\Stmt\ClassLike;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Property;
 use PhpParser\Node\Stmt\Return_;
+use PhpParser\Node\Stmt\Unset_;
 use PHPStan\Analyser\Scope;
 use PHPStan\Parser\Parser;
 use PHPStan\Parser\ParserErrorsException;
@@ -39,6 +40,7 @@ use function array_key_exists;
 use function array_keys;
 use function array_map;
 use function array_reverse;
+use function array_values;
 use function count;
 use function explode;
 use function implode;
@@ -194,7 +196,11 @@ use function strcasecmp;
  * cast wins, because source order is not a fact about which branch runs.
  * WITHIN one return, order IS the fact: a key the parent's map overwrites —
  * `['password' => 'string', ...parent::casts()]`, `array_merge([…],
- * parent::casts())`, `parent::casts() + […]` — keeps the parent's cast.
+ * parent::casts())`, `parent::casts() + […]` — keeps the parent's cast, and a
+ * variable holds the value of its last straight-line assignment. What the rule
+ * cannot place — a variable reassigned inside a branch or loop, a helper call —
+ * keeps every credential cast that could reach it: FAIL CLOSED, never parent
+ * under child, the direction in which a credential cast would silently lose.
  *
  * Why this is spelled out at this length: merging every declaration in the
  * ancestry and letting the leaf win reads plausible and was wrong on NINE of the
@@ -301,6 +307,8 @@ use function strcasecmp;
  *     reads, and `withCasts()` once, on a non-credential column and query-time
  *     only. A diagnostic keyed on those calls would have no true positive to
  *     find today and one false positive to produce.
+ *
+ * @phpstan-type CastValue array{alts: list<array<string, string>>|null, union: array<string, string>, sourced: bool}
  *
  * @implements Rule<MethodCall>
  */
@@ -418,6 +426,9 @@ final class ForbidCredentialCastBypassRule implements Rule
      * `declaredPropertyCasts()` and `dispatchedMethodCasts()` match on it.
      */
     private const string CASTS_MEMBER = 'casts';
+
+    /** Nested alternatives multiply; past this many a value turns WILD. */
+    private const int MAX_ALTERNATIVES = 16;
 
     /** The caster that hashes the stored value one way. */
     private const string HASHED_CAST = 'hashed';
@@ -1112,15 +1123,9 @@ final class ForbidCredentialCastBypassRule implements Rule
                 break;
             }
 
-            $complete = true;
-            $inheritsParent = $this->contributesParentCasts($node);
-            $bodies[] = ['returns' => $this->returnedLayers($node, $complete), 'inheritsParent' => $inheritsParent];
+            $bodies[$declaringClass] = $node;
 
-            if (!$complete) {
-                $incomplete[] = $declaringClass;
-            }
-
-            if (!$inheritsParent) {
+            if (!$this->contributesParentCasts($node)) {
                 break;
             }
 
@@ -1129,15 +1134,23 @@ final class ForbidCredentialCastBypassRule implements Rule
                 : null;
         }
 
-        $casts = [];
+        $value = $this->exactValue([[]]);
+        $readable = [];
 
-        // Oldest body first: each body's `parent::casts()` evaluates to the map
-        // the body below it in the walk produced.
-        foreach (array_reverse($bodies) as $body) {
-            $casts = $this->castsOfBody($body['returns'], $body['inheritsParent'], $casts);
+        // Oldest body first: each body's `parent::casts()` evaluates to the
+        // value the body below it in the walk produced.
+        foreach (array_reverse($bodies, true) as $declaringClass => $body) {
+            $readable[$declaringClass] = true;
+            $value = $this->bodyValue($body, $value, $readable[$declaringClass]);
         }
 
-        return $casts;
+        foreach (array_reverse($readable, true) as $declaringClass => $complete) {
+            if (!$complete) {
+                $incomplete[] = $declaringClass;
+            }
+        }
+
+        return $value['union'];
     }
 
     /**
@@ -1197,44 +1210,30 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * The map one `casts()` body returns, given the map its `parent::casts()`
-     * evaluates to.
+     * The value one `casts()` body returns, given what its `parent::casts()`
+     * evaluates to. Its returns are alternatives; a WILD one keeps the parent's
+     * credential casts if the body captures `parent::casts()` at all.
      *
-     * Each return is evaluated in its own layer order, so a key the parent's map
-     * overwrites at runtime is overwritten here too: `['password' => 'string',
-     * ...parent::casts()]` keeps the PARENT's cast.
+     * @param CastValue $parent
      *
-     * A body with SEVERAL returns (`if (…) { return [...]; } return [...];`) has
-     * no single static answer, so every branch is read and the union is taken.
-     * That is a deliberate bias: a column some branch casts as a credential IS
-     * cast on that path, and a builder write to it is unsafe there. Where two
-     * branches disagree about the SAME column, the CREDENTIAL cast wins rather
-     * than whichever appears last — source order is not a fact about which
-     * branch runs.
-     *
-     * A body that uses the parent's map somewhere no layer places it (a variable
-     * built up across statements) keeps the parent's map underneath its own.
-     *
-     * @param list<list<array<string, string>|null>> $returns
-     * @param array<string, string>                  $parentCasts
-     *
-     * @return array<string, string>
+     * @return CastValue
      */
-    private function castsOfBody(array $returns, bool $inheritsParent, array $parentCasts): array
+    private function bodyValue(ClassMethod $method, array $parent, bool &$complete): array
     {
-        $casts = [];
+        $returns = [];
+        $sawReturn = false;
 
-        foreach ($returns as $layers) {
-            $returned = [];
+        $this->walkStatements($this->childNodes($method), [], $parent, $returns, $complete, $sawReturn);
 
-            foreach ($layers as $layer) {
-                $returned = array_merge($returned, $layer ?? $parentCasts);
-            }
-
-            $casts = $this->unionPreferringCredentials($casts, $returned);
+        if (!$sawReturn) {
+            $complete = false;
         }
 
-        return $inheritsParent ? array_merge($parentCasts, $casts) : $casts;
+        $value = $this->alternatives($returns);
+
+        return $value['alts'] === null && $this->contributesParentCasts($method)
+            ? $this->alternatives([$value, $parent, self::wildValue()])
+            : $value;
     }
 
     /**
@@ -1492,219 +1491,406 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
-     * The layers of every `return` in a method body, one list per return —
-     * including returns nested inside conditionals. See `layersOf()`.
+     * Walks statements in order, tracking each variable's value, and collects
+     * the value of every `return` against the variables as they stand there.
      *
-     * `$complete` is set to FALSE when a return statement contributes no array
-     * literal at all, so the caller can report an incomplete cast map instead
-     * of silently reading it as "declares nothing".
+     * A variable stays EXACT only across straight-line `=`, `+=`, `??=`,
+     * `$v['key'] = 'cast'` and `unset($v['key'])`. Any other statement naming
+     * it — a branch, a loop, a call that may take it by reference — leaves it
+     * WILD. `$complete` turns FALSE on a return with no readable source
+     * (`return self::CASTS;`); the caller also clears it for a body with no
+     * return at all, which is the WR-1462 `CleaningParser`-emptied body.
      *
-     * It is ALSO set to FALSE when the body carries no `return` at all, which
-     * is not a shape valid PHP can have: `casts(): array` declares an `array`
-     * return type, so a body that falls off the end is a TypeError at runtime.
-     * A body with no return therefore means the source we were handed is not
-     * the source that runs — the WR-1462 case, where a parser routed the file
-     * through PHPStan's `CleaningParser` and every statement was removed.
-     * Without this the emptied body reached the collector, no `Return_` was
-     * found, the branch below was never REACHED, and the map resolved empty
-     * with `$complete` still TRUE — a silent fail-open on the one rule whose
-     * value is catching an unnoticed plaintext credential write. Measured
-     * inert on three consumer territories, one under a full project run.
+     * @param array<Node>              $nodes
+     * @param array<string, CastValue> $variables
+     * @param CastValue                $parent
+     * @param list<CastValue>          $returns
      *
-     * @return list<list<array<string, string>|null>>
+     * @return array<string, CastValue>
      */
-    private function returnedLayers(ClassMethod $method, bool &$complete): array
-    {
-        $returns = [];
-        $sawReturn = false;
-        $parentVariables = [];
-
-        $this->collectParentCastsVariables($this->childNodes($method), $parentVariables);
-        $this->collectReturnedLayers($this->childNodes($method), $parentVariables, $returns, $complete, $sawReturn);
-
-        if (!$sawReturn) {
-            $complete = false;
-        }
-
-        return $returns;
-    }
-
-    /**
-     * `$sawReturn` records whether ANY `return` statement was seen, so the
-     * caller can tell a body that declares an empty map (`return [];` — a
-     * return carrying a literal) from a body that was never there at all (no
-     * return, and no valid PHP shape that explains it). A flag rather than a
-     * count deliberately: the caller only ever asks "any?", and a counter's
-     * increment is an equivalent mutant under that predicate — `++` and `--`
-     * are indistinguishable when the only test is against zero.
-     *
-     * @param list<Node>                             $nodes
-     * @param array<string, true>                    $parentVariables
-     * @param list<list<array<string, string>|null>> $returns
-     */
-    private function collectReturnedLayers(
+    private function walkStatements(
         array $nodes,
-        array $parentVariables,
+        array $variables,
+        array $parent,
         array &$returns,
         bool &$complete,
         bool &$sawReturn,
-    ): void {
+    ): array {
         foreach ($nodes as $node) {
+            // A nested function-like or anonymous class carries its own returns.
+            if ($node instanceof FunctionLike || $node instanceof Class_) {
+                continue;
+            }
+
             if ($node instanceof Return_) {
                 $sawReturn = true;
 
-                if ($node->expr === null) {
-                    continue;
+                if ($node->expr !== null) {
+                    $returns[] = $value = $this->valueOf($node->expr, $variables, $parent);
+                    $complete = $complete && $value['sourced'];
                 }
 
-                $layers = $this->layersOf($node->expr, $parentVariables);
-                $returns[] = $layers;
+                continue;
+            }
 
-                if (!in_array(true, array_map(is_array(...), $layers), true)) {
-                    // `return parent::casts();` carries no literal of its own
-                    // and needs none — the ancestor's declaration is a
-                    // resolvable chain link that dispatchedMethodCasts() walks.
-                    // Reporting it as uninterpretable would be a false positive
-                    // on the idiomatic pass-through override.
-                    if (!$this->isParentCastsCall($node->expr) && !$this->capturesParentCastsCall($node->expr)) {
-                        $complete = false;
+            // A return sits only in a statement, and the statement already
+            // accounts for the variables its expressions name.
+            if (!$node instanceof Node\Stmt) {
+                continue;
+            }
+
+            $assigned = $this->straightLineAssignment($node, $variables, $parent);
+
+            if ($assigned !== null) {
+                $variables = [...$variables, ...$assigned];
+
+                continue;
+            }
+
+            // Each block starts from the variables on entry: a branch never
+            // sees its sibling's writes.
+            foreach ($node->getSubNodeNames() as $subNodeName) {
+                $block = [];
+                $subNode = $node->{$subNodeName};
+
+                foreach (is_array($subNode) ? $subNode : [$subNode] as $candidate) {
+                    if ($candidate instanceof Node) {
+                        $block[] = $candidate;
                     }
                 }
 
-                continue;
+                $this->walkStatements($block, $variables, $parent, $returns, $complete, $sawReturn);
             }
 
-            // A nested function-like (closure, arrow function, nested function
-            // declaration) or anonymous class carries its own returns, which
-            // are not this method's cast map.
-            if ($node instanceof FunctionLike || $node instanceof Class_) {
-                continue;
-            }
+            $spill = $this->opaqueValue($node, $variables, $parent);
 
-            $this->collectReturnedLayers($this->childNodes($node), $parentVariables, $returns, $complete, $sawReturn);
+            foreach ($this->variableNames($node) as $name) {
+                $variables[$name] = $this->alternatives([$variables[$name] ?? self::wildValue(), $spill, self::wildValue()]);
+            }
         }
+
+        return $variables;
     }
 
     /**
-     * The variables a body assigns `parent::casts()` to directly
-     * (`$inherited = parent::casts();`), so a later `array_merge(…, $inherited)`
-     * places the parent's map where the variable sits.
+     * The variable a straight-line statement assigns and its new value, NULL
+     * for a statement the walk must treat as opaque.
      *
-     * @param list<Node>          $nodes
-     * @param array<string, true> $variables
+     * @param array<string, CastValue> $variables
+     * @param CastValue                $parent
+     *
+     * @return array<string, CastValue>|null
      */
-    private function collectParentCastsVariables(array $nodes, array &$variables): void
+    private function straightLineAssignment(Node $node, array $variables, array $parent): ?array
     {
-        foreach ($nodes as $node) {
-            if ($node instanceof FunctionLike || $node instanceof Class_) {
-                continue;
+        if ($node instanceof Unset_ && count($node->vars) === 1) {
+            [$name, $key] = $this->dimension($node->vars[0]) ?? ['', ''];
+            $held = $variables[$name]['alts'] ?? null;
+
+            if ($held === null) {
+                return null;
             }
 
-            if (
-                $node instanceof Expr\Assign
-                && $node->var instanceof Expr\Variable
-                && is_string($node->var->name)
-                && $this->isParentCastsCall($node->expr)
-            ) {
-                $variables[$node->var->name] = true;
+            $alts = [];
+
+            foreach ($held as $alt) {
+                unset($alt[$key]);
+                $alts[] = $alt;
             }
 
-            $this->collectParentCastsVariables($this->childNodes($node), $variables);
+            return [$name => $this->exactValue($alts)];
         }
-    }
 
-    /**
-     * One returned expression as LAYERS in PHP's override order — a later layer
-     * overwrites an earlier one on a shared column — where `null` stands for the
-     * map `parent::casts()` returns. The order is what decides a column both the
-     * body and its parent cast:
-     *
-     *   - `[... , ...$x]` — items in source order, a spread where it sits;
-     *   - `array_merge($a, $b)` — arguments in order;
-     *   - `$a + $b` — the LEFT operand wins, so `$b` is the lower layer.
-     *
-     * Any other expression (a ternary, a helper call) contributes its array
-     * literals as ONE layer, read as alternatives like the branches of a body.
-     *
-     * @param array<string, true> $parentVariables
-     *
-     * @return list<array<string, string>|null>
-     */
-    private function layersOf(Expr $expr, array $parentVariables): array
-    {
+        $assign = $node instanceof Node\Stmt\Expression ? $node->expr : null;
+
         if (
-            $this->isParentCastsCall($expr)
-            || ($expr instanceof Expr\Variable && is_string($expr->name) && array_key_exists($expr->name, $parentVariables))
+            !($assign instanceof Expr\Assign || $assign instanceof Expr\AssignOp\Plus || $assign instanceof Expr\AssignOp\Coalesce)
+            || !$this->isPlainValue($assign->expr)
         ) {
-            return [null];
+            return null;
+        }
+
+        $dimension = $this->dimension($assign->var);
+        $cast = $this->castValue($assign->expr);
+
+        if ($assign->var instanceof Expr\Variable && is_string($assign->var->name)) {
+            [$name, $held] = [$assign->var->name, $variables[$assign->var->name] ?? self::wildValue()];
+            $assigned = $this->valueOf($assign->expr, $variables, $parent);
+        } elseif ($dimension !== null && $cast !== null && !$assign instanceof Expr\AssignOp\Plus) {
+            [$name, $held] = [$dimension[0], $variables[$dimension[0]] ?? $this->exactValue([[]])];
+            $assigned = $this->mergedValue($held, $this->exactValue([[$dimension[1] => $cast]]));
+        } else {
+            return null;
+        }
+
+        return [$name => match (true) {
+            $assign instanceof Expr\AssignOp\Plus => $this->mergedValue($assigned, $held),
+            // `??=` may or may not write, so both values are possible.
+            $assign instanceof Expr\AssignOp\Coalesce => $this->alternatives([$held, $assigned]),
+            default => $assigned,
+        }];
+    }
+
+    /**
+     * `[variable, key]` for `$variable['key']`, NULL for any other node.
+     *
+     * @return array{string, string}|null
+     */
+    private function dimension(Node $node): ?array
+    {
+        return $node instanceof Expr\ArrayDimFetch
+            && $node->var instanceof Expr\Variable
+            && is_string($node->var->name)
+            && $node->dim instanceof String_
+            ? [$node->var->name, $node->dim->value]
+            : null;
+    }
+
+    /**
+     * Whether an expression writes no variable: no nested assignment, and no
+     * call but `parent::casts()`, `array_merge()` and `array_replace()` — any
+     * other call may take an argument by reference.
+     */
+    private function isPlainValue(Node $node): bool
+    {
+        if ($node instanceof Expr\Assign || $node instanceof Expr\AssignOp || $node instanceof Expr\AssignRef) {
+            return false;
+        }
+
+        if ($node instanceof Expr\CallLike && !$this->isParentCastsCall($node) && !$this->isMergeCall($node)) {
+            return false;
+        }
+
+        foreach ($this->childNodes($node) as $child) {
+            if (!$this->isPlainValue($child)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * One expression's value, composed in PHP's override order: array items and
+     * spreads in source order, `array_merge()` / `array_replace()` arguments in
+     * order, `$a + $b` with the LEFT operand winning; `?:`, `??`, a ternary or a
+     * `match` as alternatives. Anything else is WILD — see `opaqueValue()`.
+     *
+     * @param array<string, CastValue> $variables
+     * @param CastValue                $parent
+     *
+     * @return CastValue
+     */
+    private function valueOf(Expr $expr, array $variables, array $parent): array
+    {
+        if ($this->isParentCastsCall($expr)) {
+            return $parent;
+        }
+
+        if ($expr instanceof Expr\Variable && is_string($expr->name) && array_key_exists($expr->name, $variables)) {
+            return $variables[$expr->name];
         }
 
         if ($expr instanceof Expr\Array_) {
-            $layers = [];
-            $pairs = [];
+            $value = $this->exactValue([[]]);
 
             foreach ($expr->items as $item) {
-                if ($item->unpack) {
-                    $layers[] = $pairs;
-                    $pairs = [];
-
-                    foreach ($this->layersOf($item->value, $parentVariables) as $layer) {
-                        $layers[] = $layer;
-                    }
-
-                    continue;
-                }
-
                 $cast = $this->castValue($item->value);
 
-                if ($item->key instanceof String_ && $cast !== null) {
-                    $pairs[$item->key->value] = $cast;
+                if ($item->unpack) {
+                    $value = $this->mergedValue($value, $this->valueOf($item->value, $variables, $parent));
+                } elseif ($item->key instanceof String_ && $cast !== null) {
+                    $value = $this->mergedValue($value, $this->exactValue([[$item->key->value => $cast]]));
                 }
             }
 
-            $layers[] = $pairs;
-
-            return $layers;
+            return $value;
         }
 
-        if (
-            $expr instanceof Expr\FuncCall
-            && $expr->name instanceof Node\Name
-            && $expr->name->toLowerString() === 'array_merge'
-        ) {
-            $layers = [];
+        if ($expr instanceof Expr\FuncCall && $this->isMergeCall($expr)) {
+            $value = $this->exactValue([[]]);
 
             foreach ($expr->getArgs() as $arg) {
-                foreach ($this->layersOf($arg->value, $parentVariables) as $layer) {
-                    $layers[] = $layer;
-                }
+                $value = $this->mergedValue($value, $arg->unpack ? self::wildValue() : $this->valueOf($arg->value, $variables, $parent));
             }
 
-            return $layers;
+            return $value;
         }
 
         if ($expr instanceof Expr\BinaryOp\Plus) {
-            return [
-                ...$this->layersOf($expr->right, $parentVariables),
-                ...$this->layersOf($expr->left, $parentVariables),
-            ];
+            return $this->mergedValue($this->valueOf($expr->right, $variables, $parent), $this->valueOf($expr->left, $variables, $parent));
         }
 
+        $branches = match (true) {
+            $expr instanceof Expr\Ternary => [$expr->if ?? $expr->cond, $expr->else],
+            $expr instanceof Expr\BinaryOp\Coalesce => [$expr->left, $expr->right],
+            $expr instanceof Expr\Match_ => array_map(static fn(Node\MatchArm $arm): Expr => $arm->body, $expr->arms),
+            default => [],
+        };
+
+        if ($branches !== []) {
+            return $this->alternatives(array_values(array_map(fn(Expr $branch): array => $this->valueOf($branch, $variables, $parent), $branches)));
+        }
+
+        return $this->opaqueValue($expr, $variables, $parent);
+    }
+
+    /**
+     * `array_merge()` or `array_replace()`, which agree on string keys.
+     */
+    private function isMergeCall(Node $node): bool
+    {
+        return $node instanceof Expr\FuncCall
+            && $node->name instanceof Node\Name
+            && in_array($node->name->toLowerString(), ['array_merge', 'array_replace'], true);
+    }
+
+    /**
+     * WILD — fail closed — for what the rule cannot evaluate: every cast its
+     * array literals, a captured `parent::casts()` or the variables it names
+     * could carry. A bare `self::CASTS` carries none and is not SOURCED.
+     *
+     * @param array<string, CastValue> $variables
+     * @param CastValue                $parent
+     *
+     * @return CastValue
+     */
+    private function opaqueValue(Node $node, array $variables, array $parent): array
+    {
+        $parts = [self::wildValue()];
         $literals = [];
 
-        $this->collectArrayLiterals([$expr], $literals);
+        $this->collectArrayLiterals([$node], $literals);
 
-        if ($literals === []) {
+        foreach ($literals as $literal) {
+            $parts[] = $this->valueOf($literal, $variables, $parent);
+        }
+
+        if ($this->capturesParentCastsCall($node)) {
+            $parts[] = $parent;
+        }
+
+        foreach ($this->variableNames($node) as $name) {
+            if (array_key_exists($name, $variables)) {
+                $parts[] = $variables[$name];
+            }
+        }
+
+        return $this->alternatives($parts);
+    }
+
+    /**
+     * Every variable a node names but `$this`, outside nested function-likes.
+     *
+     * @return list<string>
+     */
+    private function variableNames(Node $node): array
+    {
+        if ($node instanceof FunctionLike || $node instanceof Class_) {
             return [];
         }
 
-        $alternatives = [];
+        $names = $node instanceof Expr\Variable && is_string($node->name) && $node->name !== 'this' ? [$node->name] : [];
 
-        foreach ($literals as $literal) {
-            $alternatives = $this->unionPreferringCredentials($alternatives, $this->stringPairs($literal));
+        foreach ($this->childNodes($node) as $child) {
+            $names = [...$names, ...$this->variableNames($child)];
         }
 
-        return [$alternatives];
+        return $names;
+    }
+
+    /**
+     * `array_merge($lower, $upper)`. An exact upper overwrites its own keys even
+     * over a WILD lower; under a WILD upper a credential from either side wins.
+     *
+     * @param CastValue $lower
+     * @param CastValue $upper
+     *
+     * @return CastValue
+     */
+    private function mergedValue(array $lower, array $upper): array
+    {
+        if ($upper['alts'] === null) {
+            return $this->wildOf($this->unionPreferringCredentials($lower['union'], $upper['union']), $lower['sourced'] || $upper['sourced']);
+        }
+
+        $alts = [];
+
+        foreach ($lower['alts'] ?? [$lower['union']] as $below) {
+            foreach ($upper['alts'] as $above) {
+                $alts[] = array_merge($below, $above);
+            }
+        }
+
+        return $lower['alts'] === null
+            ? $this->wildOf($this->exactValue($alts)['union'], true)
+            : $this->exactValue($alts);
+    }
+
+    /**
+     * Possible values as one: exact while all are, else WILD with every
+     * credential cast any of them carries.
+     *
+     * @param list<CastValue> $values
+     *
+     * @return CastValue
+     */
+    private function alternatives(array $values): array
+    {
+        if ($values === []) {
+            return $this->exactValue([[]]);
+        }
+
+        $alts = [];
+        $union = [];
+        $sourced = false;
+
+        foreach ($values as $value) {
+            $alts = $alts === null || $value['alts'] === null ? null : [...$alts, ...$value['alts']];
+            $union = $this->unionPreferringCredentials($union, $value['union']);
+            $sourced = $sourced || $value['sourced'];
+        }
+
+        return $alts === null ? $this->wildOf($union, $sourced) : $this->exactValue($alts);
+    }
+
+    /**
+     * The maps PHP may return, enumerated; past `MAX_ALTERNATIVES` WILD instead
+     * of truncated.
+     *
+     * @param list<array<string, string>> $alts
+     *
+     * @return CastValue
+     */
+    private function exactValue(array $alts): array
+    {
+        $union = [];
+
+        foreach ($alts as $alt) {
+            $union = $this->unionPreferringCredentials($union, $alt);
+        }
+
+        return count($alts) > self::MAX_ALTERNATIVES
+            ? $this->wildOf($union, true)
+            : ['alts' => $alts, 'union' => $union, 'sourced' => true];
+    }
+
+    /**
+     * @param array<string, string> $union
+     *
+     * @return CastValue
+     */
+    private function wildOf(array $union, bool $sourced): array
+    {
+        return ['alts' => null, 'union' => $union, 'sourced' => $sourced];
+    }
+
+    /**
+     * @return CastValue
+     */
+    private static function wildValue(): array
+    {
+        return ['alts' => null, 'union' => [], 'sourced' => false];
     }
 
     /**
