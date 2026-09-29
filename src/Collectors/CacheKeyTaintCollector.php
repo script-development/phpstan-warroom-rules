@@ -304,14 +304,7 @@ final class CacheKeyTaintCollector implements Collector
         }
 
         if ($target instanceof ArrayDimFetch) {
-            $entry = $term;
-
-            while ($target->var instanceof ArrayDimFetch) {
-                $entry = [...$this->dimTerm($target, $scope), ...$entry];
-                $target = $target->var;
-            }
-
-            return $this->assignment($target->var, [...$this->dimTerm($target, $scope), ...$entry], $this->entryKey($target->dim, $entry, $scope), $scope);
+            return $this->assignment($target->var, [...$this->dimTerm($target, $scope), ...$term], $this->entryKey($target->dim, $term, $scope), $scope);
         }
 
         if ($target instanceof List_ || $target instanceof Array_) {

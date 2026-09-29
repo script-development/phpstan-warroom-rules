@@ -11,6 +11,7 @@ use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Contracts\Cache\Store;
 
 use function array_keys;
+use function crc32;
 use function implode;
 
 /**
@@ -188,6 +189,24 @@ final readonly class Sinks
     public function leaksThroughAnInterpolatedKeyPhpStoresAsAnInteger(Vault $vault): array
     {
         return $this->repository->many(["{$vault->id}" => $vault->api_key]);
+    }
+
+    public function leaksThroughAnIntegerKeyDerivedFromTheCredential(Vault $vault): bool
+    {
+        return $this->cache->putMany([crc32($vault->api_key) => 1], 60);
+    }
+
+    public function keepsAManyKeyEndingInALiteral(Vault $vault): array
+    {
+        return $this->repository->many([$vault->id . ':vault' => $vault->api_key]);
+    }
+
+    public function leaksThroughAKeyNestedTwoLevelsDeep(Vault $vault): mixed
+    {
+        $seen = [];
+        $seen['vault'][$vault->api_key] = true;
+
+        return $this->cache->get(implode(':', array_keys($seen['vault'])));
     }
 
     /**

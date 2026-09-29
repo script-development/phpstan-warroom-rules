@@ -53,6 +53,14 @@ final class Keys
         return $this->cache->get($key);
     }
 
+    public function leaksThroughAReferenceTakenToTheCredential(Vault $vault): mixed
+    {
+        $key = 'vault:' . $vault->api_key;
+        $alias = &$key;
+
+        return $this->cache->get($alias);
+    }
+
     public function leaksThroughAForeachByReference(Vault $vault): mixed
     {
         $parts = ['vault', ''];
