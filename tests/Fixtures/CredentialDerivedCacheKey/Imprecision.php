@@ -14,6 +14,9 @@ use stdClass;
  * a method named `overReports…` reports although the key it hands the
  * cache is clean at runtime — and never loses one: a method named
  * `leaks…` reports exactly once, however the slot was shared or written.
+ * A method named `keeps…` stays quiet because the key is clean. A method
+ * named `misses…` is a false negative the rule docblock lists, pinned so the
+ * day it starts reporting is seen.
  */
 final class Keys
 {
@@ -78,6 +81,82 @@ final class Keys
         $bag->key = $vault->api_key;
 
         return $this->cache->get($bag->key);
+    }
+
+    public function keepsACleanLoopKeyBesideACredentialValue(Vault $vault): void
+    {
+        foreach (['public-name' => $vault->api_key] as $key => $value) {
+            $this->cache->forget($key);
+        }
+    }
+
+    public function keepsACleanLoopKeyOfAHoistedMap(Vault $vault): void
+    {
+        $map = ['public-name' => $vault->api_key];
+
+        foreach ($map as $key => $value) {
+            $this->cache->forget($key);
+        }
+    }
+
+    public function leaksThroughALoopKeyOfAHoistedMap(Vault $vault): void
+    {
+        $map = [];
+        $map[$vault->api_key] = 1;
+
+        foreach ($map as $key => $value) {
+            $this->cache->forget($key);
+        }
+    }
+
+    public function leaksThroughALoopValue(Vault $vault): void
+    {
+        foreach (['public-name' => $vault->api_key] as $value) {
+            $this->cache->forget($value);
+        }
+    }
+
+    public function leaksThroughAnUnanalysedImplementationOfAUnion(Vault $vault, CleanKeys|DeferredKeys $keys): mixed
+    {
+        return $this->cache->get($keys->make($vault->api_key));
+    }
+
+    public function missesACredentialReadInsideAnInterfaceImplementation(Vault $vault, VaultKeys $keys): mixed
+    {
+        return $this->cache->get($keys->for($vault));
+    }
+
+    public function missesACredentialReturnedByAClosure(Vault $vault): mixed
+    {
+        $secret = $vault->api_key;
+
+        return $this->cache->get((static fn(): string => $secret)());
+    }
+}
+
+final readonly class CleanKeys
+{
+    public function make(string $seed): string
+    {
+        return 'constant';
+    }
+}
+
+abstract class DeferredKeys
+{
+    abstract public function make(string $seed): string;
+}
+
+interface VaultKeys
+{
+    public function for(Vault $vault): string;
+}
+
+final readonly class SecretKeys implements VaultKeys
+{
+    public function for(Vault $vault): string
+    {
+        return 'vault:' . $vault->api_key;
     }
 }
 

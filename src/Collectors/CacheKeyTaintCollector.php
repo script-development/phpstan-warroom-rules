@@ -211,11 +211,11 @@ final class CacheKeyTaintCollector implements Collector
         }
 
         if ($node instanceof Foreach_) {
-            $term = $this->term($node->expr, $scope);
-            $flows = $this->assignment($node->valueVar, $term, $term, $scope);
+            [$keys, $values] = $this->iterated($node->expr, $scope);
+            $flows = $this->assignment($node->valueVar, $values, $values, $scope);
 
             if ($node->keyVar instanceof Expr) {
-                $flows = [...$flows, ...$this->assignment($node->keyVar, $term, $term, $scope)];
+                $flows = [...$flows, ...$this->assignment($node->keyVar, $keys, $keys, $scope)];
             }
 
             if ($node->byRef) {
@@ -330,6 +330,37 @@ final class CacheKeyTaintCollector implements Collector
         }
 
         return [];
+    }
+
+    /**
+     * What a foreach over an expression hands its key and its value variable:
+     * an array literal's keys and values apart; a local variable's key slot
+     * for the key; anything else, its whole term for both.
+     *
+     * @return array{Term, Term}
+     */
+    private function iterated(Expr $iterable, Scope $scope): array
+    {
+        if ($iterable instanceof Array_) {
+            $keys = [];
+            $values = [];
+
+            foreach ($iterable->items as $item) {
+                if ($item->unpack) {
+                    $keys = [...$keys, ...$this->term($item->value, $scope)];
+                } elseif ($item->key instanceof Expr) {
+                    $keys = [...$keys, ...$this->term($item->key, $scope)];
+                }
+
+                $values = [...$values, ...$this->term($item->value, $scope)];
+            }
+
+            return [$keys, $values];
+        }
+
+        $term = $this->term($iterable, $scope);
+
+        return $iterable instanceof Variable && is_string($iterable->name) ? [[['k', $iterable->name]], $term] : [$term, $term];
     }
 
     /**

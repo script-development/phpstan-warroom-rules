@@ -65,8 +65,9 @@ use function str_starts_with;
  * method name; a value computed inside a closure or arrow function, or written
  * into a variable by reference from inside a call (`preg_match()`'s matches);
  * and a call through an interface, an abstract method or a function, which
- * resolves to its arguments, so a credential the implementation reads for
- * itself is not seen.
+ * resolves to its arguments — on a union receiver, on top of what its analysed
+ * implementations return — so a credential the implementation reads for itself
+ * is not seen.
  *
  * False positives, each by construction, and each only ever adding a report:
  * the analysis is flow-insensitive — every value a variable is ever assigned
@@ -292,14 +293,15 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
         [$fallback, $callees] = $this->calls[$scopeKey][$callId] ?? [[], []];
         $labels = [];
         $parameters = [];
-        $resolved = false;
+        $unanalysed = $callees === [];
 
         foreach ($callees as $callee => $arguments) {
             if (!array_key_exists($callee, $this->parameters)) {
+                $unanalysed = true;
+
                 continue;
             }
 
-            $resolved = true;
             [$returned, $dependsOn] = $this->values[$callee . '|' . self::RETURN_SLOT] ?? [[], []];
             $labels += $returned;
 
@@ -310,7 +312,14 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
             }
         }
 
-        return $resolved ? [$labels, $parameters] : $this->evaluate($fallback, $scopeKey);
+        // A dispatch path with no collected body is read from its arguments, whatever the analysed paths return.
+        if ($unanalysed) {
+            [$fallbackLabels, $fallbackParameters] = $this->evaluate($fallback, $scopeKey);
+            $labels += $fallbackLabels;
+            $parameters += $fallbackParameters;
+        }
+
+        return [$labels, $parameters];
     }
 
     /**

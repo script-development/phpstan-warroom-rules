@@ -210,19 +210,23 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
     public function testTheAnalysisOverReportsAndNeverLosesATaint(): void
     {
         $expected = [
-            [self::message('get', 'Imprecision.php', 26), 29],
-            [self::message('get', 'Imprecision.php', 34), 37],
-            [self::message('get', 'Imprecision.php', 42), 44],
-            [self::message('get', 'Imprecision.php', 51), 53],
-            [self::message('get', 'Imprecision.php', 58), 61],
-            [self::message('get', 'Imprecision.php', 69), 72],
-            [self::message('get', 'Imprecision.php', 78), 80],
+            [self::message('get', 'Imprecision.php', 29), 32],
+            [self::message('get', 'Imprecision.php', 37), 40],
+            [self::message('get', 'Imprecision.php', 45), 47],
+            [self::message('get', 'Imprecision.php', 54), 56],
+            [self::message('get', 'Imprecision.php', 61), 64],
+            [self::message('get', 'Imprecision.php', 72), 75],
+            [self::message('get', 'Imprecision.php', 81), 83],
+            [self::message('forget', 'Imprecision.php', 105), 108],
+            [self::message('forget', 'Imprecision.php', 114), 115],
+            [self::message('get', 'Imprecision.php', 121), 121],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'Imprecision.php');
 
         self::assertNotFalse($source);
         self::assertSame(count($expected), preg_match_all('/function (leaks|overReports)/', $source));
+        self::assertSame(2, preg_match_all('/function misses/', $source));
 
         $this->analyse([self::MODELS, self::FIXTURES . 'Imprecision.php'], $expected);
     }
