@@ -72,11 +72,13 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 
 | Job | Matrix | Runs |
 |---|---|---|
-| `check` | PHP `8.4`, `8.5` | audit + format + phpstan + coverage + coverage gate + mutation. Resolves `illuminate/*` to the **highest** satisfying release. |
+| `check` | PHP `8.4`, `8.5` | audit + format + phpstan + coverage + coverage gate; mutation on the `8.4` leg only. Resolves `illuminate/*` to the **highest** satisfying release. |
 | `check-lowest-laravel` | PHP `8.4`, `8.5` × `illuminate/* ^12.0` | phpstan + tests only. |
 | `check-production-tree` | PHP `8.4`, `--no-dev` install | phpstan only, on the tree a consumer actually installs. |
 
 `ci-passed` requires every upstream lane to report `success`. It previously failed only on `failure` or `cancelled`, so a **skipped** lane passed the rollup — nothing skips today, but `ci-passed` is the only required check on `main`, so the first `if:` added upstream would have hollowed the gate out while still reporting green (WR-0852).
+
+**Mutation runs once, and a pull request mutates only what its diff reaches (WR-1790).** Mutant outcomes were identical mutant-for-mutant on the two PHP legs, so Infection runs on `8.4` alone. On `push` to `main` it mutates all of `src/`. On `pull_request`, `bin/mutation-scope.php` reads the merge ref's diff against its first parent and prints `FULL`, `NONE` or one `SCOPED <src file>` line per file: a changed `src/` file is scoped whole-file; a changed test is scoped to the package classes it `use`s; a changed fixture to the classes imported by every test naming its `Fixtures/<Dir>`; `*.md`, `LICENSE`, `.gitignore`, `CODEOWNERS`, `dependabot.yml` and `release.yml` are inert; **anything it cannot map is `FULL`** — config, `composer.*`, `extension.neon`, `tests/Support/`, deletions, and any fixture declaring a namespace outside `App\` (the classmapped framework stubs every test loads). The `--min-msi` / `--min-covered-msi` in `composer mutation:ci` apply to whichever set ran, so a scoped run holds the touched files to 75 on their own — `EnforceActionTransactionsRule` and `ConnectionTransactionReturnTypeExtension` sit below 75 today and a PR touching either goes red until their escaped mutants are killed. What mapping by import cannot see — a fixture class reached by name through the classmap from another rule's test — is caught by the full run on `main`, after merge.
 
 **Why the second job exists (WR-0855):** the package supports `illuminate/* ^12 || ^13`, but a PHP-only matrix always resolves to the highest major, so the lower of the two supported majors was never exercised — and `ConnectionTransactionReturnTypeExtension`'s entire reason for existing is a `@return mixed` annotation that Laravel 13 no longer carries. The job asserts the resolved major really is 12 before analysing; a silent fallback to 13 would make the leg pass for the wrong reason.
 
