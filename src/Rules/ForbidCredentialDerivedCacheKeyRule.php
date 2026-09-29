@@ -56,18 +56,30 @@ use function str_starts_with;
  * so a shared key helper handed an id at one site and the credential at another
  * reports only the second.
  *
- * False negatives, each by construction: a cast class other than the two above,
- * or a cast added at runtime (`mergeCasts()`); a model whose cast map the
- * credential-cast rule cannot read (it reports that itself); an attribute read
- * other than by a constant name — `toArray()`, `only()`, `getAttributes()`,
- * `$vault->{$name}`, `getAttribute($name)`; a cache handle or method PHPStan
- * cannot resolve — `app('cache')` without larastan, a `mixed` value, a dynamic
- * method name; a value computed inside a closure or arrow function, or written
- * into a variable by reference from inside a call (`preg_match()`'s matches);
- * and a call through an interface, an abstract method or a function, which
- * resolves to its arguments — on a union receiver, on top of what its analysed
- * implementations return — so a credential the implementation reads for itself
- * is not seen.
+ * REACH — what the analysis follows: a named attribute read on a model-typed
+ * receiver (a property, `getAttribute()`, array access — the name a literal or
+ * a value of one constant string type); locals, and the keys a local map
+ * holds; properties; the bodies of CLASS METHODS, their parameters bound per
+ * call site and their returns; and a call into code it has no body for, read
+ * from its arguments. Outside that reach, each a known false negative:
+ *   - an attribute named at runtime (`$vault->{$name}`, `getAttribute($name)`)
+ *     or read in bulk (`toArray()`, `only()`, `getAttributes()`);
+ *   - a NAMED FUNCTION's body — a credential it reads for itself, or a
+ *     parameter it hands to a cache sink;
+ *   - a closure's or arrow function's body, invoked or not;
+ *   - dispatch through an interface or abstract method to what an
+ *     implementation reads for itself — only the call's arguments count (on a
+ *     union receiver, on top of what its analysed branches return);
+ *   - a write into a variable by reference from inside a call (`preg_match()`'s
+ *     matches);
+ *   - a cache handle or method PHPStan cannot resolve — `app('cache')` without
+ *     larastan, a `mixed` value, a dynamic method name; array access on a cache
+ *     handle (`$cache[$key]`);
+ *   - a cast class other than the two above, a cast added at runtime
+ *     (`mergeCasts()`), or a model whose cast map the credential-cast rule
+ *     cannot read (it reports that itself).
+ * Each out-of-reach shape is pinned by a `misses…` fixture, so widening the
+ * reach shows up as a changed test.
  *
  * False positives, each by construction, and each only ever adding a report:
  * the analysis is flow-insensitive — every value a variable is ever assigned

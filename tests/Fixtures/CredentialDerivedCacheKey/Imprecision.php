@@ -126,6 +126,33 @@ final class Keys
         return $this->cache->get($keys->for($vault));
     }
 
+    public function leaksThroughALiteralDynamicAttributeName(Vault $vault): mixed
+    {
+        return $this->cache->get('vault:' . $vault->{'api_key'});
+    }
+
+    public function leaksThroughAnAttributeNameHeldInAConstantString(Vault $vault): mixed
+    {
+        $field = 'api_key';
+
+        return $this->cache->get('vault:' . $vault->{$field});
+    }
+
+    public function missesAnAttributeNamedAtRuntime(Vault $vault, string $field): mixed
+    {
+        return $this->cache->get('vault:' . $vault->{$field} . $vault->getAttribute($field));
+    }
+
+    public function missesACredentialHandedToANamedFunctionsSink(Vault $vault): void
+    {
+        forget_vault_key($this->cache, $vault->api_key);
+    }
+
+    public function missesACredentialReadInsideANamedFunction(Vault $vault): mixed
+    {
+        return $this->cache->get(vault_key($vault));
+    }
+
     public function missesACredentialReadInsideAnInterfaceImplementation(Vault $vault, VaultKeys $keys): mixed
     {
         return $this->cache->get($keys->for($vault));
@@ -193,4 +220,14 @@ class Base
 final class Child extends Base
 {
     public string $text = '';
+}
+
+function forget_vault_key(Repository $cache, string $key): void
+{
+    $cache->forget($key);
+}
+
+function vault_key(Vault $vault): string
+{
+    return 'vault:' . $vault->api_key;
 }

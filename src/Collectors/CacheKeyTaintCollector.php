@@ -701,8 +701,10 @@ final class CacheKeyTaintCollector implements Collector
         }
 
         if ($expr instanceof PropertyFetch || $expr instanceof NullsafePropertyFetch) {
-            if ($expr->name instanceof Identifier && $this->isModel($expr->var, $scope)) {
-                return $this->sources($expr->var, $expr->name->toString(), $expr, $scope);
+            $attribute = $expr->name instanceof Identifier ? $expr->name->toString() : $this->constantName($expr->name, $scope);
+
+            if ($attribute !== null && $this->isModel($expr->var, $scope)) {
+                return $this->sources($expr->var, $attribute, $expr, $scope);
             }
 
             return [...$this->heapAtoms($this->heapKeys($expr, $scope)), ...$this->term($expr->var, $scope)];
@@ -773,6 +775,17 @@ final class CacheKeyTaintCollector implements Collector
         $attributes = $scope->getType($arguments[0]->value)->getConstantStrings();
 
         return count($attributes) === 1 ? [...$term, ...$this->sources($expr->var, $attributes[0]->getValue(), $expr, $scope)] : $term;
+    }
+
+    /**
+     * The attribute a dynamic name reads when its type is one constant string
+     * (`$vault->{'api_key'}`); null when it is only known at runtime.
+     */
+    private function constantName(Expr $name, Scope $scope): ?string
+    {
+        $names = $scope->getType($name)->getConstantStrings();
+
+        return count($names) === 1 ? $names[0]->getValue() : null;
     }
 
     /**

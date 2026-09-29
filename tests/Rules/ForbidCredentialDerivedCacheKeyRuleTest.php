@@ -220,14 +220,16 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
             [self::message('forget', 'Imprecision.php', 105), 108],
             [self::message('forget', 'Imprecision.php', 114), 115],
             [self::message('get', 'Imprecision.php', 121), 121],
-            [self::message('get', 'Imprecision.php', 159), 126],
+            [self::message('get', 'Imprecision.php', 186), 126],
+            [self::message('get', 'Imprecision.php', 131), 131],
+            [self::message('get', 'Imprecision.php', 138), 138],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'Imprecision.php');
 
         self::assertNotFalse($source);
         self::assertSame(count($expected), preg_match_all('/function (leaks|overReports)/', $source));
-        self::assertSame(2, preg_match_all('/function misses/', $source));
+        self::assertSame(5, preg_match_all('/function misses/', $source));
 
         $this->analyse([self::MODELS, self::FIXTURES . 'Imprecision.php'], $expected);
     }
