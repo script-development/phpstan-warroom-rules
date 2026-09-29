@@ -121,6 +121,11 @@ final class Keys
         return $this->cache->get($keys->make($vault->api_key));
     }
 
+    public function leaksThroughAnAnalysedImplementationBesideAnUnanalysedOne(Vault $vault, DeferredVaultKeys|LeakyKeys $keys): mixed
+    {
+        return $this->cache->get($keys->for($vault));
+    }
+
     public function missesACredentialReadInsideAnInterfaceImplementation(Vault $vault, VaultKeys $keys): mixed
     {
         return $this->cache->get($keys->for($vault));
@@ -145,6 +150,19 @@ final readonly class CleanKeys
 abstract class DeferredKeys
 {
     abstract public function make(string $seed): string;
+}
+
+final readonly class LeakyKeys
+{
+    public function for(Vault $vault): string
+    {
+        return 'vault:' . $vault->api_key;
+    }
+}
+
+abstract class DeferredVaultKeys
+{
+    abstract public function for(Vault $vault): string;
 }
 
 interface VaultKeys

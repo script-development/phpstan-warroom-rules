@@ -220,6 +220,7 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
             [self::message('forget', 'Imprecision.php', 105), 108],
             [self::message('forget', 'Imprecision.php', 114), 115],
             [self::message('get', 'Imprecision.php', 121), 121],
+            [self::message('get', 'Imprecision.php', 159), 126],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'Imprecision.php');
