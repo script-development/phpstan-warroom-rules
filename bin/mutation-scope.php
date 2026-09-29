@@ -52,8 +52,19 @@ if ($diff === []) {
 }
 
 /** @return list<string> */
-$importedSources = static function(string $testPath) use ($root): array {
-    $source = (string) file_get_contents($root . '/' . $testPath);
+// Every rule and type test, read once for the whole run: a diff of N fixtures must not reread
+// the test tree N times (the fixture branch asks which tests name each fixture directory).
+/** @var array<string, string> $testSources relative test path => source */
+$testSources = [];
+
+foreach (['tests/Rules', 'tests/Type'] as $testDirectory) {
+    foreach (glob($root . '/' . $testDirectory . '/*Test.php') ?: [] as $file) {
+        $testSources[mb_substr($file, mb_strlen($root) + 1)] = (string) file_get_contents($file);
+    }
+}
+
+$importedSources = static function(string $testPath) use ($root, $testSources): array {
+    $source = $testSources[$testPath] ?? (string) file_get_contents($root . '/' . $testPath);
     preg_match_all('/^use ' . preg_quote(PACKAGE_NAMESPACE, '/') . '((?:Rules|Type)\\\\\w+);/m', $source, $matches);
     $paths = [];
 
@@ -69,15 +80,13 @@ $importedSources = static function(string $testPath) use ($root): array {
 };
 
 /** @return list<string> */
-$testsNamingFixtureDirectory = static function(string $directory) use ($root): array {
+$testsNamingFixtureDirectory = static function(string $directory) use ($testSources): array {
     $tests = [];
     $pattern = '#Fixtures/' . preg_quote($directory, '#') . '(?![A-Za-z0-9_])#';
 
-    foreach (['tests/Rules', 'tests/Type'] as $testDirectory) {
-        foreach (glob($root . '/' . $testDirectory . '/*Test.php') ?: [] as $file) {
-            if (preg_match($pattern, (string) file_get_contents($file)) === 1) {
-                $tests[] = mb_substr($file, mb_strlen($root) + 1);
-            }
+    foreach ($testSources as $testPath => $source) {
+        if (preg_match($pattern, $source) === 1) {
+            $tests[] = $testPath;
         }
     }
 
@@ -86,6 +95,8 @@ $testsNamingFixtureDirectory = static function(string $directory) use ($root): a
 
 $scope = [];
 $full = [];
+/** @var array<string, list<string>> $fixtureSources fixture directory => the package sources its tests import */
+$fixtureSources = [];
 
 foreach ($diff as $line) {
     [$change, $path] = explode("\t", $line, 2) + [1 => ''];
@@ -138,11 +149,10 @@ foreach ($diff as $line) {
             continue;
         }
 
-        $sources = [];
-
-        foreach ($testsNamingFixtureDirectory($fixture[1]) as $test) {
-            array_push($sources, ...$importedSources($test));
-        }
+        $fixtureSources[$fixture[1]] ??= array_merge(
+            ...array_map($importedSources, $testsNamingFixtureDirectory($fixture[1])),
+        );
+        $sources = $fixtureSources[$fixture[1]];
 
         if ($sources === []) {
             $full[] = "{$path} (no test names Fixtures/{$fixture[1]} and imports a package class)";
