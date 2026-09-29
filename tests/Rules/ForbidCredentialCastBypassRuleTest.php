@@ -205,6 +205,12 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         'ShortTernaryParent' => ['payload' => ['password'], 'naive' => []],
         'CoalesceOverOpaqueProperty' => ['payload' => ['password'], 'naive' => []],
         'TernaryLayerMergedLast' => ['payload' => ['password'], 'naive' => []],
+        // Exact, not fail-closed: a fail-closed reading reports these.
+        'TernaryBranchesBothPlain' => ['payload' => ['password'], 'naive' => []],
+        'MatchArmsBothPlain' => ['payload' => ['password'], 'naive' => []],
+        'ShortTernaryPlain' => ['payload' => ['password'], 'naive' => []],
+        'CoalesceBranchesPlain' => ['payload' => ['password'], 'naive' => []],
+        'CoalesceAssignKeepsParent' => ['payload' => ['password'], 'naive' => []],
         // Fail-closed: where the rule cannot place a value, a credential wins.
         'ReassignedInsideBranch' => ['payload' => ['password'], 'naive' => []],
         'WildLayerOverParent' => ['payload' => ['password'], 'naive' => []],

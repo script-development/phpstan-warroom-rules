@@ -795,6 +795,52 @@ class TernaryLayerMergedLast extends MethodBase
     }
 }
 
+class TernaryBranchesBothPlain extends MethodBase
+{
+    protected function casts(): array
+    {
+        return $this->exists ? [...parent::casts(), 'password' => 'string'] : ['password' => 'string'];
+    }
+}
+
+class MatchArmsBothPlain extends MethodBase
+{
+    protected function casts(): array
+    {
+        return match (true) {
+            $this->exists => [...parent::casts(), 'password' => 'string'],
+            default => ['password' => 'string'],
+        };
+    }
+}
+
+class ShortTernaryPlain extends MethodBase
+{
+    protected function casts(): array
+    {
+        return [...parent::casts(), 'password' => 'string'] ?: [];
+    }
+}
+
+class CoalesceBranchesPlain extends MethodBase
+{
+    protected function casts(): array
+    {
+        return [...parent::casts(), 'password' => 'string'] ?? [];
+    }
+}
+
+class CoalesceAssignKeepsParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = parent::casts();
+        $casts['password'] ??= 'string';
+
+        return $casts;
+    }
+}
+
 class ReassignedInsideBranch extends MethodBase
 {
     protected function casts(): array
