@@ -4,10 +4,14 @@ declare(strict_types = 1);
 
 namespace App\Actions\CredentialCastBypass;
 
+use App\Models\CredentialCastBypass\Dispatch\ArrayMergeCapturedChildLast;
 use App\Models\CredentialCastBypass\Dispatch\ArrayMergeParentLast;
+use App\Models\CredentialCastBypass\Dispatch\ArrayReplaceParentLast;
+use App\Models\CredentialCastBypass\Dispatch\CoalesceOverOpaqueProperty;
 use App\Models\CredentialCastBypass\Dispatch\ComposingOverride;
 use App\Models\CredentialCastBypass\Dispatch\ComposingOverrideShadowingParent;
 use App\Models\CredentialCastBypass\Dispatch\ConditionalReturnsDisagreeing;
+use App\Models\CredentialCastBypass\Dispatch\DimAssignDowngradesParent;
 use App\Models\CredentialCastBypass\Dispatch\DiscardedParentCastsCall;
 use App\Models\CredentialCastBypass\Dispatch\EncryptingClassCastAsString;
 use App\Models\CredentialCastBypass\Dispatch\EncryptingCollectionClassCast;
@@ -16,6 +20,7 @@ use App\Models\CredentialCastBypass\Dispatch\InheritedMethod;
 use App\Models\CredentialCastBypass\Dispatch\InheritedProperty;
 use App\Models\CredentialCastBypass\Dispatch\LeafComposingOverMidReplacing;
 use App\Models\CredentialCastBypass\Dispatch\LeafMethod;
+use App\Models\CredentialCastBypass\Dispatch\MatchArmSpreadsParent;
 use App\Models\CredentialCastBypass\Dispatch\MergesCastsInConstructor;
 use App\Models\CredentialCastBypass\Dispatch\MidReplacing;
 use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedButNotPlaced;
@@ -23,7 +28,9 @@ use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedInVariable;
 use App\Models\CredentialCastBypass\Dispatch\ParentCastsVariableMergedLast;
 use App\Models\CredentialCastBypass\Dispatch\ParentHeldInProperty;
 use App\Models\CredentialCastBypass\Dispatch\ParentMergedInsideLoop;
+use App\Models\CredentialCastBypass\Dispatch\ParentVariableAliased;
 use App\Models\CredentialCastBypass\Dispatch\PassThroughOverride;
+use App\Models\CredentialCastBypass\Dispatch\PlusAssignParent;
 use App\Models\CredentialCastBypass\Dispatch\PropertyBase;
 use App\Models\CredentialCastBypass\Dispatch\PropertyEncryptedThenEncryptingClassCastMethod;
 use App\Models\CredentialCastBypass\Dispatch\PropertyThenClassCastMethod;
@@ -34,6 +41,7 @@ use App\Models\CredentialCastBypass\Dispatch\RedeclaringProperty;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverride;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverrideSameColumn;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverrideWithForeignStaticCall;
+use App\Models\CredentialCastBypass\Dispatch\ShortTernaryParent;
 use App\Models\CredentialCastBypass\Dispatch\SpreadCapturedParentMergedLast;
 use App\Models\CredentialCastBypass\Dispatch\SpreadingOverride;
 use App\Models\CredentialCastBypass\Dispatch\SpreadOfLiteralAfterParent;
@@ -41,14 +49,17 @@ use App\Models\CredentialCastBypass\Dispatch\SpreadParentAfterClassCast;
 use App\Models\CredentialCastBypass\Dispatch\SpreadParentAfterStringCast;
 use App\Models\CredentialCastBypass\Dispatch\SpreadParentBeforeClassCast;
 use App\Models\CredentialCastBypass\Dispatch\TernaryBranchSpreadsParent;
+use App\Models\CredentialCastBypass\Dispatch\TernaryLayerMergedLast;
 use App\Models\CredentialCastBypass\Dispatch\TernaryReturnDisagreeing;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodAndClassProperty;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodExcludedByInsteadOf;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodInherited;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodOverridden;
 use App\Models\CredentialCastBypass\Dispatch\TwoHopInherited;
+use App\Models\CredentialCastBypass\Dispatch\UnionCapturedParentMergedLast;
 use App\Models\CredentialCastBypass\Dispatch\UnionOperatorChildFirst;
 use App\Models\CredentialCastBypass\Dispatch\UnionOperatorParentFirst;
+use App\Models\CredentialCastBypass\Dispatch\UnsetRemovesParentKey;
 use App\Models\CredentialCastBypass\Dispatch\WildLayerOverParent;
 
 /**
@@ -260,8 +271,19 @@ final class CastDispatchWrites
     public function crit80OverrideOrderShapes(): void
     {
         ReassignedParentVariable::query()->update(['password' => 'raw']);
+        ParentVariableAliased::query()->update(['password' => 'raw']);
         SpreadCapturedParentMergedLast::query()->update(['password' => 'raw']);
+        UnionCapturedParentMergedLast::query()->update(['password' => 'raw', 'api_token' => 'raw']);
+        ArrayMergeCapturedChildLast::query()->update(['password' => 'raw']);
+        DimAssignDowngradesParent::query()->update(['password' => 'raw']);
+        UnsetRemovesParentKey::query()->update(['password' => 'raw']);
+        PlusAssignParent::query()->update(['password' => 'raw', 'api_token' => 'raw']);
+        ArrayReplaceParentLast::query()->update(['password' => 'raw']);
         TernaryBranchSpreadsParent::query()->update(['password' => 'raw']);
+        MatchArmSpreadsParent::query()->update(['password' => 'raw']);
+        ShortTernaryParent::query()->update(['password' => 'raw']);
+        CoalesceOverOpaqueProperty::query()->update(['password' => 'raw']);
+        TernaryLayerMergedLast::query()->update(['password' => 'raw']);
         ReassignedInsideBranch::query()->update(['password' => 'raw']);
         WildLayerOverParent::query()->update(['password' => 'raw']);
         ParentHeldInProperty::query()->update(['password' => 'raw']);

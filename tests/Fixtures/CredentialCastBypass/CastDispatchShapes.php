@@ -668,6 +668,17 @@ class ReassignedParentVariable extends MethodBase
     }
 }
 
+class ParentVariableAliased extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+        $alias = $inherited;
+
+        return array_merge(['password' => 'string'], $alias);
+    }
+}
+
 class SpreadCapturedParentMergedLast extends MethodBase
 {
     protected function casts(): array
@@ -678,11 +689,109 @@ class SpreadCapturedParentMergedLast extends MethodBase
     }
 }
 
+class UnionCapturedParentMergedLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = ['api_token' => 'encrypted'] + parent::casts();
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+class ArrayMergeCapturedChildLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = array_merge(parent::casts(), ['password' => 'string']);
+
+        return $inherited;
+    }
+}
+
+class DimAssignDowngradesParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = parent::casts();
+        $casts['password'] = 'string';
+
+        return $casts;
+    }
+}
+
+class UnsetRemovesParentKey extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = parent::casts();
+        unset($casts['password']);
+
+        return $casts;
+    }
+}
+
+class PlusAssignParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = ['password' => 'string', 'api_token' => 'encrypted'];
+        $casts += parent::casts();
+
+        return $casts;
+    }
+}
+
+class ArrayReplaceParentLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        return array_replace(['password' => 'string'], parent::casts());
+    }
+}
+
 class TernaryBranchSpreadsParent extends MethodBase
 {
     protected function casts(): array
     {
         return $this->exists ? ['password' => 'string'] : ['password' => 'string', ...parent::casts()];
+    }
+}
+
+class MatchArmSpreadsParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        return match (true) {
+            $this->exists => ['password' => 'string'],
+            default => ['password' => 'string', ...parent::casts()],
+        };
+    }
+}
+
+class ShortTernaryParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        return parent::casts() ?: ['password' => 'string'];
+    }
+}
+
+class CoalesceOverOpaqueProperty extends MethodBase
+{
+    protected ?array $plainCasts = null;
+
+    protected function casts(): array
+    {
+        return $this->plainCasts ?? ['password' => 'string', ...parent::casts()];
+    }
+}
+
+class TernaryLayerMergedLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        return array_merge(['password' => 'string'], $this->exists ? [] : parent::casts());
     }
 }
 

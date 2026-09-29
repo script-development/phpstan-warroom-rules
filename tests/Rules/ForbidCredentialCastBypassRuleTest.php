@@ -190,10 +190,21 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         // assignment, and a branch is evaluated in its own override order.
         // crit `82492259914e`
         'ReassignedParentVariable' => ['payload' => ['password'], 'naive' => []],
+        'ParentVariableAliased' => ['payload' => ['password'], 'naive' => []],
         // crit `928862a53b89`
         'SpreadCapturedParentMergedLast' => ['payload' => ['password'], 'naive' => []],
+        'UnionCapturedParentMergedLast' => ['payload' => ['password', 'api_token'], 'naive' => ['api_token']],
+        'ArrayMergeCapturedChildLast' => ['payload' => ['password'], 'naive' => []],
+        'DimAssignDowngradesParent' => ['payload' => ['password'], 'naive' => ['password']],
+        'UnsetRemovesParentKey' => ['payload' => ['password'], 'naive' => ['password']],
+        'PlusAssignParent' => ['payload' => ['password', 'api_token'], 'naive' => ['api_token']],
+        'ArrayReplaceParentLast' => ['payload' => ['password'], 'naive' => []],
         // crit `2d2a63cfcd62`
         'TernaryBranchSpreadsParent' => ['payload' => ['password'], 'naive' => []],
+        'MatchArmSpreadsParent' => ['payload' => ['password'], 'naive' => []],
+        'ShortTernaryParent' => ['payload' => ['password'], 'naive' => []],
+        'CoalesceOverOpaqueProperty' => ['payload' => ['password'], 'naive' => []],
+        'TernaryLayerMergedLast' => ['payload' => ['password'], 'naive' => []],
         // Fail-closed: where the rule cannot place a value, a credential wins.
         'ReassignedInsideBranch' => ['payload' => ['password'], 'naive' => []],
         'WildLayerOverParent' => ['payload' => ['password'], 'naive' => []],
