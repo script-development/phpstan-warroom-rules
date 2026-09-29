@@ -4,6 +4,7 @@ declare(strict_types = 1);
 
 namespace App\Actions\CredentialCastBypass;
 
+use App\Models\CredentialCastBypass\Dispatch\ArrayMergeParentLast;
 use App\Models\CredentialCastBypass\Dispatch\ComposingOverride;
 use App\Models\CredentialCastBypass\Dispatch\ComposingOverrideShadowingParent;
 use App\Models\CredentialCastBypass\Dispatch\ConditionalReturnsDisagreeing;
@@ -17,7 +18,9 @@ use App\Models\CredentialCastBypass\Dispatch\LeafComposingOverMidReplacing;
 use App\Models\CredentialCastBypass\Dispatch\LeafMethod;
 use App\Models\CredentialCastBypass\Dispatch\MergesCastsInConstructor;
 use App\Models\CredentialCastBypass\Dispatch\MidReplacing;
+use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedButNotPlaced;
 use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedInVariable;
+use App\Models\CredentialCastBypass\Dispatch\ParentCastsVariableMergedLast;
 use App\Models\CredentialCastBypass\Dispatch\PassThroughOverride;
 use App\Models\CredentialCastBypass\Dispatch\PropertyBase;
 use App\Models\CredentialCastBypass\Dispatch\PropertyEncryptedThenEncryptingClassCastMethod;
@@ -28,11 +31,18 @@ use App\Models\CredentialCastBypass\Dispatch\ReplacingOverride;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverrideSameColumn;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverrideWithForeignStaticCall;
 use App\Models\CredentialCastBypass\Dispatch\SpreadingOverride;
+use App\Models\CredentialCastBypass\Dispatch\SpreadOfLiteralAfterParent;
+use App\Models\CredentialCastBypass\Dispatch\SpreadParentAfterClassCast;
+use App\Models\CredentialCastBypass\Dispatch\SpreadParentAfterStringCast;
+use App\Models\CredentialCastBypass\Dispatch\SpreadParentBeforeClassCast;
+use App\Models\CredentialCastBypass\Dispatch\TernaryReturnDisagreeing;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodAndClassProperty;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodExcludedByInsteadOf;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodInherited;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodOverridden;
 use App\Models\CredentialCastBypass\Dispatch\TwoHopInherited;
+use App\Models\CredentialCastBypass\Dispatch\UnionOperatorChildFirst;
+use App\Models\CredentialCastBypass\Dispatch\UnionOperatorParentFirst;
 
 /**
  * One builder write per declaration shape in `CastDispatchShapes.php`. Each
@@ -188,6 +198,56 @@ final class CastDispatchWrites
     public function encryptingClassCastAsString(): void
     {
         EncryptingClassCastAsString::query()->update(['secret' => 'raw', 'history' => 'raw']);
+    }
+
+    public function spreadParentAfterClassCast(): void
+    {
+        SpreadParentAfterClassCast::query()->update(['password' => 'raw']);
+    }
+
+    public function spreadParentAfterStringCast(): void
+    {
+        SpreadParentAfterStringCast::query()->update(['password' => 'raw']);
+    }
+
+    public function spreadParentBeforeClassCast(): void
+    {
+        SpreadParentBeforeClassCast::query()->update(['password' => 'raw']);
+    }
+
+    public function arrayMergeParentLast(): void
+    {
+        ArrayMergeParentLast::query()->update(['password' => 'raw']);
+    }
+
+    public function unionOperatorParentFirst(): void
+    {
+        UnionOperatorParentFirst::query()->update(['password' => 'raw']);
+    }
+
+    public function unionOperatorChildFirst(): void
+    {
+        UnionOperatorChildFirst::query()->update(['password' => 'raw']);
+    }
+
+    public function spreadOfLiteralAfterParent(): void
+    {
+        SpreadOfLiteralAfterParent::query()->update(['password' => 'raw', 'api_token' => 'raw']);
+    }
+
+    public function parentCastsVariableMergedLast(): void
+    {
+        ParentCastsVariableMergedLast::query()->update(['password' => 'raw']);
+    }
+
+    public function parentCastsCapturedButNotPlaced(): void
+    {
+        ParentCastsCapturedButNotPlaced::query()->update(['password' => 'raw', 'api_token' => 'raw']);
+    }
+
+    public function ternaryReturnDisagreeing(): void
+    {
+        TernaryReturnDisagreeing::query()->update(['password' => 'raw']);
     }
 
     public function mergesCastsInConstructor(): void

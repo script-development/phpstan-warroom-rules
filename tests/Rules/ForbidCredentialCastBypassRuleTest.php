@@ -170,6 +170,22 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         'PropertyEncryptedThenEncryptingClassCastMethod' => ['payload' => ['secret'], 'naive' => ['secret']],
         'EncryptingCollectionClassCast' => ['payload' => ['secret'], 'naive' => ['secret']],
         'EncryptingClassCastAsString' => ['payload' => ['secret', 'history'], 'naive' => ['secret', 'history']],
+        // crit `95d3951f0838`: a key AFTER the parent's map loses to nothing, a
+        // key BEFORE it loses to the parent — `...`, `array_merge()` and `+`
+        // each order the two differently.
+        'SpreadParentAfterClassCast' => ['payload' => ['password'], 'naive' => []],
+        'SpreadParentAfterStringCast' => ['payload' => ['password'], 'naive' => []],
+        'SpreadParentBeforeClassCast' => ['payload' => ['password'], 'naive' => []],
+        'ArrayMergeParentLast' => ['payload' => ['password'], 'naive' => []],
+        'UnionOperatorParentFirst' => ['payload' => ['password'], 'naive' => []],
+        'UnionOperatorChildFirst' => ['payload' => ['password'], 'naive' => []],
+        'SpreadOfLiteralAfterParent' => ['payload' => ['password', 'api_token'], 'naive' => ['password', 'api_token']],
+        'ParentCastsVariableMergedLast' => ['payload' => ['password'], 'naive' => []],
+        // Captured where no layer can place it: the parent's map goes underneath.
+        'ParentCastsCapturedButNotPlaced' => ['payload' => ['password', 'api_token'], 'naive' => ['password', 'api_token']],
+        // A ternary's branches are alternatives: the credential cast wins even
+        // when it comes first in the source.
+        'TernaryReturnDisagreeing' => ['payload' => ['password'], 'naive' => ['password']],
     ];
 
     /**
