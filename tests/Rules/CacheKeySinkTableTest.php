@@ -4,6 +4,7 @@ declare(strict_types = 1);
 
 namespace ScriptDevelopment\PhpstanWarroomRules\Tests\Rules;
 
+use Composer\InstalledVersions;
 use Illuminate\Cache\RateLimiter;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
@@ -44,8 +45,21 @@ final class CacheKeySinkTableTest extends TestCase
         Repository::class => [
             'hasmacro', // Macroable: names a macro
             'macro',
+            // ArrayAccess: `$cache[$key]` is an array access, not a method call, so a
+            // method sink would cover only an explicit `->offsetGet()`. WR-1827.
+            'offsetexists',
+            'offsetget',
+            'offsetset',
+            'offsetunset',
         ],
     ];
+
+    /**
+     * Sinks Laravel 13's cache has and Laravel 12's does not. Listing them is
+     * harmless on 12 — nothing can call them — but each must match the version
+     * installed, so a misspelt entry cannot hide here.
+     */
+    private const array SINCE_LARAVEL_13 = ['rememberwithwarmth', 'touch'];
 
     public function testEveryCacheSinkNamesTheFirstParameterOfTheMethodItBinds(): void
     {
@@ -55,6 +69,17 @@ final class CacheKeySinkTableTest extends TestCase
     public function testEveryRateLimiterSinkNamesTheFirstParameterOfTheMethodItBinds(): void
     {
         $this->assertBindsFirstParameter($this->table('RATE_LIMITER_SINKS'), [RateLimiter::class]);
+    }
+
+    public function testEveryExclusionNamesAPublicMethod(): void
+    {
+        foreach (self::NOT_SINKS as $class => $methods) {
+            $reflection = new ReflectionClass($class);
+
+            foreach ($methods as $method) {
+                self::assertTrue($reflection->hasMethod($method) && $reflection->getMethod($method)->isPublic(), $class . '::' . $method);
+            }
+        }
     }
 
     public function testEveryPublicMethodTakingAKeyFirstIsASink(): void
@@ -114,15 +139,34 @@ final class CacheKeySinkTableTest extends TestCase
 
         $unbound = [];
 
+        foreach (self::SINCE_LARAVEL_13 as $method) {
+            self::assertArrayHasKey($method, $this->table('CACHE_SINKS'), $method . ' is gated but no sink.');
+        }
+
+        $gated = $this->installedCacheMajor() >= 13 ? [] : self::SINCE_LARAVEL_13;
+
         foreach (array_keys($table) as $method) {
-            if (!in_array($method, $bound, true)) {
+            if (!in_array($method, $bound, true) && !in_array($method, $gated, true)) {
                 $unbound[] = $method;
+            }
+
+            if (in_array($method, $gated, true)) {
+                self::assertNotContains($method, $bound, $method . ' is declared on this Laravel: drop it from SINCE_LARAVEL_13.');
             }
         }
 
         sort($unbound);
 
         self::assertSame([], $unbound, 'Sink methods no cache class declares.');
+    }
+
+    private function installedCacheMajor(): int
+    {
+        $version = InstalledVersions::getVersion('illuminate/cache');
+
+        self::assertIsString($version, 'illuminate/cache is not installed, so the version gate is measuring nothing.');
+
+        return (int) $version;
     }
 
     /**
