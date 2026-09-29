@@ -19,6 +19,7 @@ use function implode;
 use function in_array;
 use function ksort;
 use function mb_substr;
+use function sort;
 use function sprintf;
 use function str_starts_with;
 
@@ -61,25 +62,33 @@ use function str_starts_with;
  * a value of one constant string type); locals, and the keys a local map
  * holds; properties; the bodies of CLASS METHODS, their parameters bound per
  * call site and their returns; and a call into code it has no body for, read
- * from its arguments. Outside that reach, each a known false negative:
+ * from its arguments. Outside that reach, each a known false negative; a
+ * bracketed name is the `Imprecision.php` fixture row pinning that shape:
  *   - an attribute named at runtime (`$vault->{$name}`, `getAttribute($name)`)
- *     or read in bulk (`toArray()`, `only()`, `getAttributes()`);
- *   - a NAMED FUNCTION's body — a credential it reads for itself, or a
- *     parameter it hands to a cache sink;
- *   - a closure's or arrow function's body, invoked or not;
+ *     [`missesAnAttributeNamedAtRuntime`], or read in bulk (`toArray()`,
+ *     `only()`, `getAttributes()`) [unpinned];
+ *   - a NAMED FUNCTION's body — a credential it reads for itself
+ *     [`missesACredentialReadInsideANamedFunction`], or a parameter it hands to
+ *     a cache sink [`missesACredentialHandedToANamedFunctionsSink`];
+ *   - a closure's or arrow function's body, invoked or not
+ *     [`missesACredentialReturnedByAClosure`];
  *   - dispatch through an interface or abstract method to what an
  *     implementation reads for itself — only the call's arguments count (on a
- *     union receiver, on top of what its analysed branches return);
+ *     union receiver, on top of what its analysed branches return)
+ *     [`missesACredentialReadInsideAnInterfaceImplementation`];
  *   - a write into a variable by reference from inside a call (`preg_match()`'s
- *     matches);
- *   - a cache handle or method PHPStan cannot resolve — `app('cache')` without
- *     larastan, a `mixed` value, a dynamic method name; array access on a cache
- *     handle (`$cache[$key]`);
- *   - a cast class other than the two above, a cast added at runtime
- *     (`mergeCasts()`), or a model whose cast map the credential-cast rule
- *     cannot read (it reports that itself).
- * Each out-of-reach shape is pinned by a `misses…` fixture, so widening the
- * reach shows up as a changed test.
+ *     matches) [`missesAMatchWrittenByReferenceInsideACall`];
+ *   - array access on a cache handle (`$cache[$key]`)
+ *     [`missesArrayAccessOnACacheHandle`], or a cache handle or method PHPStan
+ *     cannot resolve — `app('cache')` without larastan, a `mixed` value, a
+ *     dynamic method name [unpinned];
+ *   - a cast added at runtime (`mergeCasts()`) [`missesACastAddedAtRuntime`],
+ *     or a cast class other than the two above [unpinned].
+ * A model whose casts this rule cannot read is NOT among them: a read of any
+ * of its attributes — its id included — that reaches a cache key reports under
+ * `forbidCredentialDerivedCacheKey.castMapUnreadable`, since whether that
+ * attribute is encrypted cannot be told; a read that reaches no cache key does
+ * not.
  *
  * False positives, each by construction, and each only ever adding a report:
  * the analysis is flow-insensitive — every value a variable is ever assigned
@@ -106,6 +115,11 @@ use function str_starts_with;
 final class ForbidCredentialDerivedCacheKeyRule implements Rule
 {
     private const string IDENTIFIER = 'forbidCredentialDerivedCacheKey.keyFromEncryptedAttribute';
+
+    private const string UNVERIFIABLE_IDENTIFIER = 'forbidCredentialDerivedCacheKey.castMapUnreadable';
+
+    /** Marks a label whose attribute sits on a model with unreadable casts; no class name starts with it. */
+    private const string UNVERIFIABLE = '?';
 
     /** A slot name no PHP variable can take, so `$r` never reads as the return value. */
     private const string RETURN_SLOT = '@return';
@@ -276,11 +290,13 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
     {
         [$model, $attribute, $readAt] = explode('|', $candidate, 3);
 
-        if (!in_array($attribute, $this->castReader->encryptedAttributesOf($model), true)) {
-            return [];
+        $label = sprintf('%s::$%s (read at %s)', $model, $attribute, $readAt);
+
+        if (in_array($attribute, $this->castReader->encryptedAttributesOf($model), true)) {
+            return [$label => true];
         }
 
-        return [sprintf('%s::$%s (read at %s)', $model, $attribute, $readAt) => true];
+        return $this->castReader->castMapUnreadable($model) ? [self::UNVERIFIABLE . $label => true] : [];
     }
 
     /**
@@ -403,18 +419,42 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
             $labels += $this->concrete($this->evaluate($term, $scopeKey), $scopeKey);
         }
 
-        if ($labels === []) {
+        $unverifiable = [];
+
+        foreach (array_keys($labels) as $label) {
+            if (str_starts_with($label, self::UNVERIFIABLE)) {
+                unset($labels[$label]);
+                $unverifiable[] = mb_substr($label, 1);
+            }
+        }
+
+        if ($labels !== []) {
+            ksort($labels);
+
+            return RuleErrorBuilder::message(sprintf(
+                "Cache key passed to %s() derives from the encrypted attribute %s. Key the cache by the owning entity's id (war-room Principle 10): a digest of the credential is still keyed by it, lands in the cache store, and outlives a rotation.",
+                $method,
+                implode(', ', array_keys($labels)),
+            ))
+                ->identifier(self::IDENTIFIER)
+                ->file($file)
+                ->line($line)
+                ->build();
+        }
+
+        if ($unverifiable === []) {
             return null;
         }
 
-        ksort($labels);
+        sort($unverifiable);
 
         return RuleErrorBuilder::message(sprintf(
-            "Cache key passed to %s() derives from the encrypted attribute %s. Key the cache by the owning entity's id (war-room Principle 10): a digest of the credential is still keyed by it, lands in the cache store, and outlives a rotation.",
+            "Cache key passed to %s() derives from %s, an attribute of a model whose casts this rule cannot read, so whether it is encrypted is unknown. Restate the model's casts as literal string pairs, or suppress %s here if the key is known safe.",
             $method,
-            implode(', ', array_keys($labels)),
+            implode(', ', $unverifiable),
+            self::UNVERIFIABLE_IDENTIFIER,
         ))
-            ->identifier(self::IDENTIFIER)
+            ->identifier(self::UNVERIFIABLE_IDENTIFIER)
             ->file($file)
             ->line($line)
             ->build();

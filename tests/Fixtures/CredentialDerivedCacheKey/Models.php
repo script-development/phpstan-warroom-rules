@@ -56,3 +56,19 @@ final class Widget extends Model
         'api_key' => 'string',
     ];
 }
+
+/**
+ * Casts this rule cannot read: `casts()` returns a constant, not a literal.
+ *
+ * @property int    $id
+ * @property string $token
+ */
+final class Opaque extends Model
+{
+    private const array CASTS = ['token' => 'encrypted'];
+
+    protected function casts(): array
+    {
+        return self::CASTS;
+    }
+}

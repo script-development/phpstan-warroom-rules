@@ -5,6 +5,7 @@ declare(strict_types = 1);
 namespace App\CredentialDerivedCacheKey\Imprecision;
 
 use App\CredentialDerivedCacheKey\Models\Vault;
+use Illuminate\Cache\Repository as CacheRepository;
 use Illuminate\Contracts\Cache\Repository;
 use stdClass;
 
@@ -151,6 +152,25 @@ final class Keys
     public function missesACredentialReadInsideANamedFunction(Vault $vault): mixed
     {
         return $this->cache->get(vault_key($vault));
+    }
+
+    public function missesAMatchWrittenByReferenceInsideACall(Vault $vault): mixed
+    {
+        preg_match('/(.+)/', $vault->api_key, $matches);
+
+        return $this->cache->get($matches[1]);
+    }
+
+    public function missesArrayAccessOnACacheHandle(Vault $vault, CacheRepository $store): mixed
+    {
+        return $store['vault:' . $vault->api_key];
+    }
+
+    public function missesACastAddedAtRuntime(Vault $vault): mixed
+    {
+        $vault->mergeCasts(['latitude' => 'encrypted']);
+
+        return $this->cache->get('vault:' . $vault->latitude);
     }
 
     public function missesACredentialReadInsideAnInterfaceImplementation(Vault $vault, VaultKeys $keys): mixed

@@ -18,6 +18,7 @@ use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidCredentialDerivedCacheKeyR
 use function count;
 use function file_get_contents;
 use function preg_match_all;
+use function sort;
 use function sprintf;
 
 /**
@@ -36,6 +37,8 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
     private const string MODELS = self::FIXTURES . 'Models.php';
 
     private const string MESSAGE = "Cache key passed to %s() derives from the encrypted attribute %s. Key the cache by the owning entity's id (war-room Principle 10): a digest of the credential is still keyed by it, lands in the cache store, and outlives a rotation.";
+
+    private const string UNVERIFIABLE = "Cache key passed to %s() derives from App\\CredentialDerivedCacheKey\\Models\\Opaque::\$token (read at %s), an attribute of a model whose casts this rule cannot read, so whether it is encrypted is unknown. Restate the model's casts as literal string pairs, or suppress forbidCredentialDerivedCacheKey.castMapUnreadable here if the key is known safe.";
 
     private const string VAULT_KEY = 'App\CredentialDerivedCacheKey\Models\Vault::$api_key';
 
@@ -210,28 +213,63 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
     public function testTheAnalysisOverReportsAndNeverLosesATaint(): void
     {
         $expected = [
-            [self::message('get', 'Imprecision.php', 29), 32],
-            [self::message('get', 'Imprecision.php', 37), 40],
-            [self::message('get', 'Imprecision.php', 45), 47],
-            [self::message('get', 'Imprecision.php', 54), 56],
-            [self::message('get', 'Imprecision.php', 61), 64],
-            [self::message('get', 'Imprecision.php', 72), 75],
-            [self::message('get', 'Imprecision.php', 81), 83],
-            [self::message('forget', 'Imprecision.php', 105), 108],
-            [self::message('forget', 'Imprecision.php', 114), 115],
-            [self::message('get', 'Imprecision.php', 121), 121],
-            [self::message('get', 'Imprecision.php', 186), 126],
-            [self::message('get', 'Imprecision.php', 131), 131],
-            [self::message('get', 'Imprecision.php', 138), 138],
+            [self::message('get', 'Imprecision.php', 30), 33],
+            [self::message('get', 'Imprecision.php', 38), 41],
+            [self::message('get', 'Imprecision.php', 46), 48],
+            [self::message('get', 'Imprecision.php', 55), 57],
+            [self::message('get', 'Imprecision.php', 62), 65],
+            [self::message('get', 'Imprecision.php', 73), 76],
+            [self::message('get', 'Imprecision.php', 82), 84],
+            [self::message('forget', 'Imprecision.php', 106), 109],
+            [self::message('forget', 'Imprecision.php', 115), 116],
+            [self::message('get', 'Imprecision.php', 122), 122],
+            [self::message('get', 'Imprecision.php', 206), 127],
+            [self::message('get', 'Imprecision.php', 132), 132],
+            [self::message('get', 'Imprecision.php', 139), 139],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'Imprecision.php');
 
         self::assertNotFalse($source);
         self::assertSame(count($expected), preg_match_all('/function (leaks|overReports)/', $source));
-        self::assertSame(5, preg_match_all('/function misses/', $source));
+        self::assertSame(8, preg_match_all('/function misses/', $source));
 
         $this->analyse([self::MODELS, self::FIXTURES . 'Imprecision.php'], $expected);
+    }
+
+    /**
+     * The rule docblock names, per out-of-reach shape, the `misses…` row that
+     * pins it: every name there must be a row, and every row must be named.
+     */
+    public function testTheReachStatementNamesEveryMissesRowAndNoOther(): void
+    {
+        $docblock = new ReflectionClass(ForbidCredentialDerivedCacheKeyRule::class)->getDocComment();
+        $fixture = file_get_contents(self::FIXTURES . 'Imprecision.php');
+
+        self::assertNotFalse($docblock);
+        self::assertNotFalse($fixture);
+        self::assertSame(8, preg_match_all('/\[`(misses\w+)`\]/', $docblock, $named));
+        self::assertSame(8, preg_match_all('/function (misses\w+)/', $fixture, $rows));
+
+        $named = $named[1];
+        $rows = $rows[1];
+        sort($named);
+        sort($rows);
+
+        self::assertSame($rows, $named);
+    }
+
+    /**
+     * A model whose casts cannot be read may hold a credential in any
+     * attribute, so a read of it that reaches a cache key reports under its
+     * own identifier — and a read that reaches no cache key does not.
+     */
+    public function testAReadOfAModelWithUnreadableCastsReportsOnlyWhereItReachesACacheKey(): void
+    {
+        $this->analyse([self::MODELS, self::FIXTURES . 'Unverifiable.php'], [
+            [sprintf(self::UNVERIFIABLE, 'get', 'Unverifiable.php:25'), 25],
+            [sprintf(self::UNVERIFIABLE, 'forget', 'Unverifiable.php:30'), 42],
+        ]);
     }
 
     /**
