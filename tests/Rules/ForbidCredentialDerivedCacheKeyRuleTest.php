@@ -159,6 +159,72 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
     }
 
     /**
+     * Each sink reads the argument PHP binds to the key parameter, the way
+     * Laravel reads it: `getMultiple()` / `deleteMultiple()` take their keys
+     * from the array's values, `putMany()` from its keys, `many()` from a
+     * string key or else the value, and a map hoisted into a variable keeps its
+     * keys apart from its values.
+     */
+    public function testEverySinkReadsTheArgumentAndTheArrayHalfLaravelKeysBy(): void
+    {
+        $expected = [
+            [self::message('get', 'SinkBinding.php', 31), 31],
+            [self::message('cache', 'SinkBinding.php', 41), 41],
+            [self::message('hit', 'SinkBinding.php', 46), 46],
+            [self::message('get', 'SinkBinding.php', 51), 53],
+            [self::message('getMultiple', 'SinkBinding.php', 63), 63],
+            [self::message('deleteMultiple', 'SinkBinding.php', 68), 68],
+            [self::message('setMultiple', 'SinkBinding.php', 78), 78],
+            [self::message('string', 'SinkBinding.php', 83), 83],
+            [self::message('withoutOverlapping', 'SinkBinding.php', 88), 88],
+            [self::message('funnel', 'SinkBinding.php', 93), 93],
+            [self::message('many', 'SinkBinding.php', 98), 98],
+            [self::message('many', 'SinkBinding.php', 103), 103],
+            [self::message('many', 'SinkBinding.php', 108), 108],
+            [self::message('putMany', 'SinkBinding.php', 127), 129],
+            [self::message('putMany', 'SinkBinding.php', 135), 137],
+            [self::message('get', 'SinkBinding.php', 143), 145],
+            [self::message('putMany', 'SinkBinding.php', 150), 153],
+            [self::message('get', 'SinkBinding.php', 168), 168],
+            [self::message('getMultiple', 'SinkBinding.php', 173), 175],
+            [self::message('many', 'SinkBinding.php', 190), 190],
+            [self::message('putMany', 'SinkBinding.php', 158), 198],
+        ];
+
+        $source = file_get_contents(self::FIXTURES . 'SinkBinding.php');
+
+        self::assertNotFalse($source);
+        self::assertSame(count($expected), preg_match_all('/function leaks/', $source));
+        self::assertGreaterThan(5, preg_match_all('/function keeps/', $source));
+
+        $this->analyse([self::MODELS, self::FIXTURES . 'SinkBinding.php'], $expected);
+    }
+
+    /**
+     * Every value a variable or property ever holds is one value, so the
+     * `overReports…` methods report on a key that is clean at runtime; the
+     * `leaks…` methods prove the sharing never loses a taint.
+     */
+    public function testTheAnalysisOverReportsAndNeverLosesATaint(): void
+    {
+        $expected = [
+            [self::message('get', 'Imprecision.php', 26), 29],
+            [self::message('get', 'Imprecision.php', 34), 37],
+            [self::message('get', 'Imprecision.php', 42), 44],
+            [self::message('get', 'Imprecision.php', 51), 53],
+            [self::message('get', 'Imprecision.php', 61), 64],
+            [self::message('get', 'Imprecision.php', 70), 72],
+        ];
+
+        $source = file_get_contents(self::FIXTURES . 'Imprecision.php');
+
+        self::assertNotFalse($source);
+        self::assertSame(count($expected), preg_match_all('/function (leaks|overReports)/', $source));
+
+        $this->analyse([self::MODELS, self::FIXTURES . 'Imprecision.php'], $expected);
+    }
+
+    /**
      * The model is not in the analysed set here, as in a consumer whose result
      * cache narrowed the run to the changed file. The collector must read casts
      * through the NEON-wired credential-cast rule, whose parser keeps method

@@ -5,17 +5,21 @@ declare(strict_types = 1);
 namespace ScriptDevelopment\PhpstanWarroomRules\Collectors;
 
 use Illuminate\Cache\RateLimiter;
+use Illuminate\Contracts\Cache\Store;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\RateLimiter as RateLimiterFacade;
 use PhpParser\Node;
 use PhpParser\Node\Arg;
+use PhpParser\Node\ArrayItem;
 use PhpParser\Node\Expr;
+use PhpParser\Node\Expr\Array_;
 use PhpParser\Node\Expr\ArrayDimFetch;
 use PhpParser\Node\Expr\ArrowFunction;
 use PhpParser\Node\Expr\Assign;
 use PhpParser\Node\Expr\AssignOp;
 use PhpParser\Node\Expr\AssignRef;
+use PhpParser\Node\Expr\BinaryOp\Concat;
 use PhpParser\Node\Expr\Closure;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\List_;
@@ -28,7 +32,10 @@ use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Expr\StaticPropertyFetch;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Identifier;
+use PhpParser\Node\InterpolatedStringPart;
 use PhpParser\Node\Name;
+use PhpParser\Node\Scalar\InterpolatedString;
+use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt;
 use PhpParser\Node\Stmt\ClassMethod;
 use PhpParser\Node\Stmt\Foreach_;
@@ -48,12 +55,14 @@ use function array_any;
 use function array_filter;
 use function array_map;
 use function array_slice;
+use function array_values;
 use function basename;
 use function count;
 use function in_array;
 use function is_array;
 use function is_string;
 use function mb_strtolower;
+use function preg_match;
 use function sprintf;
 use function str_starts_with;
 
@@ -73,8 +82,11 @@ use function str_starts_with;
  *     re-analyse a file when only a method BODY it depends on changes, so a
  *     cast verdict stored here would go stale the day a `casts()` body moves.
  *   - `v` — a local variable (or parameter) of the enclosing method.
- *   - `h` — a HEAP slot: a declared property, per declaring class, shared by
- *     every instance (`p|Class|name`), or a static property (`s|Class|name`).
+ *   - `k` — the keys a cache sink reads out of a local variable holding a
+ *     map: its string keys, and the values of its other entries.
+ *   - `h` — a HEAP slot: a declared property, per topmost declaring class,
+ *     shared by every instance (`p|Class|name`), or a static property
+ *     (`s|Class|name`).
  *   - `c` — the value of a call, resolved by the rule from the call's own fact:
  *     the callee's return summary when the callee is analysed code, otherwise
  *     everything its receiver and arguments are computed from.
@@ -101,26 +113,63 @@ use function str_starts_with;
  */
 final class CacheKeyTaintCollector implements Collector
 {
-    /** Cache methods whose first argument is one key. */
-    private const array KEY_METHODS = [
-        'add', 'decrement', 'delete', 'flexible', 'forever', 'forget', 'get', 'has', 'increment', 'lock', 'missing',
-        'pull', 'remember', 'rememberforever', 'restorelock', 'sear', 'set', 'touch',
+    /**
+     * Every cache method that takes a key: the parameter it arrives in, always
+     * the first, and how Laravel reads keys out of that argument — `one` it is
+     * the key; `map` it is a key or an array whose string keys are keys and
+     * whose other entries are keyed by their value (`many()`, and `put()` /
+     * `putMany()` read at least that much); `values` the keys are the values
+     * (`getMultiple()`, `deleteMultiple()`); `all` every argument names a tag.
+     */
+    private const array CACHE_SINKS = [
+        'add' => ['key', 'one'],
+        'array' => ['key', 'one'],
+        'boolean' => ['key', 'one'],
+        'decrement' => ['key', 'one'],
+        'delete' => ['key', 'one'],
+        'deletemultiple' => ['keys', 'values'],
+        'flexible' => ['key', 'one'],
+        'float' => ['key', 'one'],
+        'forever' => ['key', 'one'],
+        'forget' => ['key', 'one'],
+        'funnel' => ['name', 'one'],
+        'get' => ['key', 'map'],
+        'getmultiple' => ['keys', 'values'],
+        'has' => ['key', 'one'],
+        'increment' => ['key', 'one'],
+        'integer' => ['key', 'one'],
+        'lock' => ['name', 'one'],
+        'many' => ['keys', 'map'],
+        'missing' => ['key', 'one'],
+        'pull' => ['key', 'one'],
+        'put' => ['key', 'map'],
+        'putmany' => ['values', 'map'],
+        'remember' => ['key', 'one'],
+        'rememberforever' => ['key', 'one'],
+        'rememberwithwarmth' => ['key', 'one'],
+        'restorelock' => ['name', 'one'],
+        'sear' => ['key', 'one'],
+        'set' => ['key', 'map'],
+        'setmultiple' => ['values', 'map'],
+        'string' => ['key', 'one'],
+        'tags' => ['names', 'all'],
+        'touch' => ['key', 'one'],
+        'withoutoverlapping' => ['key', 'one'],
     ];
 
-    /**
-     * Cache methods whose first argument is a list of keys or a map keyed by
-     * them (`many(['key' => $default])`, `putMany(['key' => $value])`). `put`
-     * takes either one key or such a map.
-     */
-    private const array KEY_COLLECTION_METHODS = ['deletemultiple', 'getmultiple', 'many', 'put', 'putmany', 'setmany'];
-
-    /** Cache methods whose every argument names a tag. */
-    private const array TAG_METHODS = ['tags'];
-
-    /** `RateLimiter` methods whose first argument is the cache key the limiter stores under. */
-    private const array RATE_LIMITER_METHODS = [
-        'attempt', 'attempts', 'availablein', 'clear', 'decrement', 'hit', 'increment', 'remaining', 'resetattempts',
-        'retriesleft', 'toomanyattempts',
+    /** `RateLimiter` methods, each of which stores its counters under the key in its first parameter. */
+    private const array RATE_LIMITER_SINKS = [
+        'attempt' => ['key', 'one'],
+        'attempts' => ['key', 'one'],
+        'availablein' => ['key', 'one'],
+        'clear' => ['key', 'one'],
+        'decrement' => ['key', 'one'],
+        'hit' => ['key', 'one'],
+        'increment' => ['key', 'one'],
+        'remaining' => ['key', 'one'],
+        'resetattempts' => ['key', 'one'],
+        'retriesleft' => ['key', 'one'],
+        'toomanyattempts' => ['key', 'one'],
     ];
 
     private const array CACHE_NAMESPACES = ['Illuminate\Contracts\Cache\\', 'Illuminate\Cache\\'];
@@ -147,22 +196,38 @@ final class CacheKeyTaintCollector implements Collector
 
         $key = $this->scopeKey($scope);
 
-        if ($node instanceof Assign || $node instanceof AssignRef || $node instanceof AssignOp) {
-            return $this->flows($key, $this->targets($node->var, $scope), $this->term($node->expr, $scope));
+        if ($node instanceof Assign || $node instanceof AssignOp) {
+            $term = $this->term($node->expr, $scope);
+
+            return $this->flows($key, $this->assignment($node->var, $term, $node->expr instanceof Array_ ? $this->mapKeys($node->expr, $scope) : $term, $scope));
+        }
+
+        if ($node instanceof AssignRef) {
+            // A reference is written through in both directions.
+            $into = $this->term($node->expr, $scope);
+            $back = $this->term($node->var, $scope);
+
+            return $this->flows($key, [...$this->assignment($node->var, $into, $into, $scope), ...$this->assignment($node->expr, $back, $back, $scope)]);
         }
 
         if ($node instanceof Foreach_) {
-            $targets = $this->targets($node->valueVar, $scope);
+            $term = $this->term($node->expr, $scope);
+            $flows = $this->assignment($node->valueVar, $term, $term, $scope);
 
             if ($node->keyVar instanceof Expr) {
-                $targets = [...$targets, ...$this->targets($node->keyVar, $scope)];
+                $flows = [...$flows, ...$this->assignment($node->keyVar, $term, $term, $scope)];
             }
 
-            return $this->flows($key, $targets, $this->term($node->expr, $scope));
+            if ($node->byRef) {
+                $back = $this->term($node->valueVar, $scope);
+                $flows = [...$flows, ...$this->assignment($node->expr, $back, $back, $scope)];
+            }
+
+            return $this->flows($key, $flows);
         }
 
         if ($node instanceof Return_ && $node->expr instanceof Expr && !$scope->isInAnonymousFunction()) {
-            return $this->flows($key, ['r'], $this->term($node->expr, $scope));
+            return $this->flows($key, [['r', $this->term($node->expr, $scope)]]);
         }
 
         if ($node instanceof MethodCall || $node instanceof NullsafeMethodCall || $node instanceof StaticCall || $node instanceof New_ || $node instanceof FuncCall) {
@@ -198,8 +263,8 @@ final class CacheKeyTaintCollector implements Collector
 
             $params[] = $param->var->name;
 
-            if ($param->isPromoted()) {
-                $flows[] = ['p|' . $class->getName() . '|' . $param->var->name, [['v', $param->var->name]]];
+            if ($param->isPromoted() && $class->hasNativeProperty($param->var->name)) {
+                $flows[] = ['p|' . $this->propertyOwner($class, $param->var->name) . '|' . $param->var->name, [['v', $param->var->name]]];
             }
         }
 
@@ -207,50 +272,79 @@ final class CacheKeyTaintCollector implements Collector
     }
 
     /**
-     * @param list<string> $targets
-     * @param Term         $term
+     * @param list<array{string, Term}> $flows
      *
      * @return Facts|null
      */
-    private function flows(string $scope, array $targets, array $term): ?array
+    private function flows(string $scope, array $flows): ?array
     {
-        if ($targets === [] || $term === []) {
-            return null;
-        }
+        $flows = array_values(array_filter($flows, static fn(array $flow): bool => $flow[1] !== []));
 
-        return ['scope' => $scope, 'flows' => array_map(static fn(string $target): array => [$target, $term], $targets)];
+        return $flows === [] ? null : ['scope' => $scope, 'flows' => $flows];
     }
 
     /**
-     * Where an assignment's value lands: a local variable (`v|name`), a heap
-     * slot, or — through `$parts[] = …` — the variable or property holding the
-     * array. A destructuring assignment lands in every element.
+     * Where an assignment's value lands. A local variable is two slots: its
+     * value (`v|name`), and the keys a cache sink reads out of it when it holds
+     * a map (`k|name`) — so a map hoisted into a variable keeps its keys apart
+     * from its values. `$map[$key] = …` lands in the array holding it, key
+     * included; a destructuring assignment lands in every element; a property
+     * lands in its heap slot, or — when the receiver's type declares none — in
+     * the receiver itself.
      *
-     * @return list<string>
+     * @param Term $term the value assigned
+     * @param Term $keys the keys a cache sink reads out of that value
+     *
+     * @return list<array{string, Term}>
      */
-    private function targets(Expr $target, Scope $scope): array
+    private function assignment(Expr $target, array $term, array $keys, Scope $scope): array
     {
         if ($target instanceof Variable) {
-            return is_string($target->name) ? ['v|' . $target->name] : [];
+            return is_string($target->name) ? [['v|' . $target->name, $term], ['k|' . $target->name, $keys]] : [];
         }
 
         if ($target instanceof ArrayDimFetch) {
-            return $this->targets($target->var, $scope);
+            $entry = $term;
+
+            while ($target->var instanceof ArrayDimFetch) {
+                $entry = [...$this->dimTerm($target, $scope), ...$entry];
+                $target = $target->var;
+            }
+
+            return $this->assignment($target->var, [...$this->dimTerm($target, $scope), ...$entry], $this->entryKey($target->dim, $entry, $scope), $scope);
         }
 
-        if ($target instanceof List_ || $target instanceof Expr\Array_) {
-            $targets = [];
+        if ($target instanceof List_ || $target instanceof Array_) {
+            $flows = [];
 
             foreach ($target->items as $item) {
                 if ($item !== null) {
-                    $targets = [...$targets, ...$this->targets($item->value, $scope)];
+                    $flows = [...$flows, ...$this->assignment($item->value, $term, $term, $scope)];
                 }
             }
 
-            return $targets;
+            return $flows;
         }
 
-        return $target instanceof PropertyFetch || $target instanceof StaticPropertyFetch ? $this->heapKeys($target, $scope) : [];
+        if ($target instanceof PropertyFetch || $target instanceof StaticPropertyFetch) {
+            $slots = $this->heapKeys($target, $scope);
+
+            if ($slots === [] && $target instanceof PropertyFetch && $target->name instanceof Identifier) {
+                return $this->assignment($target->var, $term, $term, $scope);
+            }
+
+            return array_map(static fn(string $slot): array => [$slot, $term], $slots);
+        }
+
+        return [];
+    }
+
+    /**
+     * @return Term
+     */
+    private function dimTerm(ArrayDimFetch $fetch, Scope $scope): array
+    {
+        return $fetch->dim instanceof Expr ? $this->term($fetch->dim, $scope) : [];
     }
 
     /**
@@ -368,12 +462,14 @@ final class CacheKeyTaintCollector implements Collector
 
         $arguments = $node->getArgs();
 
-        if ($node instanceof FuncCall) {
-            if (!$node->name instanceof Name || !$this->isCacheHelper($node->name, $scope) || $arguments === []) {
-                return null;
-            }
+        if ($arguments === []) {
+            return null;
+        }
 
-            return ['cache', $this->keyTerm($arguments[0]->value, true, $scope)];
+        if ($node instanceof FuncCall) {
+            return $node->name instanceof Name && $this->isCacheHelper($node->name, $scope)
+                ? ['cache', $this->keyTerm($arguments, 'key', 'map', $scope)]
+                : null;
         }
 
         if (!$node->name instanceof Identifier) {
@@ -381,48 +477,148 @@ final class CacheKeyTaintCollector implements Collector
         }
 
         $method = $node->name->toString();
-        $lower = mb_strtolower($method);
         $kind = $this->handleKind($node, $scope);
+        $sinks = match ($kind) {
+            'cache', 'store' => self::CACHE_SINKS,
+            'rateLimiter' => self::RATE_LIMITER_SINKS,
+            default => [],
+        };
+        $lower = mb_strtolower($method);
+        $sink = $sinks[$lower] ?? null;
 
-        if ($kind === null) {
+        if ($sink === null) {
             return null;
         }
 
-        if ($kind === 'cache' && in_array($lower, self::TAG_METHODS, true)) {
-            return [$method, $this->union(array_map(static fn(Arg $argument): Expr => $argument->value, $arguments), $scope)];
-        }
+        [$parameter, $reads] = $sink;
 
-        $keyMethods = $kind === 'cache' ? [...self::KEY_METHODS, ...self::KEY_COLLECTION_METHODS] : self::RATE_LIMITER_METHODS;
-
-        if ($arguments === [] || !in_array($lower, $keyMethods, true)) {
-            return null;
-        }
-
-        return [$method, $this->keyTerm($arguments[0]->value, $kind === 'cache' && !in_array($lower, self::KEY_METHODS, true), $scope)];
+        // `Store::many()` keys by the array's values, `Repository::many()` by its string keys.
+        return [$method, $this->keyTerm($arguments, $parameter, $kind === 'store' && $lower === 'many' ? 'all' : $reads, $scope)];
     }
 
     /**
-     * A literal `key => value` map contributes its keys only: the VALUE of a
-     * cache entry is not its key.
+     * The term of the keys a sink's arguments name: the argument PHP binds to
+     * the key parameter, read the way Laravel reads keys out of it. When no
+     * argument can be placed on that parameter — a spread covers it, or no
+     * argument names it — every argument counts.
+     *
+     * @param array<Arg> $arguments
      *
      * @return Term
      */
-    private function keyTerm(Expr $key, bool $mapAllowed, Scope $scope): array
+    private function keyTerm(array $arguments, string $parameter, string $reads, Scope $scope): array
     {
-        if (!$mapAllowed || !$key instanceof Expr\Array_) {
-            return $this->term($key, $scope);
+        $key = $reads === 'all' ? null : $this->boundArgument($arguments, $parameter);
+
+        if ($key === null) {
+            return $this->union(array_map(static fn(Arg $argument): Expr => $argument->value, $arguments), $scope);
         }
 
-        return $this->union(array_map(static fn(Node\ArrayItem $item): Expr => $item->key ?? $item->value, $key->items), $scope);
+        if ($reads === 'values' && $key instanceof Array_) {
+            return $this->union(array_map(static fn(ArrayItem $item): Expr => $item->value, $key->items), $scope);
+        }
+
+        if ($reads === 'map' && $key instanceof Array_) {
+            return $this->mapKeys($key, $scope);
+        }
+
+        if ($reads === 'map' && $key instanceof Variable && is_string($key->name)) {
+            return [['k', $key->name]];
+        }
+
+        return $this->term($key, $scope);
+    }
+
+    /**
+     * The argument PHP binds to a sink's first parameter, or null when that
+     * cannot be told: a spread in first position, or no argument naming it.
+     *
+     * @param array<Arg> $arguments
+     */
+    private function boundArgument(array $arguments, string $parameter): ?Expr
+    {
+        foreach ($arguments as $argument) {
+            if ($argument->name === null) {
+                return $argument->unpack ? null : $argument->value;
+            }
+
+            if ($argument->name->toString() === $parameter) {
+                return $argument->value;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The keys Laravel reads out of an array literal: a string key names its
+     * entry; any other entry — no key, or a key PHP may store as an integer
+     * (it turns `'7'` into `7`) — may be keyed by its value, as `many()` does.
+     *
+     * @return Term
+     */
+    private function mapKeys(Array_ $map, Scope $scope): array
+    {
+        $term = [];
+
+        foreach ($map->items as $item) {
+            $term = [...$term, ...$this->entryKey($item->key, $this->term($item->value, $scope), $scope)];
+        }
+
+        return $term;
+    }
+
+    /**
+     * @param Term $value
+     *
+     * @return Term
+     */
+    private function entryKey(?Expr $key, array $value, Scope $scope): array
+    {
+        if ($key === null) {
+            return $value;
+        }
+
+        return $this->mayBeIntegerKey($key, $scope) ? [...$this->term($key, $scope), ...$value] : $this->term($key, $scope);
+    }
+
+    private function mayBeIntegerKey(Expr $key, Scope $scope): bool
+    {
+        $type = $scope->getType($key);
+
+        if (!$type->isString()->yes()) {
+            return true;
+        }
+
+        return !$type->isNumericString()->no() && !$this->holdsNonDigit($key);
+    }
+
+    /**
+     * Whether a string expression carries a literal character no decimal
+     * integer holds — `'vault:' . $id` cannot become an integer key, though
+     * PHPStan types it as a string that may be numeric.
+     */
+    private function holdsNonDigit(Expr $expr): bool
+    {
+        if ($expr instanceof Concat) {
+            return $this->holdsNonDigit($expr->left) || $this->holdsNonDigit($expr->right);
+        }
+
+        if ($expr instanceof InterpolatedString) {
+            return array_any($expr->parts, fn(Expr|InterpolatedStringPart $part): bool => $part instanceof InterpolatedStringPart ? preg_match('/[^0-9-]/', $part->value) === 1 : $this->holdsNonDigit($part));
+        }
+
+        return $expr instanceof String_ && preg_match('/[^0-9-]/', $expr->value) === 1;
     }
 
     /**
      * `cache` when the receiver is a cache handle — anything typed in the
      * `Illuminate\Contracts\Cache` / `Illuminate\Cache` namespaces or deriving
-     * from one, or the `Cache` facade — and `rateLimiter` for Laravel's rate
-     * limiter, which stores its counters under the key it is handed.
+     * from one, or the `Cache` facade — `store` when that handle may be a raw
+     * cache `Store`, and `rateLimiter` for Laravel's rate limiter, which stores
+     * its counters under the key it is handed.
      *
-     * @return 'cache'|'rateLimiter'|null
+     * @return 'cache'|'rateLimiter'|'store'|null
      */
     private function handleKind(MethodCall|NullsafeMethodCall|StaticCall $node, Scope $scope): ?string
     {
@@ -444,7 +640,11 @@ final class CacheKeyTaintCollector implements Collector
             return 'rateLimiter';
         }
 
-        return array_any($classes, fn(ClassReflection $class): bool => $this->isCacheClass($class)) ? 'cache' : null;
+        if (!array_any($classes, fn(ClassReflection $class): bool => $this->isCacheClass($class))) {
+            return null;
+        }
+
+        return array_any($classes, static fn(ClassReflection $class): bool => $class->is(Store::class)) ? 'store' : 'cache';
     }
 
     private function isCacheClass(ClassReflection $class): bool
@@ -602,11 +802,26 @@ final class CacheKeyTaintCollector implements Collector
 
         foreach ($classes as $class) {
             if ($class->hasNativeProperty($name)) {
-                $keys[] = $prefix . $class->getNativeProperty($name)->getDeclaringClass()->getName() . '|' . $name;
+                $keys[] = $prefix . $this->propertyOwner($class, $name) . '|' . $name;
             }
         }
 
         return $keys;
+    }
+
+    /**
+     * The topmost class declaring a property, so a subclass that redeclares
+     * it shares the slot a read through the parent's type looks in.
+     */
+    private function propertyOwner(ClassReflection $class, string $name): string
+    {
+        $owner = $class->getNativeProperty($name)->getDeclaringClass();
+
+        while (($parent = $owner->getParentClass()) !== null && $parent->hasNativeProperty($name)) {
+            $owner = $parent->getNativeProperty($name)->getDeclaringClass();
+        }
+
+        return $owner->getName();
     }
 
     /**

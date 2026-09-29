@@ -47,7 +47,11 @@ use function str_starts_with;
  * a cold cache. A SINK is the key argument of a call on anything typed as a
  * Laravel cache handle (the `Illuminate\Contracts\Cache` / `Illuminate\Cache`
  * families, the `Cache` facade, the `cache()` helper) or on the `RateLimiter`,
- * which stores its counters under the key it is handed. A call into analysed
+ * which stores its counters under the key it is handed: the argument PHP binds
+ * to the key parameter, named or positional — every argument when a spread or
+ * a missing name leaves that unknown — read the way Laravel reads keys out of
+ * it (`getMultiple()` / `deleteMultiple()` by an array's values, `putMany()` by
+ * its keys, `many()` by a string key or else the value). A call into analysed
  * code yields the callee's return SUMMARY for the arguments at that call site,
  * so a shared key helper handed an id at one site and the credential at another
  * reports only the second.
@@ -58,15 +62,22 @@ use function str_starts_with;
  * other than by a constant name — `toArray()`, `only()`, `getAttributes()`,
  * `$vault->{$name}`, `getAttribute($name)`; a cache handle or method PHPStan
  * cannot resolve — `app('cache')` without larastan, a `mixed` value, a dynamic
- * method name; a value computed inside a closure or arrow function; and a call
- * through an interface, an abstract method or a function, which resolves to its
- * arguments, so a credential the implementation reads for itself is not seen.
+ * method name; a value computed inside a closure or arrow function, or written
+ * into a variable by reference from inside a call (`preg_match()`'s matches);
+ * and a call through an interface, an abstract method or a function, which
+ * resolves to its arguments, so a credential the implementation reads for
+ * itself is not seen.
  *
- * False positives, each by construction: a property is shared by every instance
- * of its class, so a value object constructed from the credential anywhere
- * taints its methods everywhere; and a value returned by a call that was HANDED
- * the credential — a provider response fetched with the API key — carries the
- * credential, so a key built from a field of that response reports.
+ * False positives, each by construction, and each only ever adding a report:
+ * the analysis is flow-insensitive — every value a variable is ever assigned
+ * counts at every read of it, so a key reassigned from the credential to the
+ * id still reports; it is instance-insensitive — a property is one slot shared
+ * by every instance of its class and its subclasses, so a value object
+ * constructed from the credential anywhere taints its methods everywhere; a
+ * map that reaches a sink through a call or a parameter counts its values as
+ * keys; and a value returned by a call that was HANDED the credential — a
+ * provider response fetched with the API key — carries the credential, so a
+ * key built from a field of that response reports.
  *
  * A sink inside a helper that receives the credential as a parameter reports
  * once, at the helper's line, whichever caller handed it the credential.
@@ -85,6 +96,9 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
 
     /** A slot name no PHP variable can take, so `$r` never reads as the return value. */
     private const string RETURN_SLOT = '@return';
+
+    /** Prefixes the slot holding the keys a cache sink reads out of a variable; no PHP variable name can start with it. */
+    private const string KEYS_SLOT = '@keys:';
 
     /** @var array<string, array<string, true>> scope => parameter names, for every analysed method */
     private array $parameters = [];
@@ -194,8 +208,12 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
     {
         $value = $this->evaluate($term, $scopeKey);
 
-        if (str_starts_with($target, 'v|') || $target === 'r') {
-            $slot = $scopeKey . '|' . ($target === 'r' ? self::RETURN_SLOT : mb_substr($target, 2));
+        if (str_starts_with($target, 'v|') || str_starts_with($target, 'k|') || $target === 'r') {
+            $slot = $scopeKey . '|' . match ($target[0]) {
+                'r' => self::RETURN_SLOT,
+                'k' => self::KEYS_SLOT . mb_substr($target, 2),
+                default => mb_substr($target, 2),
+            };
             $this->values[$slot] = [
                 $this->merged($this->values[$slot][0] ?? [], $value[0]),
                 $this->merged($this->values[$slot][1] ?? [], $value[1]),
@@ -225,7 +243,8 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
         foreach ($term as [$kind, $name]) {
             [$atomLabels, $atomParameters] = match ($kind) {
                 's' => [$this->source($name), []],
-                'v' => $this->variable($scopeKey, $name),
+                'v' => $this->variable($scopeKey, $name, $name),
+                'k' => $this->variable($scopeKey, self::KEYS_SLOT . $name, $name),
                 'h' => [$this->heap[$name] ?? [], []],
                 default => $this->callValue($name, $scopeKey),
             };
@@ -254,9 +273,9 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
     /**
      * @return array{array<string, true>, array<string, true>}
      */
-    private function variable(string $scopeKey, string $name): array
+    private function variable(string $scopeKey, string $slot, string $name): array
     {
-        $value = $this->values[$scopeKey . '|' . $name] ?? [[], []];
+        $value = $this->values[$scopeKey . '|' . $slot] ?? [[], []];
 
         if (isset($this->parameters[$scopeKey][$name])) {
             $value[1][$name] = true;
