@@ -621,9 +621,8 @@ class ParentCastsVariableMergedLast extends MethodBase
 }
 
 /**
- * The parent's map is captured INSIDE another expression before it is merged,
- * so no layer places it: it goes underneath the body's own casts, which is
- * where `array_merge($inherited, […])` puts it at runtime.
+ * The parent's map captured through a spread and merged FIRST, so the body's
+ * own casts go over it — `SpreadCapturedParentMergedLast` is the other order.
  */
 class ParentCastsCapturedButNotPlaced extends MethodBase
 {
@@ -650,6 +649,94 @@ class TernaryReturnDisagreeing extends Model
     protected function casts(): array
     {
         return !$this->exists ? ['password' => 'hashed'] : ['password' => 'string'];
+    }
+}
+
+/*
+ * PR #80 crit round 1. A variable holds its LAST straight-line assignment and
+ * every branch composes in its own override order; what the rule cannot place
+ * (`ReassignedInsideBranch` through `ParentMergedInsideLoop`) fails closed.
+ */
+class ReassignedParentVariable extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+        $inherited = ['password' => 'string'];
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+class SpreadCapturedParentMergedLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = [...parent::casts()];
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+class TernaryBranchSpreadsParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        return $this->exists ? ['password' => 'string'] : ['password' => 'string', ...parent::casts()];
+    }
+}
+
+class ReassignedInsideBranch extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+
+        if ($this->exists) {
+            $inherited = ['password' => 'string'];
+        }
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+class WildLayerOverParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        $extra = [];
+
+        if ($this->exists) {
+            $extra = ['password' => 'string'];
+        }
+
+        return array_merge(parent::casts(), $extra);
+    }
+}
+
+class ParentHeldInProperty extends MethodBase
+{
+    protected array $held = [];
+
+    protected function casts(): array
+    {
+        $this->held = parent::casts();
+
+        return array_merge(['password' => 'string'], $this->held);
+    }
+}
+
+class ParentMergedInsideLoop extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = ['password' => 'string'];
+
+        foreach ([1] as $ignored) {
+            $casts = [...$casts, ...parent::casts()];
+        }
+
+        return $casts;
     }
 }
 

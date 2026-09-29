@@ -181,11 +181,24 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
         'UnionOperatorChildFirst' => ['payload' => ['password'], 'naive' => []],
         'SpreadOfLiteralAfterParent' => ['payload' => ['password', 'api_token'], 'naive' => ['password', 'api_token']],
         'ParentCastsVariableMergedLast' => ['payload' => ['password'], 'naive' => []],
-        // Captured where no layer can place it: the parent's map goes underneath.
+        // Captured through a spread and merged first: the body's keys go over it.
         'ParentCastsCapturedButNotPlaced' => ['payload' => ['password', 'api_token'], 'naive' => ['password', 'api_token']],
         // A ternary's branches are alternatives: the credential cast wins even
         // when it comes first in the source.
         'TernaryReturnDisagreeing' => ['payload' => ['password'], 'naive' => ['password']],
+        // PR #80 crit round 1: a variable carries the value of its LAST
+        // assignment, and a branch is evaluated in its own override order.
+        // crit `82492259914e`
+        'ReassignedParentVariable' => ['payload' => ['password'], 'naive' => []],
+        // crit `928862a53b89`
+        'SpreadCapturedParentMergedLast' => ['payload' => ['password'], 'naive' => []],
+        // crit `2d2a63cfcd62`
+        'TernaryBranchSpreadsParent' => ['payload' => ['password'], 'naive' => []],
+        // Fail-closed: where the rule cannot place a value, a credential wins.
+        'ReassignedInsideBranch' => ['payload' => ['password'], 'naive' => []],
+        'WildLayerOverParent' => ['payload' => ['password'], 'naive' => []],
+        'ParentHeldInProperty' => ['payload' => ['password'], 'naive' => []],
+        'ParentMergedInsideLoop' => ['payload' => ['password'], 'naive' => []],
     ];
 
     /**
@@ -351,7 +364,7 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
      * `@defaultAnalysisParser` is `CachedParser(PathRoutingParser)`, and
      * `PathRoutingParser` sends any file outside the current invocation's
      * analysed set through `CleaningParser`, whose `CleaningVisitor` sets
-     * `ClassMethod::$stmts = []`. `collectReturnedArrays()` then walks a body
+     * `ClassMethod::$stmts = []`. The return walk then reads a body
      * with no `Return_` in it at all — so the branch that sets
      * `$complete = false` is never REACHED, the map resolves empty with
      * `complete = true`, and the rule concludes the model carries no credential

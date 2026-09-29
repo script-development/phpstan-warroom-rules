@@ -21,20 +21,26 @@ use App\Models\CredentialCastBypass\Dispatch\MidReplacing;
 use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedButNotPlaced;
 use App\Models\CredentialCastBypass\Dispatch\ParentCastsCapturedInVariable;
 use App\Models\CredentialCastBypass\Dispatch\ParentCastsVariableMergedLast;
+use App\Models\CredentialCastBypass\Dispatch\ParentHeldInProperty;
+use App\Models\CredentialCastBypass\Dispatch\ParentMergedInsideLoop;
 use App\Models\CredentialCastBypass\Dispatch\PassThroughOverride;
 use App\Models\CredentialCastBypass\Dispatch\PropertyBase;
 use App\Models\CredentialCastBypass\Dispatch\PropertyEncryptedThenEncryptingClassCastMethod;
 use App\Models\CredentialCastBypass\Dispatch\PropertyThenClassCastMethod;
 use App\Models\CredentialCastBypass\Dispatch\PropertyThenMethod;
+use App\Models\CredentialCastBypass\Dispatch\ReassignedInsideBranch;
+use App\Models\CredentialCastBypass\Dispatch\ReassignedParentVariable;
 use App\Models\CredentialCastBypass\Dispatch\RedeclaringProperty;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverride;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverrideSameColumn;
 use App\Models\CredentialCastBypass\Dispatch\ReplacingOverrideWithForeignStaticCall;
+use App\Models\CredentialCastBypass\Dispatch\SpreadCapturedParentMergedLast;
 use App\Models\CredentialCastBypass\Dispatch\SpreadingOverride;
 use App\Models\CredentialCastBypass\Dispatch\SpreadOfLiteralAfterParent;
 use App\Models\CredentialCastBypass\Dispatch\SpreadParentAfterClassCast;
 use App\Models\CredentialCastBypass\Dispatch\SpreadParentAfterStringCast;
 use App\Models\CredentialCastBypass\Dispatch\SpreadParentBeforeClassCast;
+use App\Models\CredentialCastBypass\Dispatch\TernaryBranchSpreadsParent;
 use App\Models\CredentialCastBypass\Dispatch\TernaryReturnDisagreeing;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodAndClassProperty;
 use App\Models\CredentialCastBypass\Dispatch\TraitMethodExcludedByInsteadOf;
@@ -43,6 +49,7 @@ use App\Models\CredentialCastBypass\Dispatch\TraitMethodOverridden;
 use App\Models\CredentialCastBypass\Dispatch\TwoHopInherited;
 use App\Models\CredentialCastBypass\Dispatch\UnionOperatorChildFirst;
 use App\Models\CredentialCastBypass\Dispatch\UnionOperatorParentFirst;
+use App\Models\CredentialCastBypass\Dispatch\WildLayerOverParent;
 
 /**
  * One builder write per declaration shape in `CastDispatchShapes.php`. Each
@@ -248,6 +255,17 @@ final class CastDispatchWrites
     public function ternaryReturnDisagreeing(): void
     {
         TernaryReturnDisagreeing::query()->update(['password' => 'raw']);
+    }
+
+    public function crit80OverrideOrderShapes(): void
+    {
+        ReassignedParentVariable::query()->update(['password' => 'raw']);
+        SpreadCapturedParentMergedLast::query()->update(['password' => 'raw']);
+        TernaryBranchSpreadsParent::query()->update(['password' => 'raw']);
+        ReassignedInsideBranch::query()->update(['password' => 'raw']);
+        WildLayerOverParent::query()->update(['password' => 'raw']);
+        ParentHeldInProperty::query()->update(['password' => 'raw']);
+        ParentMergedInsideLoop::query()->update(['password' => 'raw']);
     }
 
     public function mergesCastsInConstructor(): void
