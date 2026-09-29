@@ -15,6 +15,10 @@ jobs:
                 php: ['8.4', '8.5']
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  # The pull_request merge ref's first parent is the base tip the
+                  # mutation scope is measured against.
+                  fetch-depth: 2
 
             - name: Setup PHP ${{ matrix.php }}
               uses: shivammathur/setup-php@728c6c6b8cf02c2e48117716a91ee48313958a19 # v2
@@ -50,11 +54,48 @@ jobs:
                   retention-days: 14
                   if-no-files-found: ignore
 
+            # WR-1790: mutant outcomes are identical mutant-for-mutant on both PHP
+            # legs, so mutation runs on the floor leg only. A pull request mutates the src files its diff reaches
+            # (bin/mutation-scope.php); push to main always mutates everything.
             - name: Mutation testing
-              run: composer mutation:ci
+              if: matrix.php == '8.4'
+              env:
+                  EVENT_NAME: ${{ github.event_name }}
+              run: |
+                  set -euo pipefail
+
+                  if [ "$EVENT_NAME" != "pull_request" ]; then
+                      composer mutation:ci
+                      exit 0
+                  fi
+
+                  if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -ne 3 ]; then
+                      echo "::error::HEAD is not the pull_request merge commit, so HEAD^1 is not the base tip."
+                      exit 1
+                  fi
+
+                  scope="$(php bin/mutation-scope.php HEAD^1)"
+                  echo "mutation scope: ${scope//$'\n'/ }"
+
+                  case "$scope" in
+                      FULL)
+                          composer mutation:ci
+                          ;;
+                      NONE)
+                          echo "Only inert paths changed; nothing a mutant could reach, mutation not run."
+                          ;;
+                      SCOPED\ *)
+                          mapfile -t paths < <(sed -n 's/^SCOPED //p' <<< "$scope")
+                          composer mutation:ci -- --ignore-msi-with-no-mutations=true "${paths[@]}"
+                          ;;
+                      *)
+                          echo "::error::Unrecognised mutation scope: $scope"
+                          exit 1
+                          ;;
+                  esac
 
             - name: Upload mutation report
-              if: always()
+              if: always() && matrix.php == '8.4'
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
               with:
                   name: infection-php-${{ matrix.php }}
