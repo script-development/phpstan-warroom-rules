@@ -505,6 +505,155 @@ class EncryptingClassCastAsString extends Model
 }
 
 /**
+ * crit `95d3951f0838`: the spread comes AFTER the child's own key, so the
+ * parent's `password => hashed` overwrites the child's class cast at runtime.
+ */
+class SpreadParentAfterClassCast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => AsStringable::class, ...parent::casts()];
+    }
+}
+
+/**
+ * The same order with a string cast — the parent still wins.
+ */
+class SpreadParentAfterStringCast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => 'string', ...parent::casts()];
+    }
+}
+
+/**
+ * The control: the child's key after the spread wins.
+ */
+class SpreadParentBeforeClassCast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [...parent::casts(), 'password' => AsStringable::class];
+    }
+}
+
+/**
+ * `array_merge()` with the parent LAST: the parent's map wins.
+ */
+class ArrayMergeParentLast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return array_merge(['password' => 'string'], parent::casts());
+    }
+}
+
+/**
+ * `+` keeps the LEFT operand's key, so the parent on the left wins.
+ */
+class UnionOperatorParentFirst extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return parent::casts() + ['password' => 'string'];
+    }
+}
+
+/**
+ * ...and the child on the left wins.
+ */
+class UnionOperatorChildFirst extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => 'string'] + parent::casts();
+    }
+}
+
+/**
+ * Two spreads, the second of a literal: its pairs are cast pairs like any
+ * other.
+ */
+class SpreadOfLiteralAfterParent extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [...parent::casts(), ...['api_token' => 'encrypted']];
+    }
+}
+
+/**
+ * The parent's map held in a variable and merged LAST, so it wins.
+ */
+class ParentCastsVariableMergedLast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+/**
+ * The parent's map is captured INSIDE another expression before it is merged,
+ * so no layer places it: it goes underneath the body's own casts, which is
+ * where `array_merge($inherited, […])` puts it at runtime.
+ */
+class ParentCastsCapturedButNotPlaced extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        $inherited = [...parent::casts()];
+
+        return array_merge($inherited, ['api_token' => 'encrypted']);
+    }
+}
+
+/**
+ * The two branches in ONE return: a ternary is alternatives, not layers, so
+ * the credential cast wins whichever branch comes first in the source.
+ */
+class TernaryReturnDisagreeing extends Model
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return !$this->exists ? ['password' => 'hashed'] : ['password' => 'string'];
+    }
+}
+
+/**
  * `mergeCasts()` at construct time — a real Laravel API, and an accepted false
  * NEGATIVE: no declaration exists to read. Excluded from the truth table
  * because its effective map only exists after construction. See the rule's
