@@ -85,6 +85,8 @@ use function str_starts_with;
  *     [`missesACredentialReadInsideAnInterfaceImplementation`];
  *   - a write into a variable by reference from inside a call (`preg_match()`'s
  *     matches) [`missesAMatchWrittenByReferenceInsideACall`];
+ *   - a write to a property named at runtime (`$box->{$name} = …`)
+ *     [`missesACredentialWrittenToADynamicProperty`];
  *   - array access on a cache handle (`$cache[$key]`)
  *     [`missesArrayAccessOnACacheHandle`], or a cache handle or method PHPStan
  *     cannot resolve — `app('cache')` without larastan, a `mixed` value, a

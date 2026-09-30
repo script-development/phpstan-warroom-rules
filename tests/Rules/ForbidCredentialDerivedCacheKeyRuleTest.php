@@ -260,7 +260,7 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
 
         self::assertNotFalse($source);
         self::assertSame(count($expected), preg_match_all('/function (leaks|overReports)/', $source));
-        self::assertSame(9, preg_match_all('/function misses/', $source));
+        self::assertSame(10, preg_match_all('/function misses/', $source));
 
         $this->analyse([self::MODELS, self::FIXTURES . 'Imprecision.php'], $expected);
     }
@@ -276,8 +276,8 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
 
         self::assertNotFalse($docblock);
         self::assertNotFalse($fixture);
-        self::assertSame(9, preg_match_all('/\[`(misses\w+)`\]/', $docblock, $named));
-        self::assertSame(9, preg_match_all('/function (misses\w+)/', $fixture, $rows));
+        self::assertSame(10, preg_match_all('/\[`(misses\w+)`\]/', $docblock, $named));
+        self::assertSame(10, preg_match_all('/function (misses\w+)/', $fixture, $rows));
 
         $named = $named[1];
         $rows = $rows[1];

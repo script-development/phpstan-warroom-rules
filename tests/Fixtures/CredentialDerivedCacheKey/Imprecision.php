@@ -453,3 +453,18 @@ final class HeldMaps
         return $this->cache->putMany($outer['inner'], 60);
     }
 }
+
+final readonly class DynamicProperties
+{
+    public function __construct(
+        private Repository $cache,
+    ) {}
+
+    public function missesACredentialWrittenToADynamicProperty(Vault $vault, string $field): mixed
+    {
+        $box = new stdClass;
+        $box->{$field} = $vault->api_key;
+
+        return $this->cache->get('vault:' . $box->{$field});
+    }
+}
