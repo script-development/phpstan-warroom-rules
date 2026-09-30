@@ -11,7 +11,6 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\RateLimiter as RateLimiterFacade;
 use PhpParser\Node;
 use PhpParser\Node\Arg;
-use PhpParser\Node\ArrayItem;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\Array_;
 use PhpParser\Node\Expr\ArrayDimFetch;
@@ -19,7 +18,9 @@ use PhpParser\Node\Expr\ArrowFunction;
 use PhpParser\Node\Expr\Assign;
 use PhpParser\Node\Expr\AssignOp;
 use PhpParser\Node\Expr\AssignRef;
+use PhpParser\Node\Expr\BinaryOp\Coalesce;
 use PhpParser\Node\Expr\BinaryOp\Concat;
+use PhpParser\Node\Expr\BinaryOp\Plus;
 use PhpParser\Node\Expr\Closure;
 use PhpParser\Node\Expr\FuncCall;
 use PhpParser\Node\Expr\List_;
@@ -30,6 +31,7 @@ use PhpParser\Node\Expr\NullsafePropertyFetch;
 use PhpParser\Node\Expr\PropertyFetch;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Expr\StaticPropertyFetch;
+use PhpParser\Node\Expr\Ternary;
 use PhpParser\Node\Expr\Variable;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\InterpolatedStringPart;
@@ -87,8 +89,10 @@ use function str_starts_with;
  *   - `v` — a local variable (or parameter) of the enclosing method, with the
  *     offset it is read at; a read with no offset sees every value the
  *     variable is ever given.
- *   - `k` — the keys a cache sink reads out of a local variable holding a
- *     map: its string keys, and the values of its other entries.
+ *   - `k`, `e`, `i` — the other halves of a local variable holding a map,
+ *     read at an offset like `v`: the keys a cache sink reads out of it (its
+ *     string keys, and the values of its other entries), its values, and its
+ *     own keys. A flow into `*|name` is a value whose halves are one term.
  *   - `h` — a HEAP slot: a declared property, per topmost declaring class,
  *     shared by every instance (`p|Class|name`), or a static property
  *     (`s|Class|name`).
@@ -185,6 +189,9 @@ final class CacheKeyTaintCollector implements Collector
         'toomanyattempts' => ['key', 'one'],
     ];
 
+    /** A local's slots, in `halves()` order: whole value, sink-read keys, values, own keys. */
+    private const array SLOTS = ['v', 'k', 'e', 'i'];
+
     private const array CACHE_NAMESPACES = ['Illuminate\Contracts\Cache\\', 'Illuminate\Cache\\'];
 
     private const array ATTRIBUTE_READERS = ['getattribute', 'getattributevalue', 'getoriginal', 'getraworiginal'];
@@ -210,32 +217,27 @@ final class CacheKeyTaintCollector implements Collector
         $key = $this->scopeKey($scope);
 
         if ($node instanceof Assign || $node instanceof AssignOp) {
-            $term = $this->term($node->expr, $scope);
-
-            return $this->flows($key, $this->assignment($node->var, $term, $node->expr instanceof Array_ ? $this->mapKeys($node->expr, $scope) : $term, $scope), $this->definedAt($node, $scope));
+            return $this->flows($key, $this->assignment($node->var, $this->halves($node->expr, $scope), $scope), $this->definedAt($node, $scope));
         }
 
         if ($node instanceof AssignRef) {
             // A reference is written through in both directions, whenever either side is written.
-            $into = $this->term($node->expr, $scope);
-            $back = $this->term($node->var, $scope);
-
-            return $this->flows($key, [...$this->assignment($node->var, $into, $into, $scope), ...$this->assignment($node->expr, $back, $back, $scope)], null);
+            return $this->flows($key, [...$this->assignment($node->var, $this->halves($node->expr, $scope), $scope), ...$this->assignment($node->expr, $this->halves($node->var, $scope), $scope)], null);
         }
 
         if ($node instanceof Foreach_) {
-            [$keys, $values] = $this->iterated($node->expr, $scope);
-            $flows = $this->assignment($node->valueVar, $values, $values, $scope);
+            [, , $values, $index] = $this->halves($node->expr, $scope);
+            $flows = $this->assignment($node->valueVar, [$values, $values, $values, $values], $scope);
 
             if ($node->keyVar instanceof Expr) {
-                $flows = [...$flows, ...$this->assignment($node->keyVar, $keys, $keys, $scope)];
+                $flows = [...$flows, ...$this->assignment($node->keyVar, [$index, $index, $index, $index], $scope)];
             }
 
             $flows = $this->placed($flows, $this->definedAt($node, $scope));
 
             if ($node->byRef) {
                 $back = $this->term($node->valueVar, $scope);
-                $flows = [...$flows, ...$this->placed($this->assignment($node->expr, $back, $back, $scope), null)];
+                $flows = [...$flows, ...$this->placed($this->assignment($node->expr, [$back, $back, $back, $back], $scope), null)];
             }
 
             return $this->placedFlows($key, $flows);
@@ -385,27 +387,39 @@ final class CacheKeyTaintCollector implements Collector
     }
 
     /**
-     * Where an assignment's value lands. A local variable is two slots: its
-     * value (`v|name`), and the keys a cache sink reads out of it when it holds
-     * a map (`k|name`) — so a map hoisted into a variable keeps its keys apart
-     * from its values. `$map[$key] = …` lands in the array holding it, key
-     * included; a destructuring assignment lands in every element; a property
-     * lands in its heap slot, or — when the receiver's type declares none — in
-     * the receiver itself.
+     * Where an assignment's value lands. A local variable is four slots, one
+     * per half of what it holds (see `halves()`), so a map hoisted into a
+     * variable, or copied from one, keeps its keys apart from its values; a
+     * value whose halves are all one term is one flow into every slot.
+     * `$map[$key] = …` lands in the array holding it, key included; a
+     * destructuring assignment lands the value half in every element; a
+     * property lands in its heap slot, or — when the receiver's type declares
+     * none — in the receiver itself.
      *
-     * @param Term $term the value assigned
-     * @param Term $keys the keys a cache sink reads out of that value
+     * @param array{Term, Term, Term, Term} $halves the value assigned, by `halves()`
      *
      * @return list<array{string, Term}>
      */
-    private function assignment(Expr $target, array $term, array $keys, Scope $scope): array
+    private function assignment(Expr $target, array $halves, Scope $scope): array
     {
+        [$whole, , $values] = $halves;
+
         if ($target instanceof Variable) {
-            return is_string($target->name) ? [['v|' . $target->name, $term], ['k|' . $target->name, $keys]] : [];
+            if (!is_string($target->name)) {
+                return [];
+            }
+
+            if ($halves === [$whole, $whole, $whole, $whole]) {
+                return [['*|' . $target->name, $whole]];
+            }
+
+            return array_map(static fn(string $slot, array $term): array => [$slot . '|' . $target->name, $term], self::SLOTS, $halves);
         }
 
         if ($target instanceof ArrayDimFetch) {
-            return $this->assignment($target->var, [...$this->dimTerm($target, $scope), ...$term], $this->entryKey($target->dim, $term, $scope), $scope);
+            $index = $this->dimTerm($target, $scope);
+
+            return $this->assignment($target->var, [[...$index, ...$whole], $this->entryKey($target->dim, $whole, $scope), $whole, $index], $scope);
         }
 
         if ($target instanceof List_ || $target instanceof Array_) {
@@ -413,7 +427,7 @@ final class CacheKeyTaintCollector implements Collector
 
             foreach ($target->items as $item) {
                 if ($item !== null) {
-                    $flows = [...$flows, ...$this->assignment($item->value, $term, $term, $scope)];
+                    $flows = [...$flows, ...$this->assignment($item->value, [$values, $values, $values, $values], $scope)];
                 }
             }
 
@@ -424,44 +438,61 @@ final class CacheKeyTaintCollector implements Collector
             $slots = $this->heapKeys($target, $scope);
 
             if ($slots === [] && $target instanceof PropertyFetch && $target->name instanceof Identifier) {
-                return $this->assignment($target->var, $term, $term, $scope);
+                return $this->assignment($target->var, [$whole, $whole, $whole, $whole], $scope);
             }
 
-            return array_map(static fn(string $slot): array => [$slot, $term], $slots);
+            return array_map(static fn(string $slot): array => [$slot, $whole], $slots);
         }
 
         return [];
     }
 
     /**
-     * What a foreach over an expression hands its key and its value variable:
-     * an array literal's keys and values apart; a local variable's key slot
-     * for the key; anything else, its whole term for both.
+     * An expression by the halves a local holding it keeps apart: its whole
+     * value; the keys a cache sink reads out of it as a map (`entryKey()`);
+     * its values; and its own keys, which a foreach hands its key variable.
+     * An array literal splits into them, a spread entry by the halves of what
+     * it spreads; a ternary, `??` or array union by the halves of the operands
+     * it may yield; a local variable names its own four slots; anything else
+     * is its whole term in every half.
      *
-     * @return array{Term, Term}
+     * @return array{Term, Term, Term, Term}
      */
-    private function iterated(Expr $iterable, Scope $scope): array
+    private function halves(Expr $expr, Scope $scope): array
     {
-        if ($iterable instanceof Array_) {
-            $keys = [];
-            $values = [];
+        if ($expr instanceof Variable) {
+            $atom = is_string($expr->name) && $expr->name !== 'this' ? [$expr->name, $expr->getStartFilePos()] : null;
 
-            foreach ($iterable->items as $item) {
-                if ($item->unpack) {
-                    $keys = [...$keys, ...$this->term($item->value, $scope)];
-                } elseif ($item->key instanceof Expr) {
-                    $keys = [...$keys, ...$this->term($item->key, $scope)];
-                }
-
-                $values = [...$values, ...$this->term($item->value, $scope)];
-            }
-
-            return [$keys, $values];
+            return array_map(static fn(string $slot): array => $atom === null ? [] : [[$slot, ...$atom]], self::SLOTS);
         }
 
-        $term = $this->term($iterable, $scope);
+        $whole = $this->term($expr, $scope);
+        $parts = match (true) {
+            $expr instanceof Array_ => $expr->items,
+            $expr instanceof Ternary => [$expr->if ?? $expr->cond, $expr->else],
+            $expr instanceof Coalesce, $expr instanceof Plus => [$expr->left, $expr->right],
+            default => null,
+        };
 
-        return $iterable instanceof Variable && is_string($iterable->name) ? [[['k', $iterable->name, $iterable->getStartFilePos()]], $term] : [$term, $term];
+        if ($parts === null) {
+            return [$whole, $whole, $whole, $whole];
+        }
+
+        $halves = [$whole, [], [], []];
+
+        foreach ($parts as $item) {
+            if ($item instanceof Expr || $item->unpack) {
+                [, $keys, $values, $index] = $this->halves($item instanceof Expr ? $item : $item->value, $scope);
+            } else {
+                $values = $this->term($item->value, $scope);
+                $keys = $this->entryKey($item->key, $values, $scope);
+                $index = $item->key instanceof Expr ? $this->term($item->key, $scope) : [];
+            }
+
+            $halves = [$whole, [...$halves[1], ...$keys], [...$halves[2], ...$values], [...$halves[3], ...$index]];
+        }
+
+        return $halves;
     }
 
     /**
@@ -681,19 +712,11 @@ final class CacheKeyTaintCollector implements Collector
             return $this->union(array_map(static fn(Arg $argument): Expr => $argument->value, $arguments), $scope);
         }
 
-        if ($reads === 'values' && $key instanceof Array_) {
-            return $this->union(array_map(static fn(ArrayItem $item): Expr => $item->value, $key->items), $scope);
-        }
-
-        if ($reads === 'map' && $key instanceof Array_) {
-            return $this->mapKeys($key, $scope);
-        }
-
-        if ($reads === 'map' && $key instanceof Variable && is_string($key->name)) {
-            return [['k', $key->name, $key->getStartFilePos()]];
-        }
-
-        return $this->term($key, $scope);
+        return match ($reads) {
+            'map' => $this->halves($key, $scope)[1],
+            'values' => $this->halves($key, $scope)[2],
+            default => $this->term($key, $scope),
+        };
     }
 
     /**
@@ -718,24 +741,10 @@ final class CacheKeyTaintCollector implements Collector
     }
 
     /**
-     * The keys Laravel reads out of an array literal: a string key names its
+     * The keys Laravel reads out of one array entry: a string key names its
      * entry; any other entry — no key, or a key PHP may store as an integer
      * (it turns `'7'` into `7`) — may be keyed by its value, as `many()` does.
      *
-     * @return Term
-     */
-    private function mapKeys(Array_ $map, Scope $scope): array
-    {
-        $term = [];
-
-        foreach ($map->items as $item) {
-            $term = [...$term, ...$this->entryKey($item->key, $this->term($item->value, $scope), $scope)];
-        }
-
-        return $term;
-    }
-
-    /**
      * @param Term $value
      *
      * @return Term

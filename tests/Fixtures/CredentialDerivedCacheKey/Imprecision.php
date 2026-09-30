@@ -429,3 +429,27 @@ final readonly class Picker
         return $used;
     }
 }
+
+final class HeldMaps
+{
+    /** @var array<string, string> */
+    private array $defaults = [];
+
+    public function __construct(
+        private readonly Repository $cache,
+    ) {}
+
+    public function overReportsAPutManyValueOfAMapHeldInAProperty(Vault $vault): bool
+    {
+        $this->defaults = ['public' => $vault->api_key];
+
+        return $this->cache->putMany($this->defaults, 60);
+    }
+
+    public function overReportsAPutManyValueOfAMapNestedInAMap(Vault $vault): bool
+    {
+        $outer = ['inner' => ['public' => $vault->api_key]];
+
+        return $this->cache->putMany($outer['inner'], 60);
+    }
+}

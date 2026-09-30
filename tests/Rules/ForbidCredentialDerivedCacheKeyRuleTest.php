@@ -199,6 +199,15 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
             [self::message('putMany', 'SinkBinding.php', 196), 196],
             [self::message('get', 'SinkBinding.php', 207), 209],
             [self::message('putMany', 'SinkBinding.php', 159), 222],
+            [self::message('getMultiple', 'SinkBinding.php', 245), 247],
+            [self::message('getMultiple', 'SinkBinding.php', 261), 263],
+            [self::message('putMany', 'SinkBinding.php', 285), 289],
+            [self::message('putMany', 'SinkBinding.php', 302), 305],
+            [self::message('putMany', 'SinkBinding.php', 317), 319],
+            [self::message('forget', 'SinkBinding.php', 340), 343],
+            [self::message('get', 'SinkBinding.php', 366), 369],
+            [self::message('putMany', 'SinkBinding.php', 381), 383],
+            [self::message('putMany', 'SinkBinding.php', 405), 407],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'SinkBinding.php');
@@ -241,6 +250,8 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
             [self::message('get', 'Imprecision.php', 394), 397],
             [self::message('get', 'Imprecision.php', 402), 406],
             [self::message('get', 'Imprecision.php', 414), 414],
+            [self::message('putMany', 'Imprecision.php', 444), 446],
+            [self::message('putMany', 'Imprecision.php', 451), 453],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'Imprecision.php');

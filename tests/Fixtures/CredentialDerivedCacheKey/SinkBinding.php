@@ -222,3 +222,188 @@ final readonly class Sinks
         $this->cache->putMany($values, 60);
     }
 }
+
+/**
+ * A local holding a map keeps three halves apart through every write and read:
+ * its whole value, the keys a sink reads out of it, and its values.
+ */
+final readonly class HoistedMaps
+{
+    public function __construct(
+        private Repository $cache,
+    ) {}
+
+    public function keepsACredentialHoistedGetMultipleIgnoresAsAKey(Vault $vault): iterable
+    {
+        $keys = [$vault->api_key => 'vault:' . $vault->id];
+
+        return $this->cache->getMultiple($keys);
+    }
+
+    public function leaksThroughAHoistedGetMultipleValue(Vault $vault): iterable
+    {
+        $keys = ['alias' => 'vault:' . $vault->api_key, 'other' => 'vault:' . $vault->id];
+
+        return $this->cache->getMultiple($keys);
+    }
+
+    public function keepsACredentialGetMultipleKeyAssignedLater(Vault $vault): iterable
+    {
+        $keys = [];
+        $keys[$vault->api_key] = 'vault:' . $vault->id;
+
+        return $this->cache->getMultiple($keys);
+    }
+
+    public function leaksThroughAGetMultipleValueAssignedLater(Vault $vault): iterable
+    {
+        $keys = [];
+        $keys['alias'] = 'vault:' . $vault->api_key;
+
+        return $this->cache->getMultiple($keys);
+    }
+
+    public function keepsACopiedPutManyValue(Vault $vault): bool
+    {
+        $source = ['public' => $vault->api_key];
+        $copy = $source;
+
+        return $this->cache->putMany($copy, 60);
+    }
+
+    public function keepsAPutManyValueMergedIn(Vault $vault): bool
+    {
+        $extra = ['public' => $vault->api_key];
+        $values = ['vault:' . $vault->id => 1];
+        $values += $extra;
+
+        return $this->cache->putMany($values, 60);
+    }
+
+    public function leaksThroughAPutManyKeyMergedIn(Vault $vault): bool
+    {
+        $extra = ['vault:' . $vault->api_key => 1];
+        $values = [];
+        $values += $extra;
+
+        return $this->cache->putMany($values, 60);
+    }
+
+    public function keepsAPutManyValueThroughAReference(Vault $vault): bool
+    {
+        $source = ['public' => $vault->api_key];
+        $alias = &$source;
+
+        return $this->cache->putMany($alias, 60);
+    }
+
+    public function leaksThroughAPutManyKeyThroughAReference(Vault $vault): bool
+    {
+        $source = ['vault:' . $vault->api_key => 1];
+        $alias = &$source;
+
+        return $this->cache->putMany($alias, 60);
+    }
+
+    public function keepsASpreadPutManyValue(Vault $vault): bool
+    {
+        $source = ['public' => $vault->api_key];
+
+        return $this->cache->putMany([...$source, 'vault:' . $vault->id => 1], 60);
+    }
+
+    public function leaksThroughASpreadPutManyKey(Vault $vault): bool
+    {
+        $source = ['vault:' . $vault->api_key => 1];
+
+        return $this->cache->putMany([...$source, 'vault:' . $vault->id => 1], 60);
+    }
+
+    public function keepsASpreadGetMultipleKey(Vault $vault): iterable
+    {
+        $source = [$vault->api_key => 'vault:' . $vault->id];
+
+        return $this->cache->getMultiple([...$source]);
+    }
+
+    public function keepsALoopValueOfAMapsKeys(Vault $vault): void
+    {
+        $map = [$vault->api_key => 'vault:' . $vault->id];
+
+        foreach ($map as $value) {
+            $this->cache->forget($value);
+        }
+    }
+
+    public function leaksThroughALoopValueOfAHoistedMap(Vault $vault): void
+    {
+        $map = ['public' => 'vault:' . $vault->api_key];
+
+        foreach ($map as $value) {
+            $this->cache->forget($value);
+        }
+    }
+
+    public function keepsALoopIndexOfAList(Vault $vault): void
+    {
+        $list = [$vault->api_key];
+
+        foreach ($list as $index => $value) {
+            $this->cache->forget('vault:' . $index);
+        }
+    }
+
+    public function keepsADestructuredValueBesideACredentialKey(Vault $vault): mixed
+    {
+        $lookup = [0 => 'vault:' . $vault->id, $vault->api_key => false];
+        [$key] = $lookup;
+
+        return $this->cache->get($key);
+    }
+
+    public function leaksThroughADestructuredValue(Vault $vault): mixed
+    {
+        $pair = ['vault', 'vault:' . $vault->api_key];
+        [$prefix, $key] = $pair;
+
+        return $this->cache->get($key);
+    }
+
+    public function keepsAPutManyValueOfAMapATernaryPicks(Vault $vault, bool $pick): bool
+    {
+        $source = ['public' => $vault->api_key];
+
+        return $this->cache->putMany($pick ? [] : $source, 60);
+    }
+
+    public function leaksThroughAPutManyKeyOfAMapATernaryPicks(Vault $vault, bool $pick): bool
+    {
+        $source = ['vault:' . $vault->api_key => 1];
+
+        return $this->cache->putMany($pick ? $source : [], 60);
+    }
+
+    /**
+     * @param array<string, mixed>|null $override
+     */
+    public function keepsAPutManyValueOfAMapACoalescePicks(Vault $vault, ?array $override): bool
+    {
+        $source = ['public' => $vault->api_key];
+
+        return $this->cache->putMany($override ?? $source, 60);
+    }
+
+    public function keepsAPutManyValueOfAnArrayUnion(Vault $vault): bool
+    {
+        $source = ['public' => $vault->api_key];
+
+        return $this->cache->putMany($source + ['vault:' . $vault->id => 1], 60);
+    }
+
+    public function leaksThroughAPutManyKeyOfAnArrayUnion(Vault $vault): bool
+    {
+        $source = ['vault:' . $vault->api_key => 1];
+
+        return $this->cache->putMany($source + ['vault:' . $vault->id => 1], 60);
+    }
+}

@@ -104,12 +104,13 @@ use function str_starts_with;
  * on every branch, still reports; it is instance-insensitive — a property is
  * one slot shared by every instance of its class and its subclasses, so a
  * value object constructed from the credential anywhere taints its methods
- * everywhere; a map that reaches a sink through a call or a parameter counts
- * its values as keys; a spread that spreads again, or whose keys are not
- * known, hands its whole value to every parameter from its position on; and a
- * value returned by a call that was HANDED the credential — a provider
- * response fetched with the API key — carries the credential, so a key built
- * from a field of that response reports.
+ * everywhere; a map that reaches a sink through a call, a parameter, a
+ * property or another map's entry counts its values as keys; a spread that
+ * spreads again, or whose keys are not known, hands its whole value to every
+ * parameter from its position on; and a value returned by a call that was
+ * HANDED the credential — a provider response fetched with the API key —
+ * carries the credential, so a key built from a field of that response
+ * reports.
  *
  * A sink inside a helper that receives the credential as a parameter reports
  * once, at the helper's line, whichever caller handed it the credential.
@@ -134,8 +135,8 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
     /** Marks a value a later statement cannot replace; an array key no offset can take. */
     private const string UNKILLABLE = 'ref';
 
-    /** Prefixes the slot holding the keys a cache sink reads out of a variable; no PHP variable name can start with it. */
-    private const string KEYS_SLOT = '@keys:';
+    /** Each half a local keeps apart => the prefix of its slot; no PHP variable name can start with one. */
+    private const array LOCAL_SLOTS = ['v' => '', 'k' => '@keys:', 'e' => '@values:', 'i' => '@index:'];
 
     /** @var array<string, array<string, true>> scope => parameter names, for every analysed method */
     private array $parameters = [];
@@ -266,13 +267,18 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
             return;
         }
 
-        if (str_starts_with($target, 'v|') || str_starts_with($target, 'k|')) {
-            $slot = $scopeKey . '|' . ($target[0] === 'k' ? self::KEYS_SLOT : '') . mb_substr($target, 2);
+        $half = $target[0];
+
+        if ($target[1] === '|' && ($half === '*' || isset(self::LOCAL_SLOTS[$half]))) {
             $given = $at ?? self::UNKILLABLE;
-            $this->values[$slot][$given] = [
-                $this->merged($this->values[$slot][$given][0] ?? [], $value[0]),
-                $this->merged($this->values[$slot][$given][1] ?? [], $value[1]),
-            ];
+
+            foreach ($half === '*' ? self::LOCAL_SLOTS : [self::LOCAL_SLOTS[$half]] as $prefix) {
+                $slot = $scopeKey . '|' . $prefix . mb_substr($target, 2);
+                $this->values[$slot][$given] = [
+                    $this->merged($this->values[$slot][$given][0] ?? [], $value[0]),
+                    $this->merged($this->values[$slot][$given][1] ?? [], $value[1]),
+                ];
+            }
 
             return;
         }
@@ -299,10 +305,9 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
             [$kind, $name] = $atom;
             [$atomLabels, $atomParameters] = match ($kind) {
                 's' => [$this->source($name), []],
-                'v' => $this->variable($scopeKey, $name, $name, $atom[2] ?? null),
-                'k' => $this->variable($scopeKey, self::KEYS_SLOT . $name, $name, $atom[2] ?? null),
                 'h' => [$this->heap[$name] ?? [], []],
-                default => $this->callValue($name, $scopeKey),
+                'c' => $this->callValue($name, $scopeKey),
+                default => $this->variable($scopeKey, self::LOCAL_SLOTS[$kind] . $name, $name, $atom[2] ?? null),
             };
 
             $labels += $atomLabels;

@@ -62,7 +62,7 @@ namespace App\CredentialDerivedCacheKey\FlowShapes {
 
         public function leaksThroughAForeachKey(Vault $vault): void
         {
-            foreach ([$vault->api_key => 1] as $part => $unused) {
+            foreach ([$vault->api_key => 1, 'public' => 2] as $part => $unused) {
                 $this->cache->forget($part);
             }
         }
