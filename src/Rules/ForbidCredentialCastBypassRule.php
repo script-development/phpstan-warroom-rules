@@ -567,6 +567,17 @@ final class ForbidCredentialCastBypassRule implements Rule
     }
 
     /**
+     * Whether some declaration of the model's casts could not be read, so its
+     * encrypted attributes may be missing from `encryptedAttributesOf()`.
+     */
+    public function castMapUnreadable(string $modelFqcn): bool
+    {
+        $resolution = $this->castResolutionFor($modelFqcn);
+
+        return $resolution['unreadable'] !== [] || $resolution['incomplete'] !== [];
+    }
+
+    /**
      * Every model whose table this write could target — normally one, more when
      * the receiver's type is a UNION of builders. Empty when no model can be
      * established statically.

@@ -1,0 +1,364 @@
+<?php
+
+declare(strict_types = 1);
+
+namespace ScriptDevelopment\PhpstanWarroomRules\Tests\Rules;
+
+use PhpParser\Node;
+use PHPStan\Collectors\Collector;
+use PHPStan\Parser\Parser;
+use PHPStan\Parser\RichParser;
+use PHPStan\Rules\Rule;
+use PHPStan\Testing\RuleTestCase;
+use ReflectionClass;
+use ScriptDevelopment\PhpstanWarroomRules\Collectors\CacheKeyTaintCollector;
+use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidCredentialCastBypassRule;
+use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidCredentialDerivedCacheKeyRule;
+
+use function count;
+use function file_get_contents;
+use function preg_match_all;
+use function sort;
+use function sprintf;
+
+/**
+ * The fixtures port laravel-skeleton's `CacheKeyCredential` corpus (war-room
+ * enforcement queue #24): the twelve violation shapes, the two shapes that read
+ * the credential to call a provider and key the cache by id, and — in
+ * `TypeResolved.php` and `FlowShapes.php` — the shapes that corpus's
+ * name-matching scanner gets wrong in either direction.
+ *
+ * @extends RuleTestCase<ForbidCredentialDerivedCacheKeyRule>
+ */
+final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
+{
+    private const string FIXTURES = __DIR__ . '/../Fixtures/CredentialDerivedCacheKey/';
+
+    private const string MODELS = self::FIXTURES . 'Models.php';
+
+    private const string MESSAGE = "Cache key passed to %s() derives from the encrypted attribute %s. Key the cache by the owning entity's id (war-room Principle 10): a digest of the credential is still keyed by it, lands in the cache store, and outlives a rotation.";
+
+    private const string UNVERIFIABLE = "Cache key passed to %s() derives from App\\CredentialDerivedCacheKey\\Models\\Opaque::\$token (read at %s), an attribute of a model whose casts this rule cannot read, so whether it is encrypted is unknown. Restate the model's casts as literal string pairs, or suppress forbidCredentialDerivedCacheKey.castMapUnreadable here if the key is known safe.";
+
+    private const string VAULT_KEY = 'App\CredentialDerivedCacheKey\Models\Vault::$api_key';
+
+    private ?CacheKeyTaintCollector $collectorOverride = null;
+
+    private ?ForbidCredentialDerivedCacheKeyRule $ruleOverride = null;
+
+    public function testEverySingleClassViolationShapeReports(): void
+    {
+        $this->analyse([self::MODELS, self::FIXTURES . 'DirectKeys.php'], [
+            [self::message('get', 'DirectKeys.php', 17), 17],
+            [self::message('remember', 'DirectKeys.php', 34), 34],
+            [self::message('remember', 'DirectKeys.php', 47), 47],
+            [self::message('cache', 'DirectKeys.php', 61), 61],
+            [sprintf(self::MESSAGE, 'many', 'App\CredentialDerivedCacheKey\Models\Vault::$settings (read at DirectKeys.php:81)'), 81],
+            [sprintf(self::MESSAGE, 'tags', 'App\CredentialDerivedCacheKey\Models\Ledger::$iban (read at DirectKeys.php:98)'), 98],
+            [self::message('get', 'DirectKeys.php', 116), 116],
+            [self::message('get', 'DirectKeys.php', 134), 134],
+        ]);
+    }
+
+    /**
+     * The queue #24 seed: the digest is computed in a key object's constructor,
+     * and all three cache calls that use it — one of them in a private method
+     * handed the object — report the read that built it.
+     */
+    public function testADigestBuiltInsideAKeyObjectReportsAtEveryCacheCallUsingIt(): void
+    {
+        $this->analyse([self::MODELS, self::FIXTURES . 'HashedKeyObject.php'], [
+            [self::message('lock', 'HashedKeyObject.php', 28), 36],
+            [self::message('get', 'HashedKeyObject.php', 28), 39],
+            [self::message('put', 'HashedKeyObject.php', 28), 49],
+        ]);
+    }
+
+    public function testAKeyDerivedInAnotherClassReportsAtTheCacheCall(): void
+    {
+        $this->analyse([self::MODELS, self::FIXTURES . 'KeyObjects.php'], [
+            [self::message('get', 'KeyObjects.php', 30), 22],
+            [self::message('get', 'KeyObjects.php', 61), 51],
+            [self::message('get', 'KeyObjects.php', 107), 87],
+        ]);
+    }
+
+    /**
+     * Both shapes READ the credential — the control below proves it, so a rule
+     * that stopped seeing reads at all could not pass here by accident.
+     */
+    public function testShapesThatReadTheCredentialOnlyToCallTheProviderStayQuiet(): void
+    {
+        $source = file_get_contents(self::FIXTURES . 'CorrectKeys.php');
+
+        self::assertNotFalse($source);
+        self::assertSame(2, preg_match_all('/\$vault->api_key\)/', $source));
+
+        $this->analyse([self::MODELS, self::FIXTURES . 'CorrectKeys.php'], []);
+    }
+
+    /**
+     * Each shape here is one the name-matching scanner gets wrong: it reports
+     * `Widget::$api_key` (not encrypted) and the id-keyed helper call, and it
+     * misses the docblock-typed handle, the array-access read and the trait.
+     */
+    public function testTypeResolutionSettlesWhatAttributeNamesCannot(): void
+    {
+        $this->analyse([self::MODELS, self::FIXTURES . 'TypeResolved.php'], [
+            [self::message('get', 'TypeResolved.php', 46), 46],
+            [self::message('get', 'TypeResolved.php', 63), 63],
+            [self::message('get', 'TypeResolved.php', 78), 92],
+            [self::message('get', 'TypeResolved.php', 132), 132],
+        ]);
+    }
+
+    /**
+     * One method per propagation or sink arm; the count assertion keeps the
+     * `leaks…` population and this list from drifting apart.
+     */
+    public function testEveryPropagationAndSinkArmReportsOnlyWhereItLeaks(): void
+    {
+        $expected = [
+            [self::message('get', 'FlowShapes.php', 36), 38],
+            [self::message('get', 'FlowShapes.php', 44), 46],
+            [self::message('get', 'FlowShapes.php', 51), 53],
+            [self::message('forget', 'FlowShapes.php', 58), 59],
+            [self::message('forget', 'FlowShapes.php', 65), 66],
+            [self::message('get', 'FlowShapes.php', 72), 74],
+            [self::message('get', 'FlowShapes.php', 79), 81],
+            [self::message('get', 'FlowShapes.php', 86), 88],
+            [self::message('get', 'FlowShapes.php', 93), 93],
+            [sprintf(self::MESSAGE, 'get', 'App\CredentialDerivedCacheKey\Models\Ledger::$iban (read at FlowShapes.php:98)'), 98],
+            [self::message('get', 'FlowShapes.php', 103), 103],
+            [self::message('get', 'FlowShapes.php', 108), 108],
+            [self::message('get', 'FlowShapes.php', 113), 113],
+            [self::message('tooManyAttempts', 'FlowShapes.php', 118), 118],
+            [self::message('hit', 'FlowShapes.php', 123), 123],
+            [self::message('get', 'FlowShapes.php', 128), 128],
+            [self::message('get', 'FlowShapes.php', 133), 133],
+            [self::message('get', 'FlowShapes.php', 138), 138],
+            [self::message('putMany', 'FlowShapes.php', 148), 148],
+            [self::message('many', 'FlowShapes.php', 153), 153],
+            [self::message('get', 'FlowShapes.php', 159), 158],
+            [sprintf(self::MESSAGE, 'get', 'App\CredentialDerivedCacheKey\Models\Ledger::$iban (read at FlowShapes.php:166), ' . self::VAULT_KEY . ' (read at FlowShapes.php:166)'), 166],
+            [self::message('get', 'FlowShapes.php', 171), 171],
+            [sprintf(self::MESSAGE, 'get', self::VAULT_KEY . ' (read at FlowShapes.php:347), App\CredentialDerivedCacheKey\Models\Vault::$settings (read at FlowShapes.php:355)'), 176],
+            [sprintf(self::MESSAGE, 'tags', 'App\CredentialDerivedCacheKey\Models\Ledger::$iban (read at FlowShapes.php:181)'), 181],
+            [self::message('get', 'FlowShapes.php', 186), 186],
+            [self::message('get', 'FlowShapes.php', 191), 191],
+            [self::message('get', 'FlowShapes.php', 196), 196],
+            [sprintf(self::MESSAGE, 'get', 'App\CredentialDerivedCacheKey\Models\Ledger::$history (read at FlowShapes.php:201)'), 201],
+            [self::message('forget', 'FlowShapes.php', 143), 301],
+            [self::message('forget', 'FlowShapes.php', 390), 373],
+            [self::message('get', 'FlowShapes.php', 428), 428],
+            [sprintf(self::MESSAGE, 'get', self::VAULT_KEY . ' (read at FlowShapes.php:434), ' . self::VAULT_KEY . ' (read at FlowShapes.php:435), ' . self::VAULT_KEY . ' (read at FlowShapes.php:436)'), 433],
+            [self::message('get', 'Models.php', 23), 457],
+            [self::message('forget', 'FlowShapes.php', 462), 478],
+            [self::message('get', 'FlowShapes.php', 467), 467],
+        ];
+
+        $source = file_get_contents(self::FIXTURES . 'FlowShapes.php');
+
+        self::assertNotFalse($source);
+        self::assertSame(count($expected) - 1, preg_match_all('/function leaks/', $source), 'Every leaks… method reports exactly once — the helper-parameter one inside the helper it calls — plus the trait sink ForgetsBySecret reaches and ForgetsById does not.');
+        self::assertGreaterThan(5, preg_match_all('/function keeps/', $source));
+
+        $this->analyse([self::MODELS, self::FIXTURES . 'FlowShapes.php'], $expected);
+    }
+
+    /**
+     * Each sink reads the argument PHP binds to the key parameter, the way
+     * Laravel reads it: `getMultiple()` / `deleteMultiple()` take their keys
+     * from the array's values, `putMany()` from its keys, `many()` from a
+     * string key or else the value, and a map hoisted into a variable keeps its
+     * keys apart from its values.
+     */
+    public function testEverySinkReadsTheArgumentAndTheArrayHalfLaravelKeysBy(): void
+    {
+        $expected = [
+            [self::message('get', 'SinkBinding.php', 32), 32],
+            [self::message('cache', 'SinkBinding.php', 42), 42],
+            [self::message('hit', 'SinkBinding.php', 47), 47],
+            [self::message('get', 'SinkBinding.php', 52), 54],
+            [self::message('getMultiple', 'SinkBinding.php', 64), 64],
+            [self::message('deleteMultiple', 'SinkBinding.php', 69), 69],
+            [self::message('setMultiple', 'SinkBinding.php', 79), 79],
+            [self::message('string', 'SinkBinding.php', 84), 84],
+            [self::message('withoutOverlapping', 'SinkBinding.php', 89), 89],
+            [self::message('funnel', 'SinkBinding.php', 94), 94],
+            [self::message('many', 'SinkBinding.php', 99), 99],
+            [self::message('many', 'SinkBinding.php', 104), 104],
+            [self::message('many', 'SinkBinding.php', 109), 109],
+            [self::message('putMany', 'SinkBinding.php', 128), 130],
+            [self::message('putMany', 'SinkBinding.php', 136), 138],
+            [self::message('get', 'SinkBinding.php', 144), 146],
+            [self::message('putMany', 'SinkBinding.php', 151), 154],
+            [self::message('get', 'SinkBinding.php', 169), 169],
+            [self::message('getMultiple', 'SinkBinding.php', 174), 176],
+            [self::message('many', 'SinkBinding.php', 191), 191],
+            [self::message('putMany', 'SinkBinding.php', 196), 196],
+            [self::message('get', 'SinkBinding.php', 207), 209],
+            [self::message('putMany', 'SinkBinding.php', 159), 222],
+            [self::message('getMultiple', 'SinkBinding.php', 245), 247],
+            [self::message('getMultiple', 'SinkBinding.php', 261), 263],
+            [self::message('putMany', 'SinkBinding.php', 285), 289],
+            [self::message('putMany', 'SinkBinding.php', 302), 305],
+            [self::message('putMany', 'SinkBinding.php', 317), 319],
+            [self::message('forget', 'SinkBinding.php', 340), 343],
+            [self::message('get', 'SinkBinding.php', 366), 369],
+            [self::message('putMany', 'SinkBinding.php', 381), 383],
+            [self::message('putMany', 'SinkBinding.php', 405), 407],
+            [self::message('put', 'SinkBinding.php', 444), 444],
+            [self::message('put', 'SinkBinding.php', 449), 451],
+        ];
+
+        $source = file_get_contents(self::FIXTURES . 'SinkBinding.php');
+
+        self::assertNotFalse($source);
+        self::assertSame(count($expected), preg_match_all('/function leaks/', $source));
+        self::assertGreaterThan(5, preg_match_all('/function keeps/', $source));
+
+        $this->analyse([self::MODELS, self::FIXTURES . 'SinkBinding.php'], $expected);
+    }
+
+    /**
+     * Every value a variable or property ever holds is one value, so the
+     * `overReports…` methods report on a key that is clean at runtime; the
+     * `leaks…` methods prove the sharing never loses a taint.
+     */
+    public function testTheAnalysisOverReportsAndNeverLosesATaint(): void
+    {
+        $expected = [
+            [self::message('get', 'Imprecision.php', 38), 41],
+            [self::message('get', 'Imprecision.php', 46), 48],
+            [self::message('get', 'Imprecision.php', 55), 57],
+            [self::message('get', 'Imprecision.php', 62), 65],
+            [self::message('get', 'Imprecision.php', 73), 76],
+            [self::message('get', 'Imprecision.php', 82), 84],
+            [self::message('forget', 'Imprecision.php', 106), 109],
+            [self::message('forget', 'Imprecision.php', 115), 116],
+            [self::message('get', 'Imprecision.php', 122), 122],
+            [self::message('get', 'Imprecision.php', 211), 127],
+            [self::message('get', 'Imprecision.php', 132), 132],
+            [self::message('get', 'Imprecision.php', 139), 139],
+            [self::message('get', 'Imprecision.php', 285), 286],
+            [self::message('get', 'Imprecision.php', 294), 297],
+            [self::message('get', 'Imprecision.php', 302), 308],
+            [self::message('get', 'Imprecision.php', 313), 321],
+            [self::message('get', 'Imprecision.php', 334), 333],
+            [self::message('get', 'Imprecision.php', 345), 347],
+            [self::message('get', 'Imprecision.php', 354), 359],
+            [self::message('get', 'Imprecision.php', 364), 374],
+            [self::message('get', 'Imprecision.php', 394), 397],
+            [self::message('get', 'Imprecision.php', 402), 406],
+            [self::message('get', 'Imprecision.php', 414), 414],
+            [self::message('putMany', 'Imprecision.php', 444), 446],
+            [self::message('putMany', 'Imprecision.php', 451), 453],
+        ];
+
+        $source = file_get_contents(self::FIXTURES . 'Imprecision.php');
+
+        self::assertNotFalse($source);
+        self::assertSame(count($expected), preg_match_all('/function (leaks|overReports)/', $source));
+        self::assertSame(10, preg_match_all('/function misses/', $source));
+
+        $this->analyse([self::MODELS, self::FIXTURES . 'Imprecision.php'], $expected);
+    }
+
+    /**
+     * The rule docblock names, per out-of-reach shape, the `misses…` row that
+     * pins it: every name there must be a row, and every row must be named.
+     */
+    public function testTheReachStatementNamesEveryMissesRowAndNoOther(): void
+    {
+        $docblock = new ReflectionClass(ForbidCredentialDerivedCacheKeyRule::class)->getDocComment();
+        $fixture = file_get_contents(self::FIXTURES . 'Imprecision.php');
+
+        self::assertNotFalse($docblock);
+        self::assertNotFalse($fixture);
+        self::assertSame(10, preg_match_all('/\[`(misses\w+)`\]/', $docblock, $named));
+        self::assertSame(10, preg_match_all('/function (misses\w+)/', $fixture, $rows));
+
+        $named = $named[1];
+        $rows = $rows[1];
+        sort($named);
+        sort($rows);
+
+        self::assertSame($rows, $named);
+    }
+
+    /**
+     * A model whose casts cannot be read may hold a credential in any
+     * attribute, so a read of it that reaches a cache key reports under its
+     * own identifier — and a read that reaches no cache key does not.
+     */
+    public function testAReadOfAModelWithUnreadableCastsReportsOnlyWhereItReachesACacheKey(): void
+    {
+        $this->analyse([self::MODELS, self::FIXTURES . 'Unverifiable.php'], [
+            [sprintf(self::UNVERIFIABLE, 'get', 'Unverifiable.php:25'), 25],
+            [sprintf(self::UNVERIFIABLE, 'forget', 'Unverifiable.php:30'), 42],
+        ]);
+    }
+
+    /**
+     * The model is not in the analysed set here, as in a consumer whose result
+     * cache narrowed the run to the changed file. The collector must read casts
+     * through the NEON-wired credential-cast rule, whose parser keeps method
+     * bodies (WR-1462); a stripping parser would read `Vault::casts()` as empty
+     * and this rule would report nothing.
+     */
+    public function testResolvesFromExtensionNeonAndReadsCastsOfAModelOutsideTheAnalysedSet(): void
+    {
+        $container = self::getContainer();
+        $rule = $container->getByType(ForbidCredentialDerivedCacheKeyRule::class);
+        $castRule = $container->getByType(ForbidCredentialCastBypassRule::class);
+
+        self::assertSame($castRule, (new ReflectionClass($rule))->getProperty('castReader')->getValue($rule));
+        self::assertInstanceOf(RichParser::class, (new ReflectionClass($castRule))->getProperty('parser')->getValue($castRule));
+
+        $this->ruleOverride = $rule;
+        $this->collectorOverride = $container->getByType(CacheKeyTaintCollector::class);
+
+        $this->analyse([self::FIXTURES . 'KeyObjects.php'], [
+            [self::message('get', 'KeyObjects.php', 30), 22],
+            [self::message('get', 'KeyObjects.php', 61), 51],
+            [self::message('get', 'KeyObjects.php', 107), 87],
+        ]);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    public static function getAdditionalConfigFiles(): array
+    {
+        return [
+            __DIR__ . '/../../extension.neon',
+        ];
+    }
+
+    protected function getRule(): Rule
+    {
+        if ($this->ruleOverride !== null) {
+            return $this->ruleOverride;
+        }
+
+        $parser = self::getContainer()->getService('defaultAnalysisParser');
+
+        self::assertInstanceOf(Parser::class, $parser);
+
+        return new ForbidCredentialDerivedCacheKeyRule(new ForbidCredentialCastBypassRule(self::createReflectionProvider(), $parser));
+    }
+
+    /**
+     * @return list<Collector<Node, mixed>>
+     */
+    protected function getCollectors(): array
+    {
+        return [$this->collectorOverride ?? new CacheKeyTaintCollector(self::createReflectionProvider())];
+    }
+
+    private static function message(string $method, string $file, int $readLine): string
+    {
+        return sprintf(self::MESSAGE, $method, self::VAULT_KEY . sprintf(' (read at %s:%d)', $file, $readLine));
+    }
+}
