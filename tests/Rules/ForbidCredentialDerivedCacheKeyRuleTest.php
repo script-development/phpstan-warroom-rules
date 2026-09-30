@@ -208,6 +208,8 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
             [self::message('get', 'SinkBinding.php', 366), 369],
             [self::message('putMany', 'SinkBinding.php', 381), 383],
             [self::message('putMany', 'SinkBinding.php', 405), 407],
+            [self::message('put', 'SinkBinding.php', 444), 444],
+            [self::message('put', 'SinkBinding.php', 449), 451],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'SinkBinding.php');

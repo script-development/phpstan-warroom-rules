@@ -134,9 +134,11 @@ final class CacheKeyTaintCollector implements Collector
      * Every cache method that takes a key: the parameter it arrives in, always
      * the first, and how Laravel reads keys out of that argument — `one` it is
      * the key; `map` it is a key or an array whose string keys are keys and
-     * whose other entries are keyed by their value (`many()`, and `put()` /
-     * `putMany()` read at least that much); `values` the keys are the values
-     * (`getMultiple()`, `deleteMultiple()`); `all` every argument names a tag.
+     * whose other entries are keyed by their value (`get()`, `many()`); `own`
+     * it is a key or an array keyed by its own keys, whose entries are payloads
+     * (`put()`, `putMany()`, `set()`, `setMultiple()`, the `cache()` helper);
+     * `values` the keys are the values (`getMultiple()`, `deleteMultiple()`);
+     * `all` every argument names a tag.
      */
     private const array CACHE_SINKS = [
         'add' => ['key', 'one'],
@@ -159,15 +161,15 @@ final class CacheKeyTaintCollector implements Collector
         'many' => ['keys', 'map'],
         'missing' => ['key', 'one'],
         'pull' => ['key', 'one'],
-        'put' => ['key', 'map'],
-        'putmany' => ['values', 'map'],
+        'put' => ['key', 'own'],
+        'putmany' => ['values', 'own'],
         'remember' => ['key', 'one'],
         'rememberforever' => ['key', 'one'],
         'rememberwithwarmth' => ['key', 'one'],
         'restorelock' => ['name', 'one'],
         'sear' => ['key', 'one'],
-        'set' => ['key', 'map'],
-        'setmultiple' => ['values', 'map'],
+        'set' => ['key', 'own'],
+        'setmultiple' => ['values', 'own'],
         'string' => ['key', 'one'],
         'tags' => ['names', 'all'],
         'touch' => ['key', 'one'],
@@ -666,7 +668,7 @@ final class CacheKeyTaintCollector implements Collector
 
         if ($node instanceof FuncCall) {
             return $node->name instanceof Name && $this->isCacheHelper($node->name, $scope)
-                ? ['cache', $this->keyTerm($arguments, 'key', 'map', $scope)]
+                ? ['cache', $this->keyTerm($arguments, 'key', 'own', $scope)]
                 : null;
         }
 
@@ -715,6 +717,7 @@ final class CacheKeyTaintCollector implements Collector
         return match ($reads) {
             'map' => $this->halves($key, $scope)[1],
             'values' => $this->halves($key, $scope)[2],
+            'own' => $this->halves($key, $scope)[3],
             default => $this->term($key, $scope),
         };
     }

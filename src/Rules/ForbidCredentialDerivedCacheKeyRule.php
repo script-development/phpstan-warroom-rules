@@ -52,8 +52,9 @@ use function str_starts_with;
  * to the key parameter, named or positional, a spread array literal read as
  * its entries — every argument when any other spread or a missing name leaves
  * that unknown — read the way Laravel reads keys out of it (`getMultiple()` /
- * `deleteMultiple()` by an array's values, `putMany()` by its keys, `many()` by
- * a string key or else the value, and a raw `Store`'s `many()` by every value,
+ * `deleteMultiple()` by an array's values, `put()` / `putMany()` / `set()` /
+ * `setMultiple()` / `cache()` by its own keys, `get()` / `many()` by a string
+ * key or else the value, and a raw `Store`'s `many()` by every value,
  * as the Redis, Memcached, database and DynamoDB stores do). A call into analysed
  * code yields the callee's return SUMMARY for the arguments at that call site,
  * so a shared key helper handed an id at one site and the credential at another

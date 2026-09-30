@@ -406,4 +406,48 @@ final readonly class HoistedMaps
 
         return $this->cache->putMany($source + ['vault:' . $vault->id => 1], 60);
     }
+
+    public function keepsAPutManyValueUnderAnIntegerKey(Vault $vault): bool
+    {
+        return $this->cache->putMany([0 => $vault->api_key], 60);
+    }
+
+    public function keepsAPutManyListValue(Vault $vault): bool
+    {
+        return $this->cache->putMany([$vault->api_key], 60);
+    }
+
+    public function keepsAHoistedPutManyListValue(Vault $vault): bool
+    {
+        $values = [$vault->api_key];
+
+        return $this->cache->putMany($values, 60);
+    }
+
+    public function keepsAPutListValue(Vault $vault): bool
+    {
+        return $this->cache->put([$vault->api_key], 60);
+    }
+
+    public function keepsASetAndSetMultipleListValue(Vault $vault): bool
+    {
+        return $this->cache->set([$vault->api_key], 1) && $this->cache->setMultiple([$vault->api_key]);
+    }
+
+    public function keepsACacheHelperListValue(Vault $vault): void
+    {
+        cache([$vault->api_key], 60);
+    }
+
+    public function leaksThroughAScalarPutKey(Vault $vault): bool
+    {
+        return $this->cache->put('vault:' . $vault->api_key, 1, 60);
+    }
+
+    public function leaksThroughAScalarPutKeyHeldInALocal(Vault $vault): bool
+    {
+        $key = 'vault:' . $vault->api_key;
+
+        return $this->cache->put($key, 1, 60);
+    }
 }
