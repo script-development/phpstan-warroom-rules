@@ -209,6 +209,11 @@ final readonly class Sinks
         return $this->cache->get(implode(':', array_keys($seen['vault'])));
     }
 
+    public function keepsASpreadDefaultOutOfTheKey(Vault $vault): mixed
+    {
+        return $this->cache->get(...['vault:' . $vault->id, $vault->api_key]);
+    }
+
     /**
      * @param array<string, mixed> $values
      */

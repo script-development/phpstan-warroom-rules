@@ -49,24 +49,30 @@ use function str_starts_with;
  * Laravel cache handle (the `Illuminate\Contracts\Cache` / `Illuminate\Cache`
  * families, the `Cache` facade, the `cache()` helper) or on the `RateLimiter`,
  * which stores its counters under the key it is handed: the argument PHP binds
- * to the key parameter, named or positional — every argument when a spread or
- * a missing name leaves that unknown — read the way Laravel reads keys out of
- * it (`getMultiple()` / `deleteMultiple()` by an array's values, `putMany()` by
- * its keys, `many()` by a string key or else the value). A call into analysed
+ * to the key parameter, named or positional, a spread array literal read as
+ * its entries — every argument when any other spread or a missing name leaves
+ * that unknown — read the way Laravel reads keys out of it (`getMultiple()` /
+ * `deleteMultiple()` by an array's values, `putMany()` by its keys, `many()` by
+ * a string key or else the value, and a raw `Store`'s `many()` by every value,
+ * as the Redis, Memcached, database and DynamoDB stores do). A call into analysed
  * code yields the callee's return SUMMARY for the arguments at that call site,
  * so a shared key helper handed an id at one site and the credential at another
  * reports only the second.
  *
  * REACH — what the analysis follows: a named attribute read on a model-typed
- * receiver (a property, `getAttribute()`, array access — the name a literal or
- * a value of one constant string type); locals, and the keys a local map
+ * receiver, or on the model branches of a union receiver (a property,
+ * `getAttribute()`, array access — the name a literal or a value of one
+ * constant string type); locals, and the keys a local map
  * holds; properties; the bodies of CLASS METHODS, their parameters bound per
  * call site and their returns; and a call into code it has no body for, read
  * from its arguments. Outside that reach, each a known false negative; a
  * bracketed name is the `Imprecision.php` fixture row pinning that shape:
  *   - an attribute named at runtime (`$vault->{$name}`, `getAttribute($name)`)
- *     [`missesAnAttributeNamedAtRuntime`], or read in bulk (`toArray()`,
- *     `only()`, `getAttributes()`) [unpinned];
+ *     [`missesAnAttributeNamedAtRuntime`];
+ *   - an attribute returned by a model method the analysis has no body for —
+ *     Eloquent's own bulk readers (`toArray()`, `only()`, `getAttributes()`),
+ *     or a model outside the analysed paths
+ *     [`missesAnAttributeReturnedByAModelMethodWithNoBody`];
  *   - a NAMED FUNCTION's body — a credential it reads for itself
  *     [`missesACredentialReadInsideANamedFunction`], or a parameter it hands to
  *     a cache sink [`missesACredentialHandedToANamedFunctionsSink`];
@@ -91,15 +97,19 @@ use function str_starts_with;
  * not.
  *
  * False positives, each by construction, and each only ever adding a report:
- * the analysis is flow-insensitive — every value a variable is ever assigned
- * counts at every read of it, so a key reassigned from the credential to the
- * id still reports; it is instance-insensitive — a property is one slot shared
- * by every instance of its class and its subclasses, so a value object
- * constructed from the credential anywhere taints its methods everywhere; a
- * map that reaches a sink through a call or a parameter counts its values as
- * keys; and a value returned by a call that was HANDED the credential — a
- * provider response fetched with the API key — carries the credential, so a
- * key built from a field of that response reports.
+ * the analysis is flow-insensitive but for one shape — a `$name = …;`
+ * statement replaces every earlier value of `$name` for the reads after it in
+ * its own statement list, unless the method holds a `goto` or the value came
+ * through a reference or a closure — so a key reassigned inside a branch, even
+ * on every branch, still reports; it is instance-insensitive — a property is
+ * one slot shared by every instance of its class and its subclasses, so a
+ * value object constructed from the credential anywhere taints its methods
+ * everywhere; a map that reaches a sink through a call or a parameter counts
+ * its values as keys; a spread that spreads again, or whose keys are not
+ * known, hands its whole value to every parameter from its position on; and a
+ * value returned by a call that was HANDED the credential — a provider
+ * response fetched with the API key — carries the credential, so a key built
+ * from a field of that response reports.
  *
  * A sink inside a helper that receives the credential as a parameter reports
  * once, at the helper's line, whichever caller handed it the credential.
@@ -121,8 +131,8 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
     /** Marks a label whose attribute sits on a model with unreadable casts; no class name starts with it. */
     private const string UNVERIFIABLE = '?';
 
-    /** A slot name no PHP variable can take, so `$r` never reads as the return value. */
-    private const string RETURN_SLOT = '@return';
+    /** Marks a value a later statement cannot replace; an array key no offset can take. */
+    private const string UNKILLABLE = 'ref';
 
     /** Prefixes the slot holding the keys a cache sink reads out of a variable; no PHP variable name can start with it. */
     private const string KEYS_SLOT = '@keys:';
@@ -133,8 +143,14 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
     /** @var array<string, array<string, array{Term, array<string, array<string, Term>>}>> scope => call id => fallback term, callee => parameter => argument term */
     private array $calls = [];
 
-    /** @var array<string, array{array<string, true>, array<string, true>}> `scope|variable` or `scope|@return` => labels, parameters */
+    /** @var array<string, array<int|string, array{array<string, true>, array<string, true>}>> `scope|variable` => offset it was given at => labels, parameters */
     private array $values = [];
+
+    /** @var array<string, array{array<string, true>, array<string, true>}> scope => labels, parameters of its return value */
+    private array $returns = [];
+
+    /** @var array<string, array<string, list<array{int, int, int}>>> scope => variable => assignment offset, statement end, list end */
+    private array $kills = [];
 
     /** @var array<string, array<string, true>> heap slot => labels */
     private array $heap = [];
@@ -161,6 +177,8 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
         $this->parameters = [];
         $this->calls = [];
         $this->values = [];
+        $this->returns = [];
+        $this->kills = [];
         $this->heap = [];
         $this->bound = [];
 
@@ -177,8 +195,8 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
         do {
             $this->changed = false;
 
-            foreach ($flows as [$scopeKey, $target, $term]) {
-                $this->flow($scopeKey, $target, $term);
+            foreach ($flows as [$scopeKey, $target, $term, $at]) {
+                $this->flow($scopeKey, $target, $term, $at);
             }
 
             foreach ($binds as [$scopeKey, $callee, $parameter, $term]) {
@@ -192,7 +210,7 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
 
     /**
      * @param Facts                                                               $facts
-     * @param list<array{string, string, Term}>                                   $flows
+     * @param list<array{string, string, Term, int|null}>                         $flows
      * @param list<array{string, string, string, Term}>                           $binds
      * @param array<string, array<int, array<string, list<array{string, Term}>>>> $sinks
      */
@@ -208,8 +226,12 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
             }
         }
 
-        foreach ($facts['flows'] ?? [] as [$target, $term]) {
-            $flows[] = [$scopeKey, $target, $term];
+        foreach ($facts['kills'] ?? [] as [$variable, $at, $statementEnd, $listEnd]) {
+            $this->kills[$scopeKey][$variable][] = [$at, $statementEnd, $listEnd];
+        }
+
+        foreach ($facts['flows'] ?? [] as [$target, $term, $at]) {
+            $flows[] = [$scopeKey, $target, $term, $at];
         }
 
         if (array_key_exists('call', $facts)) {
@@ -231,19 +253,25 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
     /**
      * @param Term $term
      */
-    private function flow(string $scopeKey, string $target, array $term): void
+    private function flow(string $scopeKey, string $target, array $term, ?int $at): void
     {
         $value = $this->evaluate($term, $scopeKey);
 
-        if (str_starts_with($target, 'v|') || str_starts_with($target, 'k|') || $target === 'r') {
-            $slot = $scopeKey . '|' . match ($target[0]) {
-                'r' => self::RETURN_SLOT,
-                'k' => self::KEYS_SLOT . mb_substr($target, 2),
-                default => mb_substr($target, 2),
-            };
-            $this->values[$slot] = [
-                $this->merged($this->values[$slot][0] ?? [], $value[0]),
-                $this->merged($this->values[$slot][1] ?? [], $value[1]),
+        if ($target === 'r') {
+            $this->returns[$scopeKey] = [
+                $this->merged($this->returns[$scopeKey][0] ?? [], $value[0]),
+                $this->merged($this->returns[$scopeKey][1] ?? [], $value[1]),
+            ];
+
+            return;
+        }
+
+        if (str_starts_with($target, 'v|') || str_starts_with($target, 'k|')) {
+            $slot = $scopeKey . '|' . ($target[0] === 'k' ? self::KEYS_SLOT : '') . mb_substr($target, 2);
+            $given = $at ?? self::UNKILLABLE;
+            $this->values[$slot][$given] = [
+                $this->merged($this->values[$slot][$given][0] ?? [], $value[0]),
+                $this->merged($this->values[$slot][$given][1] ?? [], $value[1]),
             ];
 
             return;
@@ -267,11 +295,12 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
         $labels = [];
         $parameters = [];
 
-        foreach ($term as [$kind, $name]) {
+        foreach ($term as $atom) {
+            [$kind, $name] = $atom;
             [$atomLabels, $atomParameters] = match ($kind) {
                 's' => [$this->source($name), []],
-                'v' => $this->variable($scopeKey, $name, $name),
-                'k' => $this->variable($scopeKey, self::KEYS_SLOT . $name, $name),
+                'v' => $this->variable($scopeKey, $name, $name, $atom[2] ?? null),
+                'k' => $this->variable($scopeKey, self::KEYS_SLOT . $name, $name, $atom[2] ?? null),
                 'h' => [$this->heap[$name] ?? [], []],
                 default => $this->callValue($name, $scopeKey),
             };
@@ -300,17 +329,49 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
     }
 
     /**
+     * Every value the variable is given that can still hold at the read
+     * offset; with no offset, every value it is ever given. A parameter's
+     * own value is given at offset -1, before the body.
+     *
      * @return array{array<string, true>, array<string, true>}
      */
-    private function variable(string $scopeKey, string $slot, string $name): array
+    private function variable(string $scopeKey, string $slot, string $name, ?int $readAt): array
     {
-        $value = $this->values[$scopeKey . '|' . $slot] ?? [[], []];
+        $labels = [];
+        $parameters = [];
 
-        if (isset($this->parameters[$scopeKey][$name])) {
-            $value[1][$name] = true;
+        foreach ($this->values[$scopeKey . '|' . $slot] ?? [] as $givenAt => [$givenLabels, $givenParameters]) {
+            if (!$this->replaced($scopeKey, $name, $givenAt, $readAt)) {
+                $labels += $givenLabels;
+                $parameters += $givenParameters;
+            }
         }
 
-        return $value;
+        if (isset($this->parameters[$scopeKey][$name]) && !$this->replaced($scopeKey, $name, -1, $readAt)) {
+            $parameters[$name] = true;
+        }
+
+        return [$labels, $parameters];
+    }
+
+    /**
+     * Whether a `$name = …;` statement stands between a value given at one
+     * offset and a read at another: the read follows the statement in its
+     * statement list, and the value was not given later in that list.
+     */
+    private function replaced(string $scopeKey, string $name, int|string $givenAt, ?int $readAt): bool
+    {
+        if ($readAt === null || $givenAt === self::UNKILLABLE) {
+            return false;
+        }
+
+        foreach ($this->kills[$scopeKey][$name] ?? [] as [$at, $statementEnd, $listEnd]) {
+            if ($statementEnd < $readAt && $readAt <= $listEnd && $givenAt !== $at && ($givenAt <= $statementEnd || $givenAt > $listEnd)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -330,7 +391,7 @@ final class ForbidCredentialDerivedCacheKeyRule implements Rule
                 continue;
             }
 
-            [$returned, $dependsOn] = $this->values[$callee . '|' . self::RETURN_SLOT] ?? [[], []];
+            [$returned, $dependsOn] = $this->returns[$callee] ?? [[], []];
             $labels += $returned;
 
             foreach (array_keys($dependsOn) as $parameter) {

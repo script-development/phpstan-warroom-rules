@@ -10,8 +10,8 @@ use Illuminate\Contracts\Cache\Repository;
 use stdClass;
 
 /**
- * The analysis is flow- and instance-insensitive: every value a variable
- * or a property ever holds is one value. That only ever adds a report —
+ * The analysis is instance- and flow-insensitive — every value a slot ever
+ * holds is one value, bar `Reassignments` below. That only ever adds a report —
  * a method named `overReports…` reports although the key it hands the
  * cache is clean at runtime — and never loses one: a method named
  * `leaks…` reports exactly once, however the slot was shared or written.
@@ -25,7 +25,7 @@ final class Keys
         private Repository $cache,
     ) {}
 
-    public function overReportsAKeyReassignedToTheId(Vault $vault): mixed
+    public function keepsAKeyReassignedToTheId(Vault $vault): mixed
     {
         $key = 'vault:' . $vault->api_key;
         $key = 'vault:' . $vault->id;
@@ -184,6 +184,11 @@ final class Keys
 
         return $this->cache->get((static fn(): string => $secret)());
     }
+
+    public function missesAnAttributeReturnedByAModelMethodWithNoBody(Vault $vault): mixed
+    {
+        return $this->cache->get('vault:' . $vault->only('api_key')['api_key']);
+    }
 }
 
 final readonly class CleanKeys
@@ -250,4 +255,177 @@ function forget_vault_key(Repository $cache, string $key): void
 function vault_key(Vault $vault): string
 {
     return 'vault:' . $vault->api_key;
+}
+
+/**
+ * A `$name = …;` statement replaces every earlier value for the reads after
+ * it in its own statement list, and nothing else does.
+ */
+final readonly class Reassignments
+{
+    public function __construct(
+        private Repository $cache,
+    ) {}
+
+    public function keepsAParameterReassignedToTheId(Vault $vault): bool
+    {
+        return $this->byId($vault->api_key, $vault);
+    }
+
+    public function keepsAMapReassignedToIdKeys(Vault $vault): bool
+    {
+        $map = [$vault->api_key => 1];
+        $map = ['vault:' . $vault->id => 1];
+
+        return $this->cache->putMany($map, 60);
+    }
+
+    public function leaksThroughAReadBeforeTheReassignment(Vault $vault): mixed
+    {
+        $key = $vault->api_key;
+        $value = $this->cache->get($key);
+        $key = 'vault:' . $vault->id;
+
+        return $value;
+    }
+
+    public function leaksThroughTheRightHandSideOfTheReassignment(Vault $vault): mixed
+    {
+        $key = $vault->api_key;
+        $key = 'vault:' . $key;
+
+        return $this->cache->get($key);
+    }
+
+    public function leaksThroughAReassignmentOnlyOneBranchMakes(Vault $vault, bool $byId): mixed
+    {
+        $key = $vault->api_key;
+
+        if ($byId) {
+            $key = 'vault:' . $vault->id;
+        }
+
+        return $this->cache->get($key);
+    }
+
+    public function overReportsAKeyReassignedOnEveryBranch(Vault $vault, bool $byId): mixed
+    {
+        $key = $vault->api_key;
+
+        if ($byId) {
+            $key = 'vault:' . $vault->id;
+        } else {
+            $key = 'vault';
+        }
+
+        return $this->cache->get($key);
+    }
+
+    /**
+     * @param list<int> $rounds
+     */
+    public function leaksThroughAnEarlierIteration(Vault $vault, array $rounds): mixed
+    {
+        $key = 'vault:' . $vault->id;
+        $value = null;
+
+        foreach ($rounds as $round) {
+            $value = $this->cache->get($key);
+            $key = $vault->api_key;
+        }
+
+        return $value;
+    }
+
+    public function leaksThroughAnAliasWrittenAfterTheReassignment(Vault $vault): mixed
+    {
+        $key = '';
+        $alias = &$key;
+        $key = 'vault:' . $vault->id;
+        $alias = $vault->api_key;
+
+        return $this->cache->get($key);
+    }
+
+    public function leaksThroughAClosureWritingByReference(Vault $vault): mixed
+    {
+        $key = '';
+        $load = static function() use (&$key, $vault): void {
+            $key = $vault->api_key;
+        };
+        $key = 'vault:' . $vault->id;
+        $load();
+
+        return $this->cache->get($key);
+    }
+
+    public function leaksPastAReassignmentAGotoJumpsOver(Vault $vault, bool $direct): mixed
+    {
+        $key = $vault->api_key;
+
+        if ($direct) {
+            $key .= '';
+        } else {
+            goto read;
+        }
+        $key = 'vault:' . $vault->id;
+
+        read:
+        return $this->cache->get($key);
+    }
+
+    public function keepsAKeyReassignedInsideTheBranchThatReadsIt(Vault $vault, bool $byId): mixed
+    {
+        $value = null;
+
+        if ($byId) {
+            $key = 'vault';
+        } else {
+            $key = $vault->api_key;
+            $key = 'vault:' . $vault->id;
+            $value = $this->cache->get($key);
+        }
+
+        return $value;
+    }
+
+    public function leaksThroughACompoundAssignment(Vault $vault): mixed
+    {
+        $key = $vault->api_key;
+        $key .= ':vault';
+
+        return $this->cache->get($key);
+    }
+
+    public function leaksThroughAForeachByReferenceValue(Vault $vault): mixed
+    {
+        $parts = [$vault->api_key];
+        $value = null;
+
+        foreach ($parts as &$part) {
+            $value = $this->cache->get($part);
+        }
+
+        return $value;
+    }
+
+    public function overReportsASpreadThatSpreadsAgain(Vault $vault, Picker $picker): mixed
+    {
+        return $this->cache->get($picker->pick(...[...['vault'], $vault->api_key]));
+    }
+
+    private function byId(string $key, Vault $vault): bool
+    {
+        $key = 'vault:' . $vault->id;
+
+        return $this->cache->forget($key);
+    }
+}
+
+final readonly class Picker
+{
+    public function pick(string $used, string $ignored = ''): string
+    {
+        return $used;
+    }
 }

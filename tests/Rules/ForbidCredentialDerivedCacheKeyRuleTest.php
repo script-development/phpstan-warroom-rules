@@ -150,6 +150,11 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
             [sprintf(self::MESSAGE, 'get', 'App\CredentialDerivedCacheKey\Models\Ledger::$history (read at FlowShapes.php:201)'), 201],
             [self::message('forget', 'FlowShapes.php', 143), 301],
             [self::message('forget', 'FlowShapes.php', 390), 373],
+            [self::message('get', 'FlowShapes.php', 428), 428],
+            [sprintf(self::MESSAGE, 'get', self::VAULT_KEY . ' (read at FlowShapes.php:434), ' . self::VAULT_KEY . ' (read at FlowShapes.php:435), ' . self::VAULT_KEY . ' (read at FlowShapes.php:436)'), 433],
+            [self::message('get', 'Models.php', 23), 457],
+            [self::message('forget', 'FlowShapes.php', 462), 478],
+            [self::message('get', 'FlowShapes.php', 467), 467],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'FlowShapes.php');
@@ -193,7 +198,7 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
             [self::message('many', 'SinkBinding.php', 191), 191],
             [self::message('putMany', 'SinkBinding.php', 196), 196],
             [self::message('get', 'SinkBinding.php', 207), 209],
-            [self::message('putMany', 'SinkBinding.php', 159), 217],
+            [self::message('putMany', 'SinkBinding.php', 159), 222],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'SinkBinding.php');
@@ -213,7 +218,6 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
     public function testTheAnalysisOverReportsAndNeverLosesATaint(): void
     {
         $expected = [
-            [self::message('get', 'Imprecision.php', 30), 33],
             [self::message('get', 'Imprecision.php', 38), 41],
             [self::message('get', 'Imprecision.php', 46), 48],
             [self::message('get', 'Imprecision.php', 55), 57],
@@ -223,16 +227,27 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
             [self::message('forget', 'Imprecision.php', 106), 109],
             [self::message('forget', 'Imprecision.php', 115), 116],
             [self::message('get', 'Imprecision.php', 122), 122],
-            [self::message('get', 'Imprecision.php', 206), 127],
+            [self::message('get', 'Imprecision.php', 211), 127],
             [self::message('get', 'Imprecision.php', 132), 132],
             [self::message('get', 'Imprecision.php', 139), 139],
+            [self::message('get', 'Imprecision.php', 285), 286],
+            [self::message('get', 'Imprecision.php', 294), 297],
+            [self::message('get', 'Imprecision.php', 302), 308],
+            [self::message('get', 'Imprecision.php', 313), 321],
+            [self::message('get', 'Imprecision.php', 334), 333],
+            [self::message('get', 'Imprecision.php', 345), 347],
+            [self::message('get', 'Imprecision.php', 354), 359],
+            [self::message('get', 'Imprecision.php', 364), 374],
+            [self::message('get', 'Imprecision.php', 394), 397],
+            [self::message('get', 'Imprecision.php', 402), 406],
+            [self::message('get', 'Imprecision.php', 414), 414],
         ];
 
         $source = file_get_contents(self::FIXTURES . 'Imprecision.php');
 
         self::assertNotFalse($source);
         self::assertSame(count($expected), preg_match_all('/function (leaks|overReports)/', $source));
-        self::assertSame(8, preg_match_all('/function misses/', $source));
+        self::assertSame(9, preg_match_all('/function misses/', $source));
 
         $this->analyse([self::MODELS, self::FIXTURES . 'Imprecision.php'], $expected);
     }
@@ -248,8 +263,8 @@ final class ForbidCredentialDerivedCacheKeyRuleTest extends RuleTestCase
 
         self::assertNotFalse($docblock);
         self::assertNotFalse($fixture);
-        self::assertSame(8, preg_match_all('/\[`(misses\w+)`\]/', $docblock, $named));
-        self::assertSame(8, preg_match_all('/function (misses\w+)/', $fixture, $rows));
+        self::assertSame(9, preg_match_all('/\[`(misses\w+)`\]/', $docblock, $named));
+        self::assertSame(9, preg_match_all('/function (misses\w+)/', $fixture, $rows));
 
         $named = $named[1];
         $rows = $rows[1];

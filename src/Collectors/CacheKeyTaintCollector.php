@@ -38,7 +38,9 @@ use PhpParser\Node\Scalar\InterpolatedString;
 use PhpParser\Node\Scalar\String_;
 use PhpParser\Node\Stmt;
 use PhpParser\Node\Stmt\ClassMethod;
+use PhpParser\Node\Stmt\Expression;
 use PhpParser\Node\Stmt\Foreach_;
+use PhpParser\Node\Stmt\Goto_;
 use PhpParser\Node\Stmt\Return_;
 use PHPStan\Analyser\Scope;
 use PHPStan\Collectors\Collector;
@@ -60,6 +62,7 @@ use function basename;
 use function count;
 use function in_array;
 use function is_array;
+use function is_int;
 use function is_string;
 use function mb_strtolower;
 use function preg_match;
@@ -81,7 +84,9 @@ use function str_starts_with;
  *     run, never here: collected data is cached per file, and PHPStan does not
  *     re-analyse a file when only a method BODY it depends on changes, so a
  *     cast verdict stored here would go stale the day a `casts()` body moves.
- *   - `v` — a local variable (or parameter) of the enclosing method.
+ *   - `v` — a local variable (or parameter) of the enclosing method, with the
+ *     offset it is read at; a read with no offset sees every value the
+ *     variable is ever given.
  *   - `k` — the keys a cache sink reads out of a local variable holding a
  *     map: its string keys, and the values of its other entries.
  *   - `h` — a HEAP slot: a declared property, per topmost declaring class,
@@ -99,12 +104,20 @@ use function str_starts_with;
  * column of it, so `$vault->id` stays clean even when `$vault` itself was
  * looked up by its API key.
  *
- * @phpstan-type Atom array{string, string}
+ * A flow into a local carries the offset of the assignment making it, or null
+ * when a later write elsewhere can still change the value — a reference, or
+ * code inside a closure. A KILL is a `$name = …;` statement: a read after it
+ * in the same statement list sees no value given outside the stretch between
+ * them, since a list is only ever entered at its start. A method holding a
+ * `goto` records no kills — a jump can land past one.
+ *
+ * @phpstan-type Atom array{0: string, 1: string, 2?: int}
  * @phpstan-type Term list<Atom>
  * @phpstan-type Facts array{
  *     scope: string,
  *     params?: list<string>,
- *     flows?: list<array{string, Term}>,
+ *     kills?: list<array{string, int, int, int}>,
+ *     flows?: list<array{string, Term, int|null}>,
  *     call?: array{string, Term, array<string, array<string, Term>>},
  *     sink?: array{string, int, Term},
  * }
@@ -199,15 +212,15 @@ final class CacheKeyTaintCollector implements Collector
         if ($node instanceof Assign || $node instanceof AssignOp) {
             $term = $this->term($node->expr, $scope);
 
-            return $this->flows($key, $this->assignment($node->var, $term, $node->expr instanceof Array_ ? $this->mapKeys($node->expr, $scope) : $term, $scope));
+            return $this->flows($key, $this->assignment($node->var, $term, $node->expr instanceof Array_ ? $this->mapKeys($node->expr, $scope) : $term, $scope), $this->definedAt($node, $scope));
         }
 
         if ($node instanceof AssignRef) {
-            // A reference is written through in both directions.
+            // A reference is written through in both directions, whenever either side is written.
             $into = $this->term($node->expr, $scope);
             $back = $this->term($node->var, $scope);
 
-            return $this->flows($key, [...$this->assignment($node->var, $into, $into, $scope), ...$this->assignment($node->expr, $back, $back, $scope)]);
+            return $this->flows($key, [...$this->assignment($node->var, $into, $into, $scope), ...$this->assignment($node->expr, $back, $back, $scope)], null);
         }
 
         if ($node instanceof Foreach_) {
@@ -218,16 +231,18 @@ final class CacheKeyTaintCollector implements Collector
                 $flows = [...$flows, ...$this->assignment($node->keyVar, $keys, $keys, $scope)];
             }
 
+            $flows = $this->placed($flows, $this->definedAt($node, $scope));
+
             if ($node->byRef) {
                 $back = $this->term($node->valueVar, $scope);
-                $flows = [...$flows, ...$this->assignment($node->expr, $back, $back, $scope)];
+                $flows = [...$flows, ...$this->placed($this->assignment($node->expr, $back, $back, $scope), null)];
             }
 
-            return $this->flows($key, $flows);
+            return $this->placedFlows($key, $flows);
         }
 
         if ($node instanceof Return_ && $node->expr instanceof Expr && !$scope->isInAnonymousFunction()) {
-            return $this->flows($key, [['r', $this->term($node->expr, $scope)]]);
+            return $this->flows($key, [['r', $this->term($node->expr, $scope)]], null);
         }
 
         if ($node instanceof MethodCall || $node instanceof NullsafeMethodCall || $node instanceof StaticCall || $node instanceof New_ || $node instanceof FuncCall) {
@@ -264,11 +279,77 @@ final class CacheKeyTaintCollector implements Collector
             $params[] = $param->var->name;
 
             if ($param->isPromoted() && $class->hasNativeProperty($param->var->name)) {
-                $flows[] = ['p|' . $this->propertyOwner($class, $param->var->name) . '|' . $param->var->name, [['v', $param->var->name]]];
+                $flows[] = ['p|' . $this->propertyOwner($class, $param->var->name) . '|' . $param->var->name, [['v', $param->var->name]], null];
             }
         }
 
-        return ['scope' => $key, 'params' => $params, 'flows' => $flows];
+        $kills = [];
+
+        if (!$this->contains($node->stmts, Goto_::class)) {
+            $this->kills($node, $kills);
+        }
+
+        return ['scope' => $key, 'params' => $params, 'kills' => $kills, 'flows' => $flows];
+    }
+
+    /**
+     * Every `$name = …;` statement in a statement list of this code: the
+     * variable, the assignment's offset, the statement's end and the list's
+     * end. A list inside a closure or a nested declaration is entered at its
+     * start like any other, and its reads resolve in their own scope.
+     *
+     * @param list<array{string, int, int, int}> $kills
+     */
+    private function kills(Node $node, array &$kills): void
+    {
+        foreach ($node->getSubNodeNames() as $subNodeName) {
+            $children = is_array($node->{$subNodeName}) ? $node->{$subNodeName} : [$node->{$subNodeName}];
+            $statements = array_values(array_filter($children, static fn(mixed $child): bool => $child instanceof Stmt));
+
+            foreach ($statements as $statement) {
+                if ($statement instanceof Expression && $statement->expr instanceof Assign && $statement->expr->var instanceof Variable && is_string($statement->expr->var->name)) {
+                    $kills[] = [$statement->expr->var->name, $statement->expr->getStartFilePos(), $statement->getEndFilePos(), $statements[count($statements) - 1]->getEndFilePos()];
+                }
+            }
+
+            foreach ($children as $child) {
+                if ($child instanceof Node) {
+                    $this->kills($child, $kills);
+                }
+            }
+        }
+    }
+
+    /**
+     * @param array<Node>        $nodes
+     * @param class-string<Node> $type
+     */
+    private function contains(array $nodes, string $type): bool
+    {
+        foreach ($nodes as $node) {
+            if ($node instanceof $type) {
+                return true;
+            }
+
+            foreach ($node->getSubNodeNames() as $subNodeName) {
+                $children = $node->{$subNodeName};
+
+                if ($this->contains(array_filter(is_array($children) ? $children : [$children], static fn(mixed $child): bool => $child instanceof Node), $type)) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The offset a flow into a local is made at, or null inside a closure,
+     * which may run after any later statement.
+     */
+    private function definedAt(Node $node, Scope $scope): ?int
+    {
+        return $scope->isInAnonymousFunction() ? null : $node->getStartFilePos();
     }
 
     /**
@@ -276,7 +357,27 @@ final class CacheKeyTaintCollector implements Collector
      *
      * @return Facts|null
      */
-    private function flows(string $scope, array $flows): ?array
+    private function flows(string $scope, array $flows, ?int $at): ?array
+    {
+        return $this->placedFlows($scope, $this->placed($flows, $at));
+    }
+
+    /**
+     * @param list<array{string, Term}> $flows
+     *
+     * @return list<array{string, Term, int|null}>
+     */
+    private function placed(array $flows, ?int $at): array
+    {
+        return array_map(static fn(array $flow): array => [$flow[0], $flow[1], $at], $flows);
+    }
+
+    /**
+     * @param list<array{string, Term, int|null}> $flows
+     *
+     * @return Facts|null
+     */
+    private function placedFlows(string $scope, array $flows): ?array
     {
         $flows = array_values(array_filter($flows, static fn(array $flow): bool => $flow[1] !== []));
 
@@ -360,7 +461,7 @@ final class CacheKeyTaintCollector implements Collector
 
         $term = $this->term($iterable, $scope);
 
-        return $iterable instanceof Variable && is_string($iterable->name) ? [[['k', $iterable->name]], $term] : [$term, $term];
+        return $iterable instanceof Variable && is_string($iterable->name) ? [[['k', $iterable->name, $iterable->getStartFilePos()]], $term] : [$term, $term];
     }
 
     /**
@@ -380,7 +481,7 @@ final class CacheKeyTaintCollector implements Collector
         $callees = [];
 
         foreach ($this->callees($node, $nodeScope) as $callee => $method) {
-            $callees[$callee] = $this->argumentsByParameter($method, $arguments, $nodeScope);
+            $callees[$callee] = $this->argumentsByParameter($method, $this->spread($arguments, $nodeScope), $nodeScope);
         }
 
         $fallback = $this->union(array_map(static fn(Arg $argument): Expr => $argument->value, $arguments), $nodeScope);
@@ -457,7 +558,7 @@ final class CacheKeyTaintCollector implements Collector
             $name = $argument->name?->toString();
 
             if ($name !== null) {
-                $receiving = array_filter($parameters, static fn(ParameterReflection $parameter): bool => $parameter->getName() === $name);
+                $receiving = array_filter($parameters, static fn(ParameterReflection $parameter): bool => $parameter->getName() === $name) ?: $overflow;
             } elseif ($argument->unpack) {
                 $receiving = array_slice($parameters, $position);
             } else {
@@ -470,6 +571,48 @@ final class CacheKeyTaintCollector implements Collector
         }
 
         return $bound;
+    }
+
+    /**
+     * The arguments as PHP binds them: a spread array literal whose entries
+     * has known keys becomes one argument per entry — positional for an
+     * integer key, named for any other string; any other spread stays whole.
+     *
+     * @param array<Arg> $arguments
+     *
+     * @return array<Arg>
+     */
+    private function spread(array $arguments, Scope $scope): array
+    {
+        $spread = [];
+
+        foreach ($arguments as $argument) {
+            $entries = $argument->unpack && $argument->value instanceof Array_ ? $this->entries($argument->value, $scope) : null;
+            $spread = [...$spread, ...$entries ?? [$argument]];
+        }
+
+        return $spread;
+    }
+
+    /**
+     * @return list<Arg>|null null when an entry spreads again, or its key is not one known integer or string
+     */
+    private function entries(Array_ $array, Scope $scope): ?array
+    {
+        $entries = [];
+
+        foreach ($array->items as $item) {
+            $keys = $item->key instanceof Expr ? $scope->getType($item->key)->getConstantScalarValues() : [0];
+
+            if ($item->unpack || count($keys) !== 1 || (!is_int($keys[0]) && !is_string($keys[0]))) {
+                return null;
+            }
+
+            // PHP stores a decimal integer string as an integer key, which spreads positionally.
+            $entries[] = new Arg($item->value, name: is_string($keys[0]) && (string) (int) $keys[0] !== $keys[0] ? new Identifier($keys[0]) : null);
+        }
+
+        return $entries;
     }
 
     /**
@@ -532,7 +675,7 @@ final class CacheKeyTaintCollector implements Collector
      */
     private function keyTerm(array $arguments, string $parameter, string $reads, Scope $scope): array
     {
-        $key = $reads === 'all' ? null : $this->boundArgument($arguments, $parameter);
+        $key = $reads === 'all' ? null : $this->boundArgument($this->spread($arguments, $scope), $parameter);
 
         if ($key === null) {
             return $this->union(array_map(static fn(Arg $argument): Expr => $argument->value, $arguments), $scope);
@@ -547,7 +690,7 @@ final class CacheKeyTaintCollector implements Collector
         }
 
         if ($reads === 'map' && $key instanceof Variable && is_string($key->name)) {
-            return [['k', $key->name]];
+            return [['k', $key->name, $key->getStartFilePos()]];
         }
 
         return $this->term($key, $scope);
@@ -693,7 +836,7 @@ final class CacheKeyTaintCollector implements Collector
     private function term(Expr $expr, Scope $scope): array
     {
         if ($expr instanceof Variable) {
-            return is_string($expr->name) && $expr->name !== 'this' ? [['v', $expr->name]] : [];
+            return is_string($expr->name) && $expr->name !== 'this' ? [['v', $expr->name, $expr->getStartFilePos()]] : [];
         }
 
         if ($expr instanceof Closure || $expr instanceof ArrowFunction) {
@@ -707,17 +850,26 @@ final class CacheKeyTaintCollector implements Collector
                 return $this->sources($expr->var, $attribute, $expr, $scope);
             }
 
-            return [...$this->heapAtoms($this->heapKeys($expr, $scope)), ...$this->term($expr->var, $scope)];
+            return [
+                ...($attribute === null ? [] : $this->sources($expr->var, $attribute, $expr, $scope)),
+                ...$this->heapAtoms($this->heapKeys($expr, $scope)),
+                ...$this->term($expr->var, $scope),
+            ];
         }
 
         if ($expr instanceof StaticPropertyFetch) {
             return $this->heapAtoms($this->heapKeys($expr, $scope));
         }
 
-        if ($expr instanceof ArrayDimFetch && $expr->dim instanceof Expr && $this->isModel($expr->var, $scope)) {
+        if ($expr instanceof ArrayDimFetch && $expr->dim instanceof Expr) {
             $attributes = $scope->getType($expr->dim)->getConstantStrings();
+            $sources = count($attributes) === 1 ? $this->sources($expr->var, $attributes[0]->getValue(), $expr, $scope) : [];
 
-            return count($attributes) === 1 ? $this->sources($expr->var, $attributes[0]->getValue(), $expr, $scope) : [];
+            if ($this->isModel($expr->var, $scope)) {
+                return $sources;
+            }
+
+            return [...$sources, ...$this->union($this->childExpressions($expr), $scope)];
         }
 
         if ($expr instanceof MethodCall || $expr instanceof NullsafeMethodCall || $expr instanceof StaticCall || $expr instanceof New_ || $expr instanceof FuncCall) {
@@ -758,23 +910,13 @@ final class CacheKeyTaintCollector implements Collector
             return $term;
         }
 
-        if (!$this->isModel($expr->var, $scope)) {
-            return [...$term, ...$this->term($expr->var, $scope)];
-        }
-
         $arguments = $expr->isFirstClassCallable() ? [] : $expr->getArgs();
+        $attributes = $expr->name instanceof Identifier && in_array($expr->name->toLowerString(), self::ATTRIBUTE_READERS, true) && $arguments !== []
+            ? $scope->getType($arguments[0]->value)->getConstantStrings()
+            : [];
+        $sources = count($attributes) === 1 ? $this->sources($expr->var, $attributes[0]->getValue(), $expr, $scope) : [];
 
-        if (
-            !$expr->name instanceof Identifier
-            || !in_array($expr->name->toLowerString(), self::ATTRIBUTE_READERS, true)
-            || $arguments === []
-        ) {
-            return $term;
-        }
-
-        $attributes = $scope->getType($arguments[0]->value)->getConstantStrings();
-
-        return count($attributes) === 1 ? [...$term, ...$this->sources($expr->var, $attributes[0]->getValue(), $expr, $scope)] : $term;
+        return $this->isModel($expr->var, $scope) ? [...$term, ...$sources] : [...$term, ...$sources, ...$this->term($expr->var, $scope)];
     }
 
     /**
@@ -789,14 +931,16 @@ final class CacheKeyTaintCollector implements Collector
     }
 
     /**
-     * @return Term one candidate source per model the receiver may be
+     * @return Term one candidate source per model the receiver may be, whatever else it may be too
      */
     private function sources(Expr $receiver, string $attribute, Expr $read, Scope $scope): array
     {
         $sources = [];
 
-        foreach (TypeCombinator::removeNull($scope->getType($receiver))->getObjectClassNames() as $model) {
-            $sources[] = ['s', sprintf('%s|%s|%s:%d', $model, $attribute, basename($scope->getFile()), $read->getStartLine())];
+        foreach (TypeCombinator::removeNull($scope->getType($receiver))->getObjectClassNames() as $class) {
+            if (new ObjectType(Model::class)->isSuperTypeOf(new ObjectType($class))->yes()) {
+                $sources[] = ['s', sprintf('%s|%s|%s:%d', $class, $attribute, basename($scope->getFile()), $read->getStartLine())];
+            }
         }
 
         return $sources;

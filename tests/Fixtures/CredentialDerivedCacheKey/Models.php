@@ -18,6 +18,11 @@ use Illuminate\Database\Eloquent\Model;
  */
 final class Vault extends Model
 {
+    public function cacheKey(): string
+    {
+        return 'vault:' . $this->api_key;
+    }
+
     protected function casts(): array
     {
         return [

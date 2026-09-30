@@ -411,6 +411,73 @@ namespace App\CredentialDerivedCacheKey\FlowShapes {
     }
 
     abstract class TenantCache implements Repository {}
+
+    /**
+     * Argument binding on analysed helpers, and a model on one branch of a
+     * union. A method named `leaks…` reports exactly once; `keeps…` stays quiet.
+     */
+    final readonly class BindingShapes
+    {
+        public function __construct(
+            private Repository $cache,
+            private Keyring $keyring,
+        ) {}
+
+        public function leaksThroughAnUnknownNamedArgumentIntoAVariadic(Vault $vault): mixed
+        {
+            return $this->cache->get($this->keyring->all('vault', secret: $vault->api_key));
+        }
+
+        public function leaksThroughTheModelBranchOfAMixedUnion(\ArrayObject|Vault $holder): mixed
+        {
+            return $this->cache->get(
+                $holder->api_key
+                . $holder['api_key']
+                . $holder->getAttribute('api_key'),
+            );
+        }
+
+        public function keepsAFirstPositionSpreadTheHelperDrops(Vault $vault): mixed
+        {
+            return $this->cache->get($this->keyring->pick(...['vault', $vault->api_key]));
+        }
+
+        public function keepsANamedSpreadTheHelperDrops(Vault $vault): mixed
+        {
+            return $this->cache->get($this->keyring->pick(...['ignored' => $vault->api_key, 'used' => 'vault']));
+        }
+
+        public function keepsAnIntegerKeyedSpreadTheHelperDrops(Vault $vault): mixed
+        {
+            return $this->cache->get($this->keyring->pick(...[0 => 'vault', 1 => $vault->api_key]) . $this->keyring->pick(...['0' => 'vault', '1' => $vault->api_key]));
+        }
+
+        public function leaksThroughAModelMethodTheAnalysisReads(Vault $vault): mixed
+        {
+            return $this->cache->get($vault->cacheKey());
+        }
+
+        public function leaksThroughAHelperThatRebindsItsParameter(Vault $vault): void
+        {
+            $this->forgetEither($vault->api_key, 'vault:' . $vault->id);
+        }
+
+        public function leaksThroughANumericStringKeyedSpread(Vault $vault): mixed
+        {
+            return $this->cache->get($this->keyring->join(...['0' => 'vault', '1' => $vault->api_key]));
+        }
+
+        private function forgetEither(string $first, string $second): void
+        {
+            $key = $first;
+
+            if ($second !== '') {
+                $key = $second;
+            }
+
+            $this->cache->forget($key);
+        }
+    }
 }
 
 namespace App\CredentialDerivedCacheKey\FlowShapes\namespaced {
