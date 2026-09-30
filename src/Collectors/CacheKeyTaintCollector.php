@@ -692,7 +692,7 @@ final class CacheKeyTaintCollector implements Collector
 
         [$parameter, $reads] = $sink;
 
-        // `Store::many()` keys by the array's values, `Repository::many()` by its string keys.
+        // A raw Store keys `many()` by the values (Redis, Memcached, Database, DynamoDB) or the string keys (RetrievesMultipleKeys: Apc, Null), so both count.
         return [$method, $this->keyTerm($arguments, $parameter, $kind === 'store' && $lower === 'many' ? 'all' : $reads, $scope)];
     }
 
