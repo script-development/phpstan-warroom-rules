@@ -505,6 +505,397 @@ class EncryptingClassCastAsString extends Model
 }
 
 /**
+ * crit `95d3951f0838`: the spread comes AFTER the child's own key, so the
+ * parent's `password => hashed` overwrites the child's class cast at runtime.
+ */
+class SpreadParentAfterClassCast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => AsStringable::class, ...parent::casts()];
+    }
+}
+
+/**
+ * The same order with a string cast — the parent still wins.
+ */
+class SpreadParentAfterStringCast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => 'string', ...parent::casts()];
+    }
+}
+
+/**
+ * The control: the child's key after the spread wins.
+ */
+class SpreadParentBeforeClassCast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [...parent::casts(), 'password' => AsStringable::class];
+    }
+}
+
+/**
+ * `array_merge()` with the parent LAST: the parent's map wins.
+ */
+class ArrayMergeParentLast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return array_merge(['password' => 'string'], parent::casts());
+    }
+}
+
+/**
+ * `+` keeps the LEFT operand's key, so the parent on the left wins.
+ */
+class UnionOperatorParentFirst extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return parent::casts() + ['password' => 'string'];
+    }
+}
+
+/**
+ * ...and the child on the left wins.
+ */
+class UnionOperatorChildFirst extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['password' => 'string'] + parent::casts();
+    }
+}
+
+/**
+ * Two spreads, the second of a literal: its pairs are cast pairs like any
+ * other.
+ */
+class SpreadOfLiteralAfterParent extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [...parent::casts(), ...['api_token' => 'encrypted']];
+    }
+}
+
+/**
+ * The parent's map held in a variable and merged LAST, so it wins.
+ */
+class ParentCastsVariableMergedLast extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+/**
+ * The parent's map captured through a spread and merged FIRST, so the body's
+ * own casts go over it — `SpreadCapturedParentMergedLast` is the other order.
+ */
+class ParentCastsCapturedButNotPlaced extends MethodBase
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        $inherited = [...parent::casts()];
+
+        return array_merge($inherited, ['api_token' => 'encrypted']);
+    }
+}
+
+/**
+ * The two branches in ONE return: a ternary is alternatives, not layers, so
+ * the credential cast wins whichever branch comes first in the source.
+ */
+class TernaryReturnDisagreeing extends Model
+{
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return !$this->exists ? ['password' => 'hashed'] : ['password' => 'string'];
+    }
+}
+
+/*
+ * PR #80 crit round 1. A variable holds its LAST straight-line assignment and
+ * every branch composes in its own override order; what the rule cannot place
+ * (`ReassignedInsideBranch` through `ParentMergedInsideLoop`) fails closed.
+ */
+class ReassignedParentVariable extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+        $inherited = ['password' => 'string'];
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+class ParentVariableAliased extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+        $alias = $inherited;
+
+        return array_merge(['password' => 'string'], $alias);
+    }
+}
+
+class SpreadCapturedParentMergedLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = [...parent::casts()];
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+class UnionCapturedParentMergedLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = ['api_token' => 'encrypted'] + parent::casts();
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+class ArrayMergeCapturedChildLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = array_merge(parent::casts(), ['password' => 'string']);
+
+        return $inherited;
+    }
+}
+
+class DimAssignDowngradesParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = parent::casts();
+        $casts['password'] = 'string';
+
+        return $casts;
+    }
+}
+
+class UnsetRemovesParentKey extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = parent::casts();
+        unset($casts['password']);
+
+        return $casts;
+    }
+}
+
+class PlusAssignParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = ['password' => 'string', 'api_token' => 'encrypted'];
+        $casts += parent::casts();
+
+        return $casts;
+    }
+}
+
+class ArrayReplaceParentLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        return array_replace(['password' => 'string'], parent::casts());
+    }
+}
+
+class TernaryBranchSpreadsParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        return $this->exists ? ['password' => 'string'] : ['password' => 'string', ...parent::casts()];
+    }
+}
+
+class MatchArmSpreadsParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        return match (true) {
+            $this->exists => ['password' => 'string'],
+            default => ['password' => 'string', ...parent::casts()],
+        };
+    }
+}
+
+class ShortTernaryParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        return parent::casts() ?: ['password' => 'string'];
+    }
+}
+
+class CoalesceOverOpaqueProperty extends MethodBase
+{
+    protected ?array $plainCasts = null;
+
+    protected function casts(): array
+    {
+        return $this->plainCasts ?? ['password' => 'string', ...parent::casts()];
+    }
+}
+
+class TernaryLayerMergedLast extends MethodBase
+{
+    protected function casts(): array
+    {
+        return array_merge(['password' => 'string'], $this->exists ? [] : parent::casts());
+    }
+}
+
+class TernaryBranchesBothPlain extends MethodBase
+{
+    protected function casts(): array
+    {
+        return $this->exists ? [...parent::casts(), 'password' => 'string'] : ['password' => 'string'];
+    }
+}
+
+class MatchArmsBothPlain extends MethodBase
+{
+    protected function casts(): array
+    {
+        return match (true) {
+            $this->exists => [...parent::casts(), 'password' => 'string'],
+            default => ['password' => 'string'],
+        };
+    }
+}
+
+class ShortTernaryPlain extends MethodBase
+{
+    protected function casts(): array
+    {
+        return [...parent::casts(), 'password' => 'string'] ?: [];
+    }
+}
+
+class CoalesceBranchesPlain extends MethodBase
+{
+    protected function casts(): array
+    {
+        return [...parent::casts(), 'password' => 'string'] ?? [];
+    }
+}
+
+class CoalesceAssignKeepsParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = parent::casts();
+        $casts['password'] ??= 'string';
+
+        return $casts;
+    }
+}
+
+class ReassignedInsideBranch extends MethodBase
+{
+    protected function casts(): array
+    {
+        $inherited = parent::casts();
+
+        if ($this->exists) {
+            $inherited = ['password' => 'string'];
+        }
+
+        return array_merge(['password' => 'string'], $inherited);
+    }
+}
+
+class WildLayerOverParent extends MethodBase
+{
+    protected function casts(): array
+    {
+        $extra = [];
+
+        if ($this->exists) {
+            $extra = ['password' => 'string'];
+        }
+
+        return array_merge(parent::casts(), $extra);
+    }
+}
+
+class ParentHeldInProperty extends MethodBase
+{
+    protected array $held = [];
+
+    protected function casts(): array
+    {
+        $this->held = parent::casts();
+
+        return array_merge(['password' => 'string'], $this->held);
+    }
+}
+
+class ParentMergedInsideLoop extends MethodBase
+{
+    protected function casts(): array
+    {
+        $casts = ['password' => 'string'];
+
+        foreach ([1] as $ignored) {
+            $casts = [...$casts, ...parent::casts()];
+        }
+
+        return $casts;
+    }
+}
+
+/**
  * `mergeCasts()` at construct time — a real Laravel API, and an accepted false
  * NEGATIVE: no declaration exists to read. Excluded from the truth table
  * because its effective map only exists after construction. See the rule's
