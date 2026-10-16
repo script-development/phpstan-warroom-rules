@@ -238,6 +238,23 @@ final class EnforceAuditTransactionScopeRuleTest extends RuleTestCase
         );
     }
 
+    /**
+     * WR-1291. PHP dispatches method names case-insensitively, so an upper- or
+     * mixed-case call is read as its lower-case spelling.
+     */
+    public function testReadsAMethodNameRegardlessOfCase(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CaseFolding/Actions.php',
+            ],
+            [
+                [$this->message('App\Actions\CaseFolding\UpperCaseCacheInsideTransaction', 'Cache', 'PUT'), 59],
+                [$this->message('App\Actions\CaseFolding\UpperCaseStaticTransactionSessionPut', 'Session', 'PUT'), 144],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new EnforceAuditTransactionScopeRule;

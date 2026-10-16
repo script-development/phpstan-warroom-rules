@@ -23,6 +23,7 @@ use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function in_array;
 use function mb_strrpos;
+use function mb_strtolower;
 use function mb_substr;
 use function sprintf;
 
@@ -155,19 +156,21 @@ final class ForbidEloquentMutationInControllersRule implements Rule
      * Eloquent persistence-API method names that mutate model or table state.
      * Reads are deliberately omitted — controllers reading Models is necessary
      * for route-model binding, ResourceData hydration, and policy checks.
+     * Lower-case: the call's identifier is folded before the lookup, because PHP
+     * dispatches method names case-insensitively.
      *
      * @var list<string>
      */
     private const array MUTATION_METHODS = [
-        'save', 'saveOrFail', 'saveQuietly',
-        'update', 'updateOrFail', 'updateQuietly',
-        'delete', 'deleteOrFail',
-        'forceDelete', 'forceDeleteQuietly',
-        'destroy', 'create', 'createOrFirst', 'firstOrCreate', 'updateOrCreate',
-        'fill', 'forceFill',
-        'push', 'pushQuietly',
-        'restore', 'restoreQuietly', 'restoreOrCreate',
-        'touch', 'touchQuietly',
+        'save', 'saveorfail', 'savequietly',
+        'update', 'updateorfail', 'updatequietly',
+        'delete', 'deleteorfail',
+        'forcedelete', 'forcedeletequietly',
+        'destroy', 'create', 'createorfirst', 'firstorcreate', 'updateorcreate',
+        'fill', 'forcefill',
+        'push', 'pushquietly',
+        'restore', 'restorequietly', 'restoreorcreate',
+        'touch', 'touchquietly',
     ];
 
     /** @var list<string> */
@@ -271,7 +274,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
 
         $methodName = $node->name->toString();
 
-        if (!in_array($methodName, self::MUTATION_METHODS, true)) {
+        if (!in_array(mb_strtolower($methodName), self::MUTATION_METHODS, true)) {
             return null;
         }
 
@@ -302,7 +305,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
 
         $methodName = $node->name->toString();
 
-        if (!in_array($methodName, self::MUTATION_METHODS, true)) {
+        if (!in_array(mb_strtolower($methodName), self::MUTATION_METHODS, true)) {
             return null;
         }
 

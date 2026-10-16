@@ -41,6 +41,7 @@ use function in_array;
 use function is_array;
 use function is_string;
 use function mb_strrpos;
+use function mb_strtolower;
 use function mb_substr;
 use function sprintf;
 
@@ -101,68 +102,70 @@ final class EnforceAuditTransactionScopeRule implements Rule
      * `transaction(...)` closure when the receiver is the named type.
      *
      * Keys are fully-qualified class names (facades + contracts). Values are
-     * the mutation methods. Reads are deliberately omitted — `Auth::user()`,
+     * the mutation methods, lower-case because the call's identifier is folded
+     * before the lookup (PHP dispatches method names case-insensitively). Reads
+     * are deliberately omitted — `Auth::user()`,
      * `Session::get()`, `Cache::get()`, etc. carry no rollback risk.
      *
      * @var array<string, list<string>>
      */
-    private const array BLOCKLIST = [
+    private const array BLOCKLISTED_METHODS = [
         // StatefulGuard — worker auth, web guard. Mutation methods only.
         StatefulGuard::class => [
-            'login', 'logout', 'attempt', 'loginUsingId', 'logoutCurrentDevice',
-            'viaRemember', 'once', 'onceUsingId', 'attemptWhen', 'logoutOtherDevices',
+            'login', 'logout', 'attempt', 'loginusingid', 'logoutcurrentdevice',
+            'viaremember', 'once', 'onceusingid', 'attemptwhen', 'logoutotherdevices',
         ],
         // Auth facade — static-call form of StatefulGuard mutations.
         Auth::class => [
-            'login', 'logout', 'attempt', 'loginUsingId', 'logoutCurrentDevice',
-            'viaRemember', 'once', 'onceUsingId', 'attemptWhen', 'logoutOtherDevices',
+            'login', 'logout', 'attempt', 'loginusingid', 'logoutcurrentdevice',
+            'viaremember', 'once', 'onceusingid', 'attemptwhen', 'logoutotherdevices',
         ],
         // Session contract — non-transactional session-store mutations.
         Session::class => [
             'regenerate', 'invalidate', 'put', 'forget', 'remove', 'flush', 'migrate',
-            'regenerateToken', 'flash', 'reflash', 'keep', 'now', 'increment', 'decrement',
+            'regeneratetoken', 'flash', 'reflash', 'keep', 'now', 'increment', 'decrement',
             'push', 'replace', 'pull',
         ],
         \Illuminate\Support\Facades\Session::class => [
             'regenerate', 'invalidate', 'put', 'forget', 'remove', 'flush', 'migrate',
-            'regenerateToken', 'flash', 'reflash', 'keep', 'now', 'increment', 'decrement',
+            'regeneratetoken', 'flash', 'reflash', 'keep', 'now', 'increment', 'decrement',
             'push', 'replace', 'pull',
         ],
         // Cache repository — mutation methods only.
         Repository::class => [
             'put', 'forget', 'flush', 'delete', 'add', 'pull', 'increment', 'decrement',
-            'forever', 'remember', 'rememberForever', 'sear', 'restoreLock',
+            'forever', 'remember', 'rememberforever', 'sear', 'restorelock',
         ],
         Cache::class => [
             'put', 'forget', 'flush', 'delete', 'add', 'pull', 'increment', 'decrement',
-            'forever', 'remember', 'rememberForever', 'sear',
+            'forever', 'remember', 'rememberforever', 'sear',
         ],
         // Bus / Queue dispatching.
         Dispatcher::class => [
-            'dispatch', 'dispatchNow', 'dispatchSync', 'dispatchAfterResponse', 'dispatchToQueue',
+            'dispatch', 'dispatchnow', 'dispatchsync', 'dispatchafterresponse', 'dispatchtoqueue',
         ],
         Bus::class => [
-            'dispatch', 'dispatchNow', 'dispatchSync', 'dispatchAfterResponse',
+            'dispatch', 'dispatchnow', 'dispatchsync', 'dispatchafterresponse',
         ],
         Queue::class => [
-            'push', 'pushOn', 'later', 'laterOn', 'bulk',
+            'push', 'pushon', 'later', 'lateron', 'bulk',
         ],
         \Illuminate\Support\Facades\Queue::class => [
-            'push', 'pushOn', 'later', 'laterOn', 'bulk',
+            'push', 'pushon', 'later', 'lateron', 'bulk',
         ],
         // Mail.
         Mailer::class => [
-            'send', 'sendNow', 'raw', 'plain', 'html', 'queue', 'later',
+            'send', 'sendnow', 'raw', 'plain', 'html', 'queue', 'later',
         ],
         Mail::class => [
             'send', 'raw', 'plain', 'html', 'queue', 'later', 'to', 'cc', 'bcc',
         ],
         // Notifications.
         \Illuminate\Contracts\Notifications\Dispatcher::class => [
-            'send', 'sendNow',
+            'send', 'sendnow',
         ],
         Notification::class => [
-            'send', 'sendNow', 'route',
+            'send', 'sendnow', 'route',
         ],
         // Broadcasting.
         Broadcaster::class => [
@@ -173,12 +176,12 @@ final class EnforceAuditTransactionScopeRule implements Rule
         ],
         // Filesystem mutations.
         Filesystem::class => [
-            'put', 'putFile', 'putFileAs', 'delete', 'move', 'copy', 'prepend', 'append',
-            'setVisibility', 'makeDirectory', 'deleteDirectory',
+            'put', 'putfile', 'putfileas', 'delete', 'move', 'copy', 'prepend', 'append',
+            'setvisibility', 'makedirectory', 'deletedirectory',
         ],
         Storage::class => [
-            'put', 'putFile', 'putFileAs', 'delete', 'move', 'copy', 'prepend', 'append',
-            'setVisibility', 'makeDirectory', 'deleteDirectory',
+            'put', 'putfile', 'putfileas', 'delete', 'move', 'copy', 'prepend', 'append',
+            'setvisibility', 'makedirectory', 'deletedirectory',
         ],
     ];
 
@@ -304,14 +307,14 @@ final class EnforceAuditTransactionScopeRule implements Rule
         if (
             $node instanceof MethodCall
             && $node->name instanceof Identifier
-            && $node->name->toString() === 'transaction'
+            && $node->name->toLowerString() === 'transaction'
         ) {
             return true;
         }
 
         return $node instanceof StaticCall
             && $node->name instanceof Identifier
-            && $node->name->toString() === 'transaction';
+            && $node->name->toLowerString() === 'transaction';
     }
 
     /**
@@ -409,11 +412,11 @@ final class EnforceAuditTransactionScopeRule implements Rule
             return null;
         }
 
-        if (!isset(self::BLOCKLIST[$propertyType])) {
+        if (!isset(self::BLOCKLISTED_METHODS[$propertyType])) {
             return null;
         }
 
-        if (!in_array($methodName, self::BLOCKLIST[$propertyType], true)) {
+        if (!in_array(mb_strtolower($methodName), self::BLOCKLISTED_METHODS[$propertyType], true)) {
             return null;
         }
 
@@ -440,11 +443,11 @@ final class EnforceAuditTransactionScopeRule implements Rule
 
         $resolvedClass = $scope->resolveName($node->class);
 
-        if (!isset(self::BLOCKLIST[$resolvedClass])) {
+        if (!isset(self::BLOCKLISTED_METHODS[$resolvedClass])) {
             return null;
         }
 
-        if (!in_array($methodName, self::BLOCKLIST[$resolvedClass], true)) {
+        if (!in_array(mb_strtolower($methodName), self::BLOCKLISTED_METHODS[$resolvedClass], true)) {
             return null;
         }
 

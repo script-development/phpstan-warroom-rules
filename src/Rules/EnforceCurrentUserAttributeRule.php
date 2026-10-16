@@ -149,7 +149,7 @@ final class EnforceCurrentUserAttributeRule implements Rule
      */
     private function processMethodCall(MethodCall $node, Scope $scope): array
     {
-        if (!$node->name instanceof Identifier || $node->name->toString() !== self::TARGET_METHOD) {
+        if (!$node->name instanceof Identifier || $node->name->toLowerString() !== self::TARGET_METHOD) {
             return [];
         }
 
@@ -171,7 +171,7 @@ final class EnforceCurrentUserAttributeRule implements Rule
      */
     private function processStaticCall(StaticCall $node, Scope $scope): array
     {
-        if (!$node->name instanceof Identifier || $node->name->toString() !== self::TARGET_METHOD) {
+        if (!$node->name instanceof Identifier || $node->name->toLowerString() !== self::TARGET_METHOD) {
             return [];
         }
 

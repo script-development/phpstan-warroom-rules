@@ -53,9 +53,10 @@ use function in_array;
  */
 final class LogRule implements Rule
 {
-    private const array FORBIDDEN_INSTANCE_METHODS = ['delete', 'forceDelete', 'forceDeleteQuietly', 'update'];
+    /** Lower-case: PHP dispatches method names case-insensitively, and the call's identifier is folded before the lookup (WR-1291). */
+    private const array FORBIDDEN_INSTANCE_METHODS = ['delete', 'forcedelete', 'forcedeletequietly', 'update'];
 
-    private const array FORBIDDEN_STATIC_METHODS = ['destroy', 'forceDestroy'];
+    private const array FORBIDDEN_STATIC_METHODS = ['destroy', 'forcedestroy'];
 
     public function getNodeType(): string
     {
@@ -82,7 +83,7 @@ final class LogRule implements Rule
     {
         if (
             !$node->name instanceof Identifier
-            || !in_array($node->name->toString(), self::FORBIDDEN_INSTANCE_METHODS, true)
+            || !in_array($node->name->toLowerString(), self::FORBIDDEN_INSTANCE_METHODS, true)
         ) {
             return [];
         }
@@ -97,7 +98,7 @@ final class LogRule implements Rule
     {
         if (
             !$node->name instanceof Identifier
-            || !in_array($node->name->toString(), self::FORBIDDEN_STATIC_METHODS, true)
+            || !in_array($node->name->toLowerString(), self::FORBIDDEN_STATIC_METHODS, true)
         ) {
             return [];
         }

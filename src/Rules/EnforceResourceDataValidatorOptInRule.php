@@ -74,7 +74,8 @@ final class EnforceResourceDataValidatorOptInRule implements Rule
         'EAGER_LOAD_SUM',
     ];
 
-    private const string VALIDATOR_METHOD_NAME = 'validateRelationsLoaded';
+    /** `validateRelationsLoaded`, lower-case because the call is matched folded. */
+    private const string VALIDATOR_METHOD_NAME = 'validaterelationsloaded';
 
     public function __construct(
         private ReflectionProvider $reflectionProvider,
@@ -223,7 +224,7 @@ final class EnforceResourceDataValidatorOptInRule implements Rule
                 if (
                     $inner instanceof MethodCall
                     && $inner->name instanceof Identifier
-                    && $inner->name->toString() === self::VALIDATOR_METHOD_NAME
+                    && $inner->name->toLowerString() === self::VALIDATOR_METHOD_NAME
                 ) {
                     $found = true;
 
@@ -233,7 +234,7 @@ final class EnforceResourceDataValidatorOptInRule implements Rule
                 if (
                     $inner instanceof StaticCall
                     && $inner->name instanceof Identifier
-                    && $inner->name->toString() === self::VALIDATOR_METHOD_NAME
+                    && $inner->name->toLowerString() === self::VALIDATOR_METHOD_NAME
                 ) {
                     $found = true;
                 }

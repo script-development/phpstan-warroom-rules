@@ -115,6 +115,24 @@ final class LogRuleTest extends RuleTestCase
         );
     }
 
+    /**
+     * WR-1291. PHP dispatches method names case-insensitively, so an upper- or
+     * mixed-case call is read as its lower-case spelling.
+     */
+    public function testReadsAMethodNameRegardlessOfCase(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/LogRule/AuditLog.php',
+                __DIR__ . '/../Fixtures/CaseFolding/Global.php',
+            ],
+            [
+                ['Logs should not be updated or deleted.', 16],
+                ['Logs should not be updated or deleted.', 21],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new LogRule;
