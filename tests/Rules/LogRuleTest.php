@@ -19,7 +19,7 @@ final class LogRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogRule/UpdatesAuditLog.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message('Calling update() on App\Models\AuditLog'),
                     11,
                 ],
             ],
@@ -32,7 +32,7 @@ final class LogRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogRule/DeletesAuditLog.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message('Calling delete() on App\Models\AuditLog'),
                     11,
                 ],
             ],
@@ -45,7 +45,7 @@ final class LogRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogRule/ForceDeletesAuditLog.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message('Calling forceDelete() on App\Models\AuditLog'),
                     11,
                 ],
             ],
@@ -58,7 +58,7 @@ final class LogRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogRule/ForceDeletesQuietlyAuditLog.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message('Calling forceDeleteQuietly() on App\Models\AuditLog'),
                     11,
                 ],
             ],
@@ -71,7 +71,7 @@ final class LogRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogRule/DestroysAuditLog.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message('Calling destroy() on App\Models\AuditLog'),
                     11,
                 ],
             ],
@@ -84,7 +84,7 @@ final class LogRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogRule/ForceDestroysAuditLog.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message('Calling forceDestroy() on App\Models\AuditLog'),
                     11,
                 ],
             ],
@@ -127,8 +127,8 @@ final class LogRuleTest extends RuleTestCase
                 __DIR__ . '/../Fixtures/CaseFolding/Global.php',
             ],
             [
-                ['Logs should not be updated or deleted.', 16],
-                ['Logs should not be updated or deleted.', 21],
+                [self::message('Calling DELETE() on App\Models\AuditLog'), 16],
+                [self::message('Calling Destroy() on App\Models\AuditLog'), 21],
             ],
         );
     }
@@ -136,5 +136,11 @@ final class LogRuleTest extends RuleTestCase
     protected function getRule(): Rule
     {
         return new LogRule;
+    }
+
+    private static function message(string $call): string
+    {
+        return $call . ' modifies a log. Log and audit records are append-only (ADR-0001): record a new entry instead of changing or removing one. '
+            . 'The rule matches "log" anywhere in the class name; if this is not a log, ignore logRule.logModification for this path in phpstan.neon.';
     }
 }

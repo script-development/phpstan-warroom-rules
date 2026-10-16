@@ -117,7 +117,8 @@ final class EnforceResourceDataValidatorOptInRule implements Rule
 
         return [
             RuleErrorBuilder::message(sprintf(
-                '%s declares %s but does not call validateRelationsLoaded() — silent-zero bug risk (ADR-0009 / war-room queue #55 / kendo PR #1084 opt-in invariant).',
+                '%s declares %s but does not call validateRelationsLoaded(), so an aggregate whose relation was not eager-loaded reads as 0 or null instead of failing (ADR-0009). '
+                . 'Call self::validateRelationsLoaded($model) in the method that builds the resource from the model, before any aggregate is read.',
                 $classReflection->getName(),
                 implode(', ', $declaredConstants),
             ))

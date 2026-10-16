@@ -147,7 +147,8 @@ final class EnforceFormRequestToDtoRule implements Rule
 
         return [
             RuleErrorBuilder::message(sprintf(
-                '%s extends FormRequest but does not define a toDto()/toDtos() method — raw validated-array handoff risk (ADR-0012 / war-room queue #55 / entreezuil FormRequestsTest opt-in invariant).',
+                '%s extends FormRequest but does not define a toDto()/toDtos() method, so its validated data can only reach an Action as a raw array (ADR-0012). '
+                . 'Define toDto() returning the DTO the Action takes (toDtos() for a list), or list the class in the formRequestToDtoExemptClasses parameter.',
                 $classReflection->getName(),
             ))
                 ->identifier('enforceFormRequestToDto.missingToDtoMethod')

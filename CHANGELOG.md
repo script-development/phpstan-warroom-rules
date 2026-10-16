@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - `ForbidAbortHelperRule` — the error message now depends on the namespace. Inside `App\Actions` (and below it, on the `\` boundary) it prescribes a domain exception the exception renderer maps to a status; it used to prescribe `HttpException`, which `ForbidHttpExceptionInActionsRule` then reported, so following the message guaranteed a second red run. Everywhere else the message is unchanged. The identifier is unchanged. War-room WR-2075.
+- `LogRule` and `LogBuilderTruncateRule` — the shared message `Logs should not be updated or deleted.` named neither the call nor the log and offered no remedy; on `truncate()` it named the wrong operation. It now names the method as written and the class (`LogRule`) or table (`LogBuilderTruncateRule`), cites ADR-0001, says to record a new entry instead, and names the `logRule.logModification` identifier to ignore when the "log" substring match hits a class or table that is not a log. One helper, `Support\AppendOnlyLogMessage`, builds the text for both rules. The identifier is unchanged. War-room WR-2076.
+- `EnforceResourceDataValidatorOptInRule` and `EnforceFormRequestToDtoRule` — the messages printed internal provenance (a work-queue number and the originating repository) instead of a remedy. They now state the consequence and the fix: call `self::validateRelationsLoaded($model)` before any aggregate is read; define `toDto()` (or `toDtos()`), or list the class in `formRequestToDtoExemptClasses`. The ADR citations stay; the identifiers are unchanged. War-room WR-2076.
 
 ### Fixed
 
