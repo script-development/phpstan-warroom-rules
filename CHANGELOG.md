@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 **Release as a whole: 0.x MINOR, consumer-impacting.** The case-folding fixes report writes and calls the rules used to miss, so a consumer can see new errors in code that passed; per this package's SemVer that is the pin-bump class, not a patch. A consumer that read zero on `ForbidCredentialCastBypassRule` before this release has to be re-measured after it.
 
+### Changed
+
+- `ForbidAbortHelperRule` — the error message now depends on the namespace. Inside `App\Actions` (and below it, on the `\` boundary) it prescribes a domain exception the exception renderer maps to a status; it used to prescribe `HttpException`, which `ForbidHttpExceptionInActionsRule` then reported, so following the message guaranteed a second red run. Everywhere else the message is unchanged. The identifier is unchanged. War-room WR-2075.
+
 ### Fixed
 
 - `ForbidCredentialCastBypassRule` — **fires on more writes (consumer-impacting, security).** The write verb was looked up as written, but PHP dispatches method names case-insensitively, so `->UPDATE([…])`, `->Insert([…])` or `$user->INCREMENT(…, ['password' => …])` stored a credential column in plaintext past the rule. The verb is now folded before the `WRITE_METHODS` / `MODEL_BYPASSING_METHODS` lookup (both keyed lower-case) and the error still names the identifier as written. The same fold applies to the `table()` chain walk, to a model declaring `CASTS()` (previously reported `modelSourceUnreadable` instead of read) and to `parent::CASTS()` (previously dropped the parent's casts). Measured on the shipped `BuilderWrites.php` fixture with every `->update([` rewritten to `->UPDATE([`: 19 findings before, 34 after, against 34 for the unmodified fixture. Out of reach and documented: `DB::TABLE(…)` straight off the facade, which PHPStan types as an error because the facade's `@method` annotations resolve case-sensitively, so no receiver type reaches the rule. War-room WR-2188.

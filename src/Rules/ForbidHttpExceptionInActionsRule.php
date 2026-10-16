@@ -29,11 +29,10 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
  * (#1) + Form Request → DTO → Action pipeline (#3).
  *
  * This rule is the type-aware sibling of `ForbidAbortHelperRule`. That rule
- * bans the `abort()` / `abort_if()` / `abort_unless()` helpers (whose message
- * even *recommends* `throw new HttpException` — correct for controllers, wrong
- * for Actions); this rule closes the matching gap on the direct
- * `throw new HttpException(...)` form inside Actions. The two together cover
- * both ways of raising an HTTP-layer error from the domain layer.
+ * bans the `abort()` / `abort_if()` / `abort_unless()` helpers; this rule
+ * closes the matching gap on the direct `throw new HttpException(...)` form
+ * inside Actions. The two together cover both ways of raising an HTTP-layer
+ * error from the domain layer.
  *
  * Detection is type-aware: the thrown expression's resolved type must be a
  * subtype of `Symfony\Component\HttpKernel\Exception\HttpExceptionInterface`
