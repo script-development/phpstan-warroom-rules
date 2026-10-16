@@ -6,6 +6,7 @@ namespace App\Actions\CredentialCastBypass;
 
 use App\Models\CredentialCastBypass\ApiKey;
 use App\Models\CredentialCastBypass\Article;
+use App\Models\CredentialCastBypass\CaseFoldedCastsModel;
 use App\Models\CredentialCastBypass\ComposedCastModel;
 use App\Models\CredentialCastBypass\NestedLiteralCastModel;
 use App\Models\CredentialCastBypass\SpreadCastModel;
@@ -237,5 +238,32 @@ final class BuilderWrites
         $query = $flag ? Article::query() : User::query();
 
         $query->update(['password' => 'raw']);
+    }
+
+    /**
+     * WR-2188. PHP dispatches a method name case-insensitively, so each of
+     * these writes the same plaintext row as its lower-case spelling.
+     */
+    public function upperCaseUpdateVerb(): void
+    {
+        User::query()->where('id', 1)->UPDATE(['password' => 'plaintext']);
+    }
+
+    public function mixedCaseInsertVerb(): void
+    {
+        User::query()->Insert(['email' => 'a@b.c', 'password' => 'plaintext']);
+    }
+
+    public function upperCaseModelIncrementVerb(User $user): void
+    {
+        $user->INCREMENT('login_count', 1, ['password' => 'raw']);
+    }
+
+    /**
+     * `CASTS()` declares the casts `casts()` does, and `parent::CASTS()` composes them.
+     */
+    public function upperCaseCastsDeclaration(): void
+    {
+        CaseFoldedCastsModel::query()->update(['folded_secret' => 'raw', 'passphrase' => 'raw']);
     }
 }

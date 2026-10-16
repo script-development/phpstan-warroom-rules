@@ -86,14 +86,14 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
      * exactly these three are absent on 12.68. `updateFrom`,
      * `incrementOrCreate` and the non-`Each` quiet variants are already present
      * on 12, which is why probing one quiet verb and generalising from it was
-     * wrong.
+     * wrong. Keys are lower-case, matching the rule's folded `WRITE_METHODS`.
      *
      * @var array<string, string>
      */
     private const array VERSION_GATED_METHODS = [
-        'insertOrIgnoreReturning' => 'illuminate/database 13.x',
-        'incrementEachQuietly' => 'illuminate/database 13.x',
-        'decrementEachQuietly' => 'illuminate/database 13.x',
+        'insertorignorereturning' => 'illuminate/database 13.x',
+        'incrementeachquietly' => 'illuminate/database 13.x',
+        'decrementeachquietly' => 'illuminate/database 13.x',
     ];
 
     /** The one write site in the shape fixture with no table row — see its test. */
@@ -261,61 +261,68 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
     public function testHashedCastColumnInBuilderUpdateIsFlagged(): void
     {
         $this->analyse([self::BUILDER_WRITES], [
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 24],
-            [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 29],
-            [sprintf(self::MESSAGE, 'recovery_codes', 'App\Models\CredentialCastBypass\User', 'encrypted:array', 'update'), 34],
-            [sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'), 39],
-            [sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\Vault', 'hashed', 'update'), 44],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 51],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insert'), 56],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'upsert'), 64],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'updateOrInsert'), 69],
-            [sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'), 74],
-            [sprintf(self::MESSAGE, 'trait_secret', 'App\Models\CredentialCastBypass\TraitCastModel', 'hashed', 'update'), 79],
-            [sprintf(self::MESSAGE, 'trait_notes', 'App\Models\CredentialCastBypass\TraitCastModel', 'encrypted', 'update'), 84],
-            [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 89],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 89],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 25],
+            [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 30],
+            [sprintf(self::MESSAGE, 'recovery_codes', 'App\Models\CredentialCastBypass\User', 'encrypted:array', 'update'), 35],
+            [sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'), 40],
+            [sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\Vault', 'hashed', 'update'), 45],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 52],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insert'), 57],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'upsert'), 65],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'updateOrInsert'), 70],
+            [sprintf(self::MESSAGE, 'secret', 'App\Models\CredentialCastBypass\ApiKey', 'encrypted', 'update'), 75],
+            [sprintf(self::MESSAGE, 'trait_secret', 'App\Models\CredentialCastBypass\TraitCastModel', 'hashed', 'update'), 80],
+            [sprintf(self::MESSAGE, 'trait_notes', 'App\Models\CredentialCastBypass\TraitCastModel', 'encrypted', 'update'), 85],
+            [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 90],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 90],
             // crit round 2, issue 1 — the leaf's OWN cast, added through
             // `array_merge(parent::casts(), …)`. Silent before the fix while
             // line 97's inherited cast fired, so the same model was
             // half-enforced.
-            [sprintf(self::MESSAGE, 'composed_secret', 'App\Models\CredentialCastBypass\ComposedCastModel', 'hashed', 'update'), 94],
-            [sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\ComposedCastModel', 'hashed', 'update'), 99],
-            [sprintf(self::MESSAGE, 'spread_secret', 'App\Models\CredentialCastBypass\SpreadCastModel', 'encrypted', 'update'), 104],
+            [sprintf(self::MESSAGE, 'composed_secret', 'App\Models\CredentialCastBypass\ComposedCastModel', 'hashed', 'update'), 95],
+            [sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\ComposedCastModel', 'hashed', 'update'), 100],
+            [sprintf(self::MESSAGE, 'spread_secret', 'App\Models\CredentialCastBypass\SpreadCastModel', 'encrypted', 'update'), 105],
             // Composed maps must contribute their OWN pairs and nothing else —
             // the nested and callback literals on this model are pinned clean in
             // testModelPathAndNonCredentialWritesAreClean.
-            [sprintf(self::MESSAGE, 'real_secret', 'App\Models\CredentialCastBypass\NestedLiteralCastModel', 'hashed', 'update'), 109],
+            [sprintf(self::MESSAGE, 'real_secret', 'App\Models\CredentialCastBypass\NestedLiteralCastModel', 'hashed', 'update'), 110],
             // Verbs that were on the list with no site of their own, so a
             // regression dropping either would not have shown up anywhere.
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insertOrIgnore'), 119],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insertGetId'), 124],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insertOrIgnore'), 120],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insertGetId'), 125],
             // The increment family: the counter column is innocent, the EXTRA
             // payload is an ordinary uncast write that reaches SQL through
             // `update(array_merge($columns, $extra))`.
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'increment'), 135],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrement'), 140],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementEach'), 145],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrementEach'), 150],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'increment'), 136],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrement'), 141],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementEach'), 146],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrementEach'), 151],
             // A NAMED argument sits at a different index than its parameter's
             // position, so a position-only reading is silent here.
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'increment'), 164],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 169],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'increment'), 165],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 170],
             // A named argument AFTER the payload must not blind the payload's own
             // positional read.
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'upsert'), 178],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'upsert'), 179],
             // Postgres-only payload writes, forwarded by Eloquent's __call.
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'updateFrom'), 188],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insertOrIgnoreReturning'), 193],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementOrCreate'), 203],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'updateFrom'), 189],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'insertOrIgnoreReturning'), 194],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementOrCreate'), 204],
             // MODEL receivers — the one family where the model path bypasses
             // casts, so the receiver type gate must not exclude them.
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'increment'), 215],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrementEach'), 220],
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementQuietly'), 225],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'increment'), 216],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'decrementEach'), 221],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'incrementQuietly'), 226],
             // Union receiver, castless branch first: reading only the first
             // branch reports nothing while the other branch writes plaintext.
-            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 239],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 240],
+            // WR-2188 — a verb PHP dispatches case-insensitively must not slip
+            // the lookup; the error names the identifier as written.
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'UPDATE'), 249],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'Insert'), 254],
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'INCREMENT'), 259],
+            [sprintf(self::MESSAGE, 'passphrase', 'App\Models\CredentialCastBypass\CaseFoldedCastsModel', 'hashed', 'update'), 267],
+            [sprintf(self::MESSAGE, 'folded_secret', 'App\Models\CredentialCastBypass\CaseFoldedCastsModel', 'hashed', 'update'), 267],
         ]);
     }
 
@@ -327,6 +334,8 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 18],
             [sprintf(self::MESSAGE, 'api_token', 'App\Models\CredentialCastBypass\User', 'encrypted', 'update'), 23],
             [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 33],
+            // WR-2188 — `->TABLE()` resolves the table like `->table()`.
+            [sprintf(self::MESSAGE, 'password', 'App\Models\CredentialCastBypass\User', 'hashed', 'update'), 63],
         ]);
     }
 
@@ -678,6 +687,7 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
             [$message, 23],
             [$message, 28],
             [$message, 33],
+            [$message, 63],
         ]);
     }
 
@@ -894,7 +904,7 @@ final class ForbidCredentialCastBypassRuleTest extends RuleTestCase
 
             self::assertNotFalse($source, sprintf('Fixture %s could not be read.', $file));
 
-            return preg_match_all('/(->|::)(update|insert|insertOrIgnore|insertGetId|upsert|updateOrInsert|updateFrom|insertOrIgnoreReturning|increment|decrement|incrementEach|decrementEach|incrementQuietly|decrementQuietly|incrementEachQuietly|decrementEachQuietly|incrementOrCreate|create|updateOrCreate|save)\(/', $source);
+            return preg_match_all('/(->|::)(update|insert|insertOrIgnore|insertGetId|upsert|updateOrInsert|updateFrom|insertOrIgnoreReturning|increment|decrement|incrementEach|decrementEach|incrementQuietly|decrementQuietly|incrementEachQuietly|decrementEachQuietly|incrementOrCreate|create|updateOrCreate|save)\(/i', $source);
         };
 
         self::assertGreaterThanOrEqual(34, $writeCalls(self::BUILDER_WRITES), 'The violating fixture lost write sites.');

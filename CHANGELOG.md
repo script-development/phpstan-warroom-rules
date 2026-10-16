@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+**Release as a whole: 0.x MINOR, consumer-impacting.** The case-folding fixes report writes and calls the rules used to miss, so a consumer can see new errors in code that passed; per this package's SemVer that is the pin-bump class, not a patch. A consumer that read zero on `ForbidCredentialCastBypassRule` before this release has to be re-measured after it.
+
+### Fixed
+
+- `ForbidCredentialCastBypassRule` — **fires on more writes (consumer-impacting, security).** The write verb was looked up as written, but PHP dispatches method names case-insensitively, so `->UPDATE([…])`, `->Insert([…])` or `$user->INCREMENT(…, ['password' => …])` stored a credential column in plaintext past the rule. The verb is now folded before the `WRITE_METHODS` / `MODEL_BYPASSING_METHODS` lookup (both keyed lower-case) and the error still names the identifier as written. The same fold applies to the `table()` chain walk, to a model declaring `CASTS()` (previously reported `modelSourceUnreadable` instead of read) and to `parent::CASTS()` (previously dropped the parent's casts). Measured on the shipped `BuilderWrites.php` fixture with every `->update([` rewritten to `->UPDATE([`: 19 findings before, 34 after, against 34 for the unmodified fixture. Out of reach and documented: `DB::TABLE(…)` straight off the facade, which PHPStan types as an error because the facade's `@method` annotations resolve case-sensitively, so no receiver type reaches the rule. War-room WR-2188.
+
 ## [0.11.0] — 2026-10-01
 
 **Release as a whole: 0.x MINOR, consumer-impacting.** `^0.10` excludes it, so tagging auto-adopts nobody. Each territory adopts on its own `^0.11` pin-bump PR and should expect NEW errors from three sources: `ForbidSentinelFallbackOnNarrowingHelperRule` (fleet scan 2026-09-23: emmie 8, lokalekeuze 6), `ForbidCredentialDerivedCacheKeyRule` (silent on a consumer with no `encrypted` cast, so a clean run there is only evidence once a planted credential-keyed cache has been seen to fire), and `ForbidCredentialCastBypassRule` now reading encrypting class casts and `parent::casts()` in PHP's override order.

@@ -358,20 +358,24 @@ final class ForbidCredentialCastBypassRule implements Rule
      * `create` / `updateOrCreate` / `firstOrCreate` / `createOrFirst` are
      * deliberately absent — they build and `save()` a model, so casts fire.
      *
+     * Keys are lower-case because PHP dispatches a method case-insensitively
+     * and the lookup folds the written identifier to match: `->UPDATE([…])`
+     * writes the same row as `->update([…])` (WR-2188).
+     *
      * @var array<string, list<array{0: string, 1: int}>>
      */
     private const array WRITE_METHODS = [
         'update' => [['values', 0]],
         'insert' => [['values', 0]],
-        'insertOrIgnore' => [['values', 0]],
-        'insertGetId' => [['values', 0]],
+        'insertorignore' => [['values', 0]],
+        'insertgetid' => [['values', 0]],
         'upsert' => [['values', 0]],
-        'updateOrInsert' => [['attributes', 0], ['values', 1]],
+        'updateorinsert' => [['attributes', 0], ['values', 1]],
         // Postgres-only builder writes that take a payload like `update()` and
         // reach SQL by the same route. Absent from `Eloquent\Builder`, but its
         // `__call` forwards them, so a model query reaches them too.
-        'updateFrom' => [['values', 0]],
-        'insertOrIgnoreReturning' => [['values', 0]],
+        'updatefrom' => [['values', 0]],
+        'insertorignorereturning' => [['values', 0]],
         // The increment family ships an EXTRA payload to SQL by the same route:
         // `Query\Builder::incrementEach()` is literally
         // `update(array_merge($columns, $extra))`, and `increment()` /
@@ -379,18 +383,18 @@ final class ForbidCredentialCastBypassRule implements Rule
         // array lands raw in the column with no model in the path.
         'increment' => [['extra', 2]],
         'decrement' => [['extra', 2]],
-        'incrementEach' => [['columns', 0], ['extra', 1]],
-        'decrementEach' => [['columns', 0], ['extra', 1]],
+        'incrementeach' => [['columns', 0], ['extra', 1]],
+        'decrementeach' => [['columns', 0], ['extra', 1]],
         // `Eloquent\Builder::incrementOrCreate()` routes its `$attributes`
         // through `firstOrCreate()` — a model save, so casts fire there and it
         // is deliberately NOT read — then hands `$extra` to `Model::increment()`.
-        'incrementOrCreate' => [['extra', 4]],
+        'incrementorcreate' => [['extra', 4]],
         // Model-only, re-exposed through `Model::__call`. Same payload slot as
         // their loud counterparts.
-        'incrementQuietly' => [['extra', 2]],
-        'decrementQuietly' => [['extra', 2]],
-        'incrementEachQuietly' => [['columns', 0], ['extra', 1]],
-        'decrementEachQuietly' => [['columns', 0], ['extra', 1]],
+        'incrementquietly' => [['extra', 2]],
+        'decrementquietly' => [['extra', 2]],
+        'incrementeachquietly' => [['columns', 0], ['extra', 1]],
+        'decrementeachquietly' => [['columns', 0], ['extra', 1]],
     ];
 
     /**
@@ -403,18 +407,19 @@ final class ForbidCredentialCastBypassRule implements Rule
      * attribute through `forceFill($extra)` and passes the SAME `$extra`,
      * uncast, to the query builder — so the object is right and the row is
      * plaintext. Verified against `Illuminate\Database\Eloquent\Model`.
+     * Lower-case, matched against the folded verb.
      *
      * @var list<string>
      */
     private const array MODEL_BYPASSING_METHODS = [
         'increment',
         'decrement',
-        'incrementEach',
-        'decrementEach',
-        'incrementQuietly',
-        'decrementQuietly',
-        'incrementEachQuietly',
-        'decrementEachQuietly',
+        'incrementeach',
+        'decrementeach',
+        'incrementquietly',
+        'decrementquietly',
+        'incrementeachquietly',
+        'decrementeachquietly',
     ];
 
     /** The fluent-chain method whose string argument names the table. */
@@ -423,7 +428,9 @@ final class ForbidCredentialCastBypassRule implements Rule
     /**
      * The member name Eloquent reads casts from — the same string names the
      * `casts()` method and the `$casts` property, which is why both halves of
-     * `declaredPropertyCasts()` and `dispatchedMethodCasts()` match on it.
+     * `declaredPropertyCasts()` and `dispatchedMethodCasts()` match on it. A
+     * method name is compared folded (PHP dispatches `CASTS()` as `casts()`), a
+     * property name as written (property names are case-sensitive).
      */
     private const string CASTS_MEMBER = 'casts';
 
@@ -499,19 +506,22 @@ final class ForbidCredentialCastBypassRule implements Rule
             return [];
         }
 
+        // The written identifier is what the error names; the folded one is
+        // what PHP dispatches on.
         $method = $node->name->toString();
+        $folded = $node->name->toLowerString();
 
-        if (!array_key_exists($method, self::WRITE_METHODS)) {
+        if (!array_key_exists($folded, self::WRITE_METHODS)) {
             return [];
         }
 
-        $modelFqcns = $this->resolveModels($node, $scope, $method);
+        $modelFqcns = $this->resolveModels($node, $scope, $folded);
 
         if ($modelFqcns === []) {
             return [];
         }
 
-        $columns = $this->payloadColumns($node, $scope, self::WRITE_METHODS[$method]);
+        $columns = $this->payloadColumns($node, $scope, self::WRITE_METHODS[$folded]);
         $errors = [];
 
         foreach ($modelFqcns as $modelFqcn) {
@@ -688,7 +698,7 @@ final class ForbidCredentialCastBypassRule implements Rule
         while ($current instanceof MethodCall || $current instanceof StaticCall) {
             if (
                 $current->name instanceof Identifier
-                && $current->name->toString() === self::TABLE_SETTING_METHOD
+                && $current->name->toLowerString() === self::TABLE_SETTING_METHOD
             ) {
                 return $this->mappedModelForTableArg($current);
             }
@@ -1208,7 +1218,7 @@ final class ForbidCredentialCastBypassRule implements Rule
         $found = [];
 
         foreach ($nodes as $node) {
-            if ($node instanceof ClassMethod && $node->name->toString() === self::CASTS_MEMBER) {
+            if ($node instanceof ClassMethod && $node->name->toLowerString() === self::CASTS_MEMBER) {
                 $found[] = $node;
             }
 
@@ -1328,7 +1338,7 @@ final class ForbidCredentialCastBypassRule implements Rule
             && $node->class instanceof Node\Name
             && $node->class->toLowerString() === 'parent'
             && $node->name instanceof Identifier
-            && $node->name->toString() === self::CASTS_MEMBER;
+            && $node->name->toLowerString() === self::CASTS_MEMBER;
     }
 
     /**
