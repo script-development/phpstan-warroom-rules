@@ -39,6 +39,45 @@ final class ForbidAbortHelperRuleTest extends RuleTestCase
         );
     }
 
+    public function testPrescribesADomainExceptionInsideActions(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AbortHelper/UsesAbortInAction.php'],
+            [
+                [
+                    'Use of abort_unless() is forbidden. Actions must not raise HTTP-layer errors — throw a domain exception the exception renderer maps to a status.',
+                    11,
+                ],
+            ],
+        );
+    }
+
+    public function testPrescribesADomainExceptionInsideActionsSpelledInAnotherCase(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AbortHelper/UsesAbortInLowercaseActionsNamespace.php'],
+            [
+                [
+                    'Use of abort_unless() is forbidden. Actions must not raise HTTP-layer errors — throw a domain exception the exception renderer maps to a status.',
+                    11,
+                ],
+            ],
+        );
+    }
+
+    public function testPrescribesAnHttpExceptionOutsideTheActionsNamespaceBoundary(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AbortHelper/UsesAbortInActionsLegacy.php'],
+            [
+                [
+                    'Use of abort() is forbidden. Throw a proper HTTP exception instead (e.g., NotFoundHttpException, UnauthorizedHttpException, HttpException).',
+                    11,
+                ],
+            ],
+        );
+    }
+
     public function testIgnoresExplicitException(): void
     {
         $this->analyse(

@@ -10,12 +10,17 @@ use PhpParser\Node\Name;
 use PHPStan\Analyser\Scope;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function in_array;
 
 /**
  * Forbids usage of abort(), abort_if(), and abort_unless() helper functions.
- * Use proper HTTP exceptions instead (e.g., NotFoundHttpException, UnauthorizedHttpException).
+ *
+ * The remedy depends on the layer. Outside `App\Actions` the message prescribes
+ * an explicit HTTP exception (e.g., NotFoundHttpException). Inside `App\Actions`
+ * that advice would trip `ForbidHttpExceptionInActionsRule`, so the message
+ * prescribes a domain exception the exception renderer maps to a status.
  *
  * Doctrine source: war-room §Architectural Principles — Explicit over implicit.
  *
@@ -46,10 +51,13 @@ final class ForbidAbortHelperRule implements Rule
             return [];
         }
 
+        $namespace = $scope->getNamespace();
+        $remedy = $namespace !== null && NamespacePrefix::contains(NamespacePrefix::ACTIONS, $namespace)
+            ? 'Actions must not raise HTTP-layer errors — throw a domain exception the exception renderer maps to a status.'
+            : 'Throw a proper HTTP exception instead (e.g., NotFoundHttpException, UnauthorizedHttpException, HttpException).';
+
         return [
-            RuleErrorBuilder::message(
-                "Use of {$functionName}() is forbidden. Throw a proper HTTP exception instead (e.g., NotFoundHttpException, UnauthorizedHttpException, HttpException).",
-            )
+            RuleErrorBuilder::message("Use of {$functionName}() is forbidden. {$remedy}")
                 ->identifier('forbidAbortHelper.abortUsed')
                 ->build(),
         ];

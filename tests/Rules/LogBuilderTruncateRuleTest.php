@@ -19,7 +19,7 @@ final class LogBuilderTruncateRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogBuilderTruncateRule/TruncatesLogsViaFacade.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message("Calling truncate() on table 'audit_logs'"),
                     11,
                 ],
             ],
@@ -32,7 +32,7 @@ final class LogBuilderTruncateRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogBuilderTruncateRule/TruncatesLogsViaConnection.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message("Calling truncate() on table 'logs'"),
                     11,
                 ],
             ],
@@ -45,7 +45,7 @@ final class LogBuilderTruncateRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/LogBuilderTruncateRule/TruncatesLogsViaInjectedDb.php'],
             [
                 [
-                    'Logs should not be updated or deleted.',
+                    self::message("Calling truncate() on table 'logs'"),
                     19,
                 ],
             ],
@@ -98,7 +98,7 @@ final class LogBuilderTruncateRuleTest extends RuleTestCase
                 __DIR__ . '/../Fixtures/CaseFolding/Global.php',
             ],
             [
-                ['Logs should not be updated or deleted.', 26],
+                [self::message("Calling TRUNCATE() on table 'logs'"), 26],
             ],
         );
     }
@@ -106,5 +106,11 @@ final class LogBuilderTruncateRuleTest extends RuleTestCase
     protected function getRule(): Rule
     {
         return new LogBuilderTruncateRule;
+    }
+
+    private static function message(string $call): string
+    {
+        return $call . ' modifies a log. Log and audit records are append-only (ADR-0001): record a new entry instead of changing or removing one. '
+            . 'The rule matches "log" anywhere in the table name; if this is not a log, ignore logRule.logModification for this path in phpstan.neon.';
     }
 }

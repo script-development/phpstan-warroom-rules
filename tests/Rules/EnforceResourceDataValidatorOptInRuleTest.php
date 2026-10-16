@@ -28,7 +28,7 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Resources\ViolatorResource declares EAGER_LOAD_COUNT but does not call validateRelationsLoaded() — silent-zero bug risk (ADR-0009 / war-room queue #55 / kendo PR #1084 opt-in invariant).',
+                    'App\Http\Resources\ViolatorResource declares EAGER_LOAD_COUNT but does not call validateRelationsLoaded(), so an aggregate whose relation was not eager-loaded reads as 0 or null instead of failing (ADR-0009). Call self::validateRelationsLoaded($model) in the method that builds the resource from the model, before any aggregate is read.',
                     9,
                 ],
             ],
@@ -44,7 +44,7 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Resources\ViolatorBothConstantsResource declares EAGER_LOAD_COUNT, EAGER_LOAD_SUM but does not call validateRelationsLoaded() — silent-zero bug risk (ADR-0009 / war-room queue #55 / kendo PR #1084 opt-in invariant).',
+                    'App\Http\Resources\ViolatorBothConstantsResource declares EAGER_LOAD_COUNT, EAGER_LOAD_SUM but does not call validateRelationsLoaded(), so an aggregate whose relation was not eager-loaded reads as 0 or null instead of failing (ADR-0009). Call self::validateRelationsLoaded($model) in the method that builds the resource from the model, before any aggregate is read.',
                     9,
                 ],
             ],
@@ -132,7 +132,7 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
             [__DIR__ . '/../Fixtures/ResourceDataValidatorOptIn/UnrelatedShortNameCollision.php'],
             [
                 [
-                    'App\Unrelated\UnrelatedShortNameCollision declares EAGER_LOAD_COUNT but does not call validateRelationsLoaded() — silent-zero bug risk (ADR-0009 / war-room queue #55 / kendo PR #1084 opt-in invariant).',
+                    'App\Unrelated\UnrelatedShortNameCollision declares EAGER_LOAD_COUNT but does not call validateRelationsLoaded(), so an aggregate whose relation was not eager-loaded reads as 0 or null instead of failing (ADR-0009). Call self::validateRelationsLoaded($model) in the method that builds the resource from the model, before any aggregate is read.',
                     12,
                 ],
             ],
@@ -157,7 +157,7 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
             ],
             [
                 [
-                    'App\Http\Resources\ViolatorResource declares EAGER_LOAD_COUNT but does not call validateRelationsLoaded() — silent-zero bug risk (ADR-0009 / war-room queue #55 / kendo PR #1084 opt-in invariant).',
+                    'App\Http\Resources\ViolatorResource declares EAGER_LOAD_COUNT but does not call validateRelationsLoaded(), so an aggregate whose relation was not eager-loaded reads as 0 or null instead of failing (ADR-0009). Call self::validateRelationsLoaded($model) in the method that builds the resource from the model, before any aggregate is read.',
                     9,
                 ],
             ],

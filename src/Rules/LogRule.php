@@ -14,6 +14,7 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
+use ScriptDevelopment\PhpstanWarroomRules\Support\AppendOnlyLogMessage;
 
 use function in_array;
 
@@ -53,6 +54,8 @@ use function in_array;
  */
 final class LogRule implements Rule
 {
+    private const string IDENTIFIER = 'logRule.logModification';
+
     /** Lower-case: PHP dispatches method names case-insensitively, and the call's identifier is folded before the lookup (WR-1291). */
     private const array FORBIDDEN_INSTANCE_METHODS = ['delete', 'forcedelete', 'forcedeletequietly', 'update'];
 
@@ -88,7 +91,7 @@ final class LogRule implements Rule
             return [];
         }
 
-        return $this->errorIfReceiverIsLog($scope->getType($node->var)->getReferencedClasses());
+        return $this->errorIfReceiverIsLog($node->name->toString(), $scope->getType($node->var)->getReferencedClasses());
     }
 
     /**
@@ -107,7 +110,7 @@ final class LogRule implements Rule
             ? [$scope->resolveName($node->class)]
             : $scope->getType($node->class)->getReferencedClasses();
 
-        return $this->errorIfReceiverIsLog($referencedClasses);
+        return $this->errorIfReceiverIsLog($node->name->toString(), $referencedClasses);
     }
 
     /**
@@ -115,7 +118,7 @@ final class LogRule implements Rule
      *
      * @return list<IdentifierRuleError>
      */
-    private function errorIfReceiverIsLog(array $referencedClasses): array
+    private function errorIfReceiverIsLog(string $method, array $referencedClasses): array
     {
         foreach ($referencedClasses as $referencedClass) {
             if (
@@ -123,8 +126,8 @@ final class LogRule implements Rule
                 || mb_stripos($referencedClass, 'logs') !== false
             ) {
                 return [
-                    RuleErrorBuilder::message('Logs should not be updated or deleted.')
-                        ->identifier('logRule.logModification')
+                    RuleErrorBuilder::message(AppendOnlyLogMessage::for($method, $referencedClass, 'class', self::IDENTIFIER))
+                        ->identifier(self::IDENTIFIER)
                         ->build(),
                 ];
             }

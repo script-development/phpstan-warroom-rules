@@ -24,12 +24,13 @@ parameters:
     formRequestToDtoExemptClasses: []
 
     # `ForbidEloquentMutationInControllersRule` + `EnforceCurrentUserAttributeRule`
-    # + `ForbidResourceWrappedInJsonResponseRule`: namespace prefixes whose
-    # classes are treated as controllers. A class is
-    # in scope when its namespace `str_starts_with` ANY listed prefix, so
-    # sub-namespaces (kendo's `App\Http\Controllers\Central\*`) match the
-    # canonical prefix naturally. The default reproduces the prior hardcoded
-    # `App\Http\Controllers` gate byte-for-byte. A consumer with divergent
+    # + `ForbidResourceWrappedInJsonResponseRule`
+    # + `ForbidInlineArrayJsonResponseInControllersRule`: namespace prefixes
+    # whose classes are treated as controllers. A class is in scope when its
+    # namespace equals ANY listed prefix or continues it across a `\`
+    # separator, so sub-namespaces (kendo's `App\Http\Controllers\Central\*`)
+    # match the canonical prefix naturally and `App\Http\ControllersLegacy`
+    # does not. A trailing `\` on a prefix is ignored. A consumer with divergent
     # controller namespaces (e.g. emmie's `App\Http\Client\Controllers` /
     # `App\Http\Admin\Controllers`) adds those prefixes here to bring them into
     # scope. Each prefix uses single backslashes — see the NEON-quoting note

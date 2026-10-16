@@ -16,6 +16,7 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
+use ScriptDevelopment\PhpstanWarroomRules\Support\AppendOnlyLogMessage;
 
 use function mb_stripos;
 
@@ -69,6 +70,8 @@ use function mb_stripos;
  */
 final class LogBuilderTruncateRule implements Rule
 {
+    private const string IDENTIFIER = 'logRule.logModification';
+
     private const string QUERY_BUILDER_FQCN = QueryBuilder::class;
 
     private const string ELOQUENT_BUILDER_FQCN = EloquentBuilder::class;
@@ -92,13 +95,15 @@ final class LogBuilderTruncateRule implements Rule
             return [];
         }
 
-        if (!$this->chainTargetsLogNamedTable($node->var)) {
+        $table = $this->logNamedTableInChain($node->var);
+
+        if ($table === null) {
             return [];
         }
 
         return [
-            RuleErrorBuilder::message('Logs should not be updated or deleted.')
-                ->identifier('logRule.logModification')
+            RuleErrorBuilder::message(AppendOnlyLogMessage::for($node->name->toString(), "table '{$table}'", 'table', self::IDENTIFIER))
+                ->identifier(self::IDENTIFIER)
                 ->build(),
         ];
     }
@@ -126,11 +131,11 @@ final class LogBuilderTruncateRule implements Rule
     /**
      * Walk back through the fluent chain looking for the most recent
      * `table()` call (`MethodCall` or `StaticCall`). Inspect its first
-     * argument: fire on a Log-named `Scalar\String_`; otherwise (variable,
-     * concat, function call) do not fire. If no `table()` call is found in
-     * the chain, do not fire.
+     * argument: return the table name when it is a Log-named
+     * `Scalar\String_`; otherwise (variable, concat, function call) return
+     * null. If no `table()` call is found in the chain, return null.
      */
-    private function chainTargetsLogNamedTable(Expr $receiver): bool
+    private function logNamedTableInChain(Expr $receiver): ?string
     {
         $current = $receiver;
 
@@ -139,7 +144,7 @@ final class LogBuilderTruncateRule implements Rule
                 $current->name instanceof Identifier
                 && $current->name->toLowerString() === self::TABLE_SETTING_METHOD
             ) {
-                return $this->firstArgIsLogNamedString($current);
+                return $this->logNamedFirstArg($current);
             }
 
             if ($current instanceof MethodCall) {
@@ -150,30 +155,30 @@ final class LogBuilderTruncateRule implements Rule
 
             // StaticCall is a root — its arguments are inspected above; if
             // its name is not `table` the chain has no earlier hops to walk.
-            return false;
+            return null;
         }
 
-        return false;
+        return null;
     }
 
-    private function firstArgIsLogNamedString(MethodCall|StaticCall $call): bool
+    private function logNamedFirstArg(MethodCall|StaticCall $call): ?string
     {
         if (!isset($call->args[0]) || !$call->args[0] instanceof Node\Arg) {
-            return false;
+            return null;
         }
 
         $value = $call->args[0]->value;
 
         if (!$value instanceof String_) {
-            return false;
+            return null;
         }
 
         foreach (self::LOG_NEEDLES as $needle) {
             if (mb_stripos($value->value, $needle) !== false) {
-                return true;
+                return $value->value;
             }
         }
 
-        return false;
+        return null;
     }
 }
