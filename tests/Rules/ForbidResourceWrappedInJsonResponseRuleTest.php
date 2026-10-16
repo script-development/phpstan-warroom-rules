@@ -140,6 +140,38 @@ final class ForbidResourceWrappedInJsonResponseRuleTest extends RuleTestCase
         ];
     }
 
+    /**
+     * WR-1291. A namespace that only shares the prefix's opening characters is
+     * not inside it.
+     */
+    public function testIgnoresANamespaceThatOnlySharesThePrefixCharacters(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/ResourceWrappedInJsonResponse/_stubs.php',
+                __DIR__ . '/../Fixtures/NamespaceBoundary/ControllersLegacy.php',
+            ],
+            [],
+        );
+    }
+
+    /**
+     * A configured prefix with a trailing separator names the same namespace.
+     */
+    public function testATrailingSeparatorOnAConfiguredPrefixIsNormalised(): void
+    {
+        $this->ruleOverride = new ForbidResourceWrappedInJsonResponseRule(['App\Http\Controllers\\']);
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/ResourceWrappedInJsonResponse/WrapsResourceInResponseJson.php',
+            ],
+            [
+                [self::MESSAGE, 14],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return $this->ruleOverride ?? new ForbidResourceWrappedInJsonResponseRule;

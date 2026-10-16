@@ -19,12 +19,12 @@ use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function in_array;
 use function mb_strrpos;
 use function mb_substr;
 use function sprintf;
-use function str_starts_with;
 
 /**
  * Forbids Eloquent persistence-API method calls on `Illuminate\Database\Eloquent\
@@ -58,7 +58,7 @@ use function str_starts_with;
  *   1. Namespace gate — the class namespace must start with ANY of the
  *      configured `controllerNamespacePrefixes` (default
  *      `['App\Http\Controllers']`). Sub-namespaces (kendo's
- *      `App\Http\Controllers\Central\*`) pass naturally via `str_starts_with`.
+ *      `App\Http\Controllers\Central\*`) pass, matched on the `\` boundary.
  *      A consumer that ships controllers under a divergent namespace (e.g.
  *      emmie's `App\Http\Client\Controllers` / `App\Http\Admin\Controllers`)
  *      opts them in by adding the prefix to `controllerNamespacePrefixes` in
@@ -170,11 +170,14 @@ final class ForbidEloquentMutationInControllersRule implements Rule
         'touch', 'touchQuietly',
     ];
 
+    /** @var list<string> */
+    private array $controllerNamespacePrefixes;
+
     /**
      * @param list<string> $controllerNamespacePrefixes namespace prefixes whose
      *                                                  classes are treated as
-     *                                                  controllers (match via
-     *                                                  `str_starts_with`); the
+     *                                                  controllers (matched on the
+     *                                                  namespace boundary); the
      *                                                  default reproduces the
      *                                                  canonical
      *                                                  `App\Http\Controllers`
@@ -184,8 +187,10 @@ final class ForbidEloquentMutationInControllersRule implements Rule
      *                                                  prefixes from config.
      */
     public function __construct(
-        private array $controllerNamespacePrefixes = ['App\Http\Controllers'],
-    ) {}
+        array $controllerNamespacePrefixes = ['App\Http\Controllers'],
+    ) {
+        $this->controllerNamespacePrefixes = NamespacePrefix::normalise($controllerNamespacePrefixes);
+    }
 
     public function getNodeType(): string
     {
@@ -234,13 +239,7 @@ final class ForbidEloquentMutationInControllersRule implements Rule
      */
     private function namespaceIsController(string $namespace): bool
     {
-        foreach ($this->controllerNamespacePrefixes as $prefix) {
-            if (str_starts_with($namespace, $prefix)) {
-                return true;
-            }
-        }
-
-        return false;
+        return NamespacePrefix::containsAny($this->controllerNamespacePrefixes, $namespace);
     }
 
     /**

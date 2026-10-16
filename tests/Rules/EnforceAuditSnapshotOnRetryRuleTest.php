@@ -136,6 +136,21 @@ final class EnforceAuditSnapshotOnRetryRuleTest extends RuleTestCase
         );
     }
 
+    /**
+     * WR-1291. A namespace that only shares the prefix's opening characters is
+     * not inside it.
+     */
+    public function testIgnoresANamespaceThatOnlySharesThePrefixCharacters(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/AuditSnapshotOnRetry/_stubs.php',
+                __DIR__ . '/../Fixtures/NamespaceBoundary/ActionsLegacy.php',
+            ],
+            [],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new EnforceAuditSnapshotOnRetryRule;

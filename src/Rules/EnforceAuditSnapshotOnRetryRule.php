@@ -23,6 +23,7 @@ use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
 use ReflectionNamedType;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function explode;
 use function file_get_contents;
@@ -110,7 +111,7 @@ final class EnforceAuditSnapshotOnRetryRule implements Rule
 
         $namespace = $scope->getNamespace();
 
-        if ($namespace === null || !str_starts_with($namespace, 'App\Actions')) {
+        if ($namespace === null || !NamespacePrefix::contains(NamespacePrefix::ACTIONS, $namespace)) {
             return [];
         }
 

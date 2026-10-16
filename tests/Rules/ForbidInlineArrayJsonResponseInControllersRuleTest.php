@@ -191,6 +191,39 @@ final class ForbidInlineArrayJsonResponseInControllersRuleTest extends RuleTestC
         ];
     }
 
+    /**
+     * WR-1291. A namespace that only shares the prefix's opening characters is
+     * not inside it.
+     */
+    public function testIgnoresANamespaceThatOnlySharesThePrefixCharacters(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/InlineArrayJsonResponse/_stubs.php',
+                __DIR__ . '/../Fixtures/NamespaceBoundary/ControllersLegacy.php',
+            ],
+            [],
+        );
+    }
+
+    /**
+     * A configured prefix with a trailing separator names the same namespace.
+     */
+    public function testATrailingSeparatorOnAConfiguredPrefixIsNormalised(): void
+    {
+        $this->ruleOverride = new ForbidInlineArrayJsonResponseInControllersRule(['App\Http\Controllers\\']);
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/InlineArrayJsonResponse/_stubs.php',
+                __DIR__ . '/../Fixtures/InlineArrayJsonResponse/InlineArrayResponseJson.php',
+            ],
+            [
+                [self::MESSAGE, 16],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return $this->ruleOverride ?? new ForbidInlineArrayJsonResponseInControllersRule;

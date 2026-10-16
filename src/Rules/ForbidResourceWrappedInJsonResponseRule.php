@@ -18,8 +18,7 @@ use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
-
-use function str_starts_with;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 /**
  * Forbids wrapping a `JsonResource` in `response()->json(...)` or
@@ -79,7 +78,7 @@ use function str_starts_with;
  * `EnforceCurrentUserAttributeRule`: the class namespace must start with ANY of
  * the configured `controllerNamespacePrefixes` (default
  * `['App\Http\Controllers']`, reproducing the prior hardcoded gate byte-for-
- * byte; sub-namespaces pass naturally via `str_starts_with`). A consumer that
+ * byte; sub-namespaces pass, matched on the `\` boundary). A consumer that
  * ships controllers under a divergent namespace (e.g. emmie's
  * `App\Http\Client\Controllers` / `App\Http\Admin\Controllers`) opts them in by
  * adding the prefix to `controllerNamespacePrefixes` in its `phpstan.neon`.
@@ -92,11 +91,14 @@ final class ForbidResourceWrappedInJsonResponseRule implements Rule
 
     private const string JSON_RESPONSE_CLASS = JsonResponse::class;
 
+    /** @var list<string> */
+    private array $controllerNamespacePrefixes;
+
     /**
      * @param list<string> $controllerNamespacePrefixes namespace prefixes whose
      *                                                  classes are treated as
-     *                                                  controllers (match via
-     *                                                  `str_starts_with`); the
+     *                                                  controllers (matched on the
+     *                                                  namespace boundary); the
      *                                                  default reproduces the
      *                                                  canonical
      *                                                  `App\Http\Controllers`
@@ -106,8 +108,10 @@ final class ForbidResourceWrappedInJsonResponseRule implements Rule
      *                                                  prefixes from config.
      */
     public function __construct(
-        private array $controllerNamespacePrefixes = ['App\Http\Controllers'],
-    ) {}
+        array $controllerNamespacePrefixes = ['App\Http\Controllers'],
+    ) {
+        $this->controllerNamespacePrefixes = NamespacePrefix::normalise($controllerNamespacePrefixes);
+    }
 
     public function getNodeType(): string
     {
@@ -144,13 +148,7 @@ final class ForbidResourceWrappedInJsonResponseRule implements Rule
      */
     private function namespaceIsController(string $namespace): bool
     {
-        foreach ($this->controllerNamespacePrefixes as $prefix) {
-            if (str_starts_with($namespace, $prefix)) {
-                return true;
-            }
-        }
-
-        return false;
+        return NamespacePrefix::containsAny($this->controllerNamespacePrefixes, $namespace);
     }
 
     /**
