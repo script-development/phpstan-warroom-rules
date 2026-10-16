@@ -54,4 +54,12 @@ final class RawTableWrites
     {
         DB::table($table)->update(['password' => 'plaintext']);
     }
+
+    /**
+     * WR-2188. `->TABLE()` names the table exactly as `->table()` does.
+     */
+    public function upperCaseTableSettingMethod(): void
+    {
+        DB::connection('mysql')->TABLE('users')->update(['password' => 'plaintext']);
+    }
 }
