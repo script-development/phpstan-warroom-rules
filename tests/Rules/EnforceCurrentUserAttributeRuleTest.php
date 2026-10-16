@@ -257,6 +257,39 @@ final class EnforceCurrentUserAttributeRuleTest extends RuleTestCase
         ];
     }
 
+    /**
+     * WR-1291. A namespace that only shares the prefix's opening characters is
+     * not inside it.
+     */
+    public function testIgnoresANamespaceThatOnlySharesThePrefixCharacters(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/NamespaceBoundary/ControllersLegacy.php',
+            ],
+            [],
+        );
+    }
+
+    /**
+     * A configured prefix with a trailing separator names the same namespace.
+     */
+    public function testATrailingSeparatorOnAConfiguredPrefixIsNormalised(): void
+    {
+        $this->ruleOverride = new EnforceCurrentUserAttributeRule(['App\Http\Controllers\\']);
+
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/RequestUserInController.php',
+            ],
+            [
+                [self::EXPECTED_REQUEST_USER, 14],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return $this->ruleOverride ?? new EnforceCurrentUserAttributeRule;

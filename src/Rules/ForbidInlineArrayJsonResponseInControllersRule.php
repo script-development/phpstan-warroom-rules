@@ -16,8 +16,7 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
-
-use function str_starts_with;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 /**
  * Forbids constructing the base `Illuminate\Http\JsonResponse` — or its
@@ -115,7 +114,7 @@ use function str_starts_with;
  * `ForbidEloquentMutationInControllersRule` / `EnforceCurrentUserAttributeRule`:
  * the class namespace must start with ANY configured prefix (default
  * `['App\Http\Controllers']`, reproducing the canonical hardcoded gate;
- * sub-namespaces pass via `str_starts_with`). A consumer with divergent
+ * sub-namespaces pass, matched on the `\` boundary so `App\Http\ControllersLegacy` does not). A consumer with divergent
  * controller namespaces (emmie's `App\Http\Client\Controllers` /
  * `App\Http\Admin\Controllers`) opts them in via `controllerNamespacePrefixes`.
  *
@@ -128,11 +127,14 @@ final class ForbidInlineArrayJsonResponseInControllersRule implements Rule
 {
     private const string JSON_RESPONSE_CLASS = JsonResponse::class;
 
+    /** @var list<string> */
+    private array $controllerNamespacePrefixes;
+
     /**
      * @param list<string> $controllerNamespacePrefixes namespace prefixes whose
      *                                                  classes are treated as
-     *                                                  controllers (match via
-     *                                                  `str_starts_with`); the
+     *                                                  controllers (matched on the
+     *                                                  namespace boundary); the
      *                                                  default reproduces the
      *                                                  canonical
      *                                                  `App\Http\Controllers`
@@ -141,8 +143,10 @@ final class ForbidInlineArrayJsonResponseInControllersRule implements Rule
      *                                                  rules via one config knob.
      */
     public function __construct(
-        private array $controllerNamespacePrefixes = ['App\Http\Controllers'],
-    ) {}
+        array $controllerNamespacePrefixes = ['App\Http\Controllers'],
+    ) {
+        $this->controllerNamespacePrefixes = NamespacePrefix::normalise($controllerNamespacePrefixes);
+    }
 
     public function getNodeType(): string
     {
@@ -175,13 +179,7 @@ final class ForbidInlineArrayJsonResponseInControllersRule implements Rule
      */
     private function namespaceIsController(string $namespace): bool
     {
-        foreach ($this->controllerNamespacePrefixes as $prefix) {
-            if (str_starts_with($namespace, $prefix)) {
-                return true;
-            }
-        }
-
-        return false;
+        return NamespacePrefix::containsAny($this->controllerNamespacePrefixes, $namespace);
     }
 
     /**

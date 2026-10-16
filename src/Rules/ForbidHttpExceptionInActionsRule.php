@@ -11,16 +11,15 @@ use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
-
-use function str_starts_with;
 
 /**
  * Forbids throwing a `Symfony\Component\HttpKernel\Exception\*` HTTP-layer
  * exception (the `HttpException` family — `HttpException` itself and every
  * subclass: `NotFoundHttpException`, `AccessDeniedHttpException`,
  * `UnprocessableEntityHttpException`, etc.) from inside a class whose FQCN
- * starts with `App\Actions`. HTTP status concerns belong to the HTTP layer
+ * sits in or under `App\Actions`. HTTP status concerns belong to the HTTP layer
  * (controllers / FormRequests / exception renderers), not the domain layer —
  * an Action that throws a 422 has reached past its boundary into transport.
  * A uniqueness rule belongs in the FormRequest; a domain failure throws a
@@ -62,7 +61,7 @@ use function str_starts_with;
  *
  * Action-namespace assumption mirrors `ForbidDatabaseManagerInActionsRule` /
  * `EnforceAuditTransactionScopeRule`: `App\Actions` prefix via
- * `$scope->getNamespace()` + `str_starts_with`. If a future consumer ships
+ * `$scope->getNamespace()` + `NamespacePrefix::contains()`. If a future consumer ships
  * Actions under a divergent namespace, lift this into a parameter per the
  * `EnforceResourceDataValidatorOptInRule` precedent.
  *
@@ -70,8 +69,6 @@ use function str_starts_with;
  */
 final class ForbidHttpExceptionInActionsRule implements Rule
 {
-    private const string ACTION_NAMESPACE_PREFIX = 'App\Actions';
-
     private const string HTTP_EXCEPTION_INTERFACE = HttpExceptionInterface::class;
 
     public function getNodeType(): string
@@ -83,7 +80,7 @@ final class ForbidHttpExceptionInActionsRule implements Rule
     {
         $namespace = $scope->getNamespace();
 
-        if ($namespace === null || !str_starts_with($namespace, self::ACTION_NAMESPACE_PREFIX)) {
+        if ($namespace === null || !NamespacePrefix::contains(NamespacePrefix::ACTIONS, $namespace)) {
             return [];
         }
 

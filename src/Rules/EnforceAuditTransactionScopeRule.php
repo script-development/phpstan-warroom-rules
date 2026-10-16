@@ -35,6 +35,7 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function in_array;
 use function is_array;
@@ -42,7 +43,6 @@ use function is_string;
 use function mb_strrpos;
 use function mb_substr;
 use function sprintf;
-use function str_starts_with;
 
 /**
  * Enforces ADR-0029 (Audit Row Durability Contract) §Decision rule 3: non-
@@ -191,7 +191,7 @@ final class EnforceAuditTransactionScopeRule implements Rule
     {
         $namespace = $scope->getNamespace();
 
-        if ($namespace === null || !str_starts_with($namespace, 'App\Actions')) {
+        if ($namespace === null || !NamespacePrefix::contains(NamespacePrefix::ACTIONS, $namespace)) {
             return [];
         }
 

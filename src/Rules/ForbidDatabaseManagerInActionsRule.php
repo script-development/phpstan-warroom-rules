@@ -11,8 +11,7 @@ use PhpParser\Node\Stmt\Class_;
 use PHPStan\Analyser\Scope;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
-
-use function str_starts_with;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 /**
  * Forbids injecting DatabaseManager in Action classes.
@@ -35,7 +34,7 @@ final class ForbidDatabaseManagerInActionsRule implements Rule
     {
         $namespace = $scope->getNamespace();
 
-        if ($namespace === null || !str_starts_with($namespace, 'App\Actions')) {
+        if ($namespace === null || !NamespacePrefix::contains(NamespacePrefix::ACTIONS, $namespace)) {
             return [];
         }
 

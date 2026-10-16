@@ -21,11 +21,11 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use Psr\Log\LoggerInterface;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function in_array;
 use function is_array;
 use function is_string;
-use function str_starts_with;
 
 /**
  * Enforces that Action classes with multiple write operations wrap them in a database transaction.
@@ -85,7 +85,7 @@ final class EnforceActionTransactionsRule implements Rule
     {
         $namespace = $scope->getNamespace();
 
-        if ($namespace === null || !str_starts_with($namespace, 'App\Actions')) {
+        if ($namespace === null || !NamespacePrefix::contains(NamespacePrefix::ACTIONS, $namespace)) {
             return [];
         }
 

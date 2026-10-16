@@ -15,12 +15,12 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
+use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function mb_strrpos;
 use function mb_strtolower;
 use function mb_substr;
 use function sprintf;
-use function str_starts_with;
 
 /**
  * Enforces that an Action's `execute()` method does not declare an `array`
@@ -39,7 +39,7 @@ use function str_starts_with;
  *
  * Scope:
  *
- *   1. Namespace gate — containing class FQCN must start with `App\Actions`
+ *   1. Namespace gate — containing class must sit in or under `App\Actions`
  *      (the same hardcoded convention as `EnforceActionTransactionsRule` /
  *      `ForbidDatabaseManagerInActionsRule`, ADR-0021 §Action namespace
  *      assumption; no parameter today — lift to config if a territory ships a
@@ -89,7 +89,7 @@ final class EnforceActionResultDtoRule implements Rule
 
         $namespace = $scope->getNamespace();
 
-        if ($namespace === null || !str_starts_with($namespace, 'App\Actions')) {
+        if ($namespace === null || !NamespacePrefix::contains(NamespacePrefix::ACTIONS, $namespace)) {
             return [];
         }
 
