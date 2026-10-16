@@ -83,7 +83,7 @@ final class EnforceActionResultDtoRule implements Rule
 
     public function processNode(Node $node, Scope $scope): array
     {
-        if ($node->name->toString() !== 'execute') {
+        if ($node->name->toLowerString() !== 'execute') {
             return [];
         }
 

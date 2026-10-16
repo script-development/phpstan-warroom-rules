@@ -187,6 +187,23 @@ final class EnforceActionResultDtoRuleTest extends RuleTestCase
         );
     }
 
+    /**
+     * WR-1291. PHP dispatches method names case-insensitively, so an upper- or
+     * mixed-case call is read as its lower-case spelling.
+     */
+    public function testReadsAMethodNameRegardlessOfCase(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/ActionResultDto/_stubs.php',
+                __DIR__ . '/../Fixtures/CaseFolding/Actions.php',
+            ],
+            [
+                ['Action UpperCaseExecuteReturnsArray::execute() must not return array — return a Result DTO instead (ADR-0020 Input/Result DTO Split).', 128],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return $this->ruleOverride ?? new EnforceActionResultDtoRule;

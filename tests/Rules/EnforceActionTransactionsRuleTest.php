@@ -61,6 +61,22 @@ final class EnforceActionTransactionsRuleTest extends RuleTestCase
         );
     }
 
+    /**
+     * WR-1291. PHP dispatches method names case-insensitively, so an upper- or
+     * mixed-case call is read as its lower-case spelling.
+     */
+    public function testReadsAMethodNameRegardlessOfCase(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CaseFolding/Actions.php',
+            ],
+            [
+                ['Action has 2 write operations without a database transaction. Inject ConnectionInterface and wrap writes in $this->connection->transaction().', 25],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new EnforceActionTransactionsRule;

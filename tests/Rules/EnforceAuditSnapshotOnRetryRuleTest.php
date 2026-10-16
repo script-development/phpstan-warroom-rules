@@ -151,6 +151,23 @@ final class EnforceAuditSnapshotOnRetryRuleTest extends RuleTestCase
         );
     }
 
+    /**
+     * WR-1291. PHP dispatches method names case-insensitively, so an upper- or
+     * mixed-case call is read as its lower-case spelling.
+     */
+    public function testReadsAMethodNameRegardlessOfCase(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/AuditSnapshotOnRetry/_stubs.php',
+                __DIR__ . '/../Fixtures/CaseFolding/Actions.php',
+            ],
+            [
+                [self::EXPECTED_MESSAGE, 74],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new EnforceAuditSnapshotOnRetryRule;

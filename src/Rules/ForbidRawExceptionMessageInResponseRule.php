@@ -31,6 +31,7 @@ use function explode;
 use function file_get_contents;
 use function in_array;
 use function is_file;
+use function mb_strtolower;
 use function mb_trim;
 use function str_contains;
 use function str_starts_with;
@@ -134,7 +135,7 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
 
     private const string THROWABLE = Throwable::class;
 
-    /** Log-level method names — a call to any of these on a logger is the remediation, never a leak. */
+    /** Log-level method names — a call to any of these on a logger is the remediation, never a leak. Lower-case, matched folded. */
     private const array LOGGER_METHODS = [
         'info', 'warning', 'error', 'critical', 'debug', 'log', 'notice', 'alert', 'emergency',
     ];
@@ -233,7 +234,7 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
             return null;
         }
 
-        return ['class' => $parts[0], 'method' => $parts[1]];
+        return ['class' => $parts[0], 'method' => mb_strtolower($parts[1])];
     }
 
     /**
@@ -247,7 +248,7 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
             return false;
         }
 
-        $methodName = $node->name->toString();
+        $methodName = $node->name->toLowerString();
 
         foreach ($this->sinks as $sink) {
             if ($sink['method'] !== $methodName) {
@@ -299,7 +300,7 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
             return false;
         }
 
-        if (!$expr->name instanceof Identifier || $expr->name->toString() !== 'getMessage') {
+        if (!$expr->name instanceof Identifier || $expr->name->toLowerString() !== 'getmessage') {
             return false;
         }
 
@@ -356,7 +357,7 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
             return false;
         }
 
-        $methodName = $node->name->toString();
+        $methodName = $node->name->toLowerString();
 
         if ($node instanceof StaticCall) {
             return in_array($methodName, self::LOGGER_METHODS, true)

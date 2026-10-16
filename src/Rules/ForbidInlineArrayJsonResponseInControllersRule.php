@@ -225,7 +225,7 @@ final class ForbidInlineArrayJsonResponseInControllersRule implements Rule
      */
     private function responseJsonPayloadArg(MethodCall $node): ?Arg
     {
-        if (!$node->name instanceof Identifier || $node->name->toString() !== 'json') {
+        if (!$node->name instanceof Identifier || $node->name->toLowerString() !== 'json') {
             return null;
         }
 

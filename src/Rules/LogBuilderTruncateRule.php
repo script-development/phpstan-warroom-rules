@@ -84,7 +84,7 @@ final class LogBuilderTruncateRule implements Rule
 
     public function processNode(Node $node, Scope $scope): array
     {
-        if (!$node->name instanceof Identifier || $node->name->toString() !== 'truncate') {
+        if (!$node->name instanceof Identifier || $node->name->toLowerString() !== 'truncate') {
             return [];
         }
 
@@ -137,7 +137,7 @@ final class LogBuilderTruncateRule implements Rule
         while ($current instanceof MethodCall || $current instanceof StaticCall) {
             if (
                 $current->name instanceof Identifier
-                && $current->name->toString() === self::TABLE_SETTING_METHOD
+                && $current->name->toLowerString() === self::TABLE_SETTING_METHOD
             ) {
                 return $this->firstArgIsLogNamedString($current);
             }

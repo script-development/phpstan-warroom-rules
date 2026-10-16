@@ -85,11 +85,11 @@ final class EnforceAuditSnapshotOnRetryRule implements Rule
         'AiMcpLogger',
     ];
 
-    /** Allowed terminal call names for shape (b) — fresh-fetch / fresh. */
-    private const array FRESH_TERMINALS = [
-        'findOrFail',
+    /** Allowed terminal call names for shape (b) — fresh-fetch / fresh. Lower-case, matched folded. */
+    private const array FRESH_TERMINAL_METHODS = [
+        'findorfail',
         'first',
-        'firstOrFail',
+        'firstorfail',
         'find',
         'fresh',
     ];
@@ -101,7 +101,7 @@ final class EnforceAuditSnapshotOnRetryRule implements Rule
 
     public function processNode(Node $node, Scope $scope): array
     {
-        if (!$node->name instanceof Identifier || $node->name->toString() !== 'transaction') {
+        if (!$node->name instanceof Identifier || $node->name->toLowerString() !== 'transaction') {
             return [];
         }
 
@@ -326,7 +326,7 @@ final class EnforceAuditSnapshotOnRetryRule implements Rule
         if (
             $expr instanceof MethodCall
             && $expr->name instanceof Identifier
-            && $expr->name->toString() === 'refresh'
+            && $expr->name->toLowerString() === 'refresh'
             && ($expr->var instanceof Variable || $expr->var instanceof PropertyFetch)
         ) {
             return true;
@@ -342,7 +342,7 @@ final class EnforceAuditSnapshotOnRetryRule implements Rule
             $expr instanceof Assign
             && $expr->expr instanceof MethodCall
             && $expr->expr->name instanceof Identifier
-            && $expr->expr->name->toString() === 'newInstance'
+            && $expr->expr->name->toLowerString() === 'newinstance'
             && $expr->expr->var instanceof PropertyFetch
         ) {
             return true;
@@ -354,14 +354,14 @@ final class EnforceAuditSnapshotOnRetryRule implements Rule
 
             if (
                 !$call->name instanceof Identifier
-                || !in_array($call->name->toString(), self::FRESH_TERMINALS, true)
+                || !in_array($call->name->toLowerString(), self::FRESH_TERMINAL_METHODS, true)
             ) {
                 return false;
             }
 
             // ->fresh() called on any expression is sufficient — Eloquent's
             // ->fresh() always returns a freshly-fetched copy from DB.
-            if ($call->name->toString() === 'fresh') {
+            if ($call->name->toLowerString() === 'fresh') {
                 return true;
             }
 
@@ -372,7 +372,7 @@ final class EnforceAuditSnapshotOnRetryRule implements Rule
             while ($current instanceof MethodCall) {
                 if (
                     $current->name instanceof Identifier
-                    && $current->name->toString() === 'newQuery'
+                    && $current->name->toLowerString() === 'newquery'
                     && $current->var instanceof PropertyFetch
                 ) {
                     return true;

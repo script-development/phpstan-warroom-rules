@@ -210,6 +210,21 @@ final class EnforceResourceDataValidatorOptInRuleTest extends RuleTestCase
         ];
     }
 
+    /**
+     * WR-1291. PHP dispatches method names case-insensitively, so an upper- or
+     * mixed-case call is read as its lower-case spelling.
+     */
+    public function testReadsAMethodNameRegardlessOfCase(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/ResourceDataValidatorOptIn/_stubs.php',
+                __DIR__ . '/../Fixtures/CaseFolding/Controllers.php',
+            ],
+            [],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return $this->ruleOverride ?? new EnforceResourceDataValidatorOptInRule($this->createReflectionProvider());

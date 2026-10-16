@@ -40,25 +40,26 @@ use function is_string;
  */
 final class EnforceActionTransactionsRule implements Rule
 {
+    /** Lower-case: PHP dispatches method names case-insensitively, and the call's identifier is folded before the lookup (WR-1291). */
     private const array WRITE_METHODS = [
         'save',
-        'saveQuietly',
+        'savequietly',
         'create',
         'update',
         'delete',
-        'forceDelete',
+        'forcedelete',
         'sync',
         'attach',
         'detach',
         'insert',
         'upsert',
-        'updateOrCreate',
-        'firstOrCreate',
+        'updateorcreate',
+        'firstorcreate',
         'push',
         'restore',
         'toggle',
-        'syncWithoutDetaching',
-        'syncWithPivotValues',
+        'syncwithoutdetaching',
+        'syncwithpivotvalues',
     ];
 
     /**
@@ -124,7 +125,7 @@ final class EnforceActionTransactionsRule implements Rule
             if (
                 $node instanceof MethodCall
                 && $node->name instanceof Identifier
-                && in_array($node->name->toString(), self::WRITE_METHODS, true)
+                && in_array($node->name->toLowerString(), self::WRITE_METHODS, true)
                 && !$this->isOnNonDatabaseProperty($node, $nonDatabaseProperties)
             ) {
                 $count++;
@@ -194,7 +195,7 @@ final class EnforceActionTransactionsRule implements Rule
             if (
                 $node instanceof MethodCall
                 && $node->name instanceof Identifier
-                && $node->name->toString() === 'transaction'
+                && $node->name->toLowerString() === 'transaction'
             ) {
                 $found = true;
             }

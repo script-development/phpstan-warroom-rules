@@ -290,6 +290,24 @@ final class EnforceCurrentUserAttributeRuleTest extends RuleTestCase
         );
     }
 
+    /**
+     * WR-1291. PHP dispatches method names case-insensitively, so an upper- or
+     * mixed-case call is read as its lower-case spelling.
+     */
+    public function testReadsAMethodNameRegardlessOfCase(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/CaseFolding/Controllers.php',
+            ],
+            [
+                [self::EXPECTED_REQUEST_USER, 50],
+                [self::EXPECTED_AUTH_FACADE, 83],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return $this->ruleOverride ?? new EnforceCurrentUserAttributeRule;
