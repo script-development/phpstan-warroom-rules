@@ -26,6 +26,9 @@ final class NamespacePrefixTest extends TestCase
         yield 'a deeper sub-namespace' => ['App\Actions', 'App\Actions\Billing\Invoices', true];
         yield 'a sibling sharing the opening characters' => ['App\Actions', 'App\ActionsLegacy', false];
         yield 'a sibling sharing the opening characters, nested' => ['App\Actions', 'App\ActionsLegacy\Billing', false];
+        yield 'the namespace in another case' => ['App\Actions', 'app\actions', true];
+        yield 'a sub-namespace in another case' => ['App\Actions', 'APP\ACTIONS\Billing', true];
+        yield 'a sibling sharing the opening characters, in another case' => ['App\Actions', 'app\actionslegacy', false];
         yield 'the parent namespace' => ['App\Actions', 'App', false];
         yield 'an unrelated namespace' => ['App\Actions', 'App\Http\Controllers', false];
     }

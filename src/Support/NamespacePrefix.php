@@ -6,12 +6,15 @@ namespace ScriptDevelopment\PhpstanWarroomRules\Support;
 
 use function array_map;
 use function mb_rtrim;
+use function mb_strtolower;
 use function str_starts_with;
 
 /**
  * The one namespace-prefix test the rules share (WR-1291). A prefix names a
  * namespace and everything under it, matched on the `\` boundary: `App\Actions`
  * contains `App\Actions` and `App\Actions\Billing`, never `App\ActionsLegacy`.
+ * PHP resolves namespace names case-insensitively, so the test folds case:
+ * `app\actions\Billing` is inside `App\Actions`.
  */
 final class NamespacePrefix
 {
@@ -34,6 +37,9 @@ final class NamespacePrefix
 
     public static function contains(string $prefix, string $namespace): bool
     {
+        $prefix = mb_strtolower($prefix);
+        $namespace = mb_strtolower($namespace);
+
         return $namespace === $prefix || str_starts_with($namespace, $prefix . '\\');
     }
 
