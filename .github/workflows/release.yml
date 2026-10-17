@@ -1,15 +1,23 @@
-# Release workflow — runs on tag push (v*).
+# Release workflow — runs on tag push (v*). It creates the GitHub release; it
+# does not publish the package and cannot stop a publish.
 #
-# Composer packages on public packagist.org auto-sync from the configured Git
-# repository via push-event webhook (https://packagist.org/api/github), so
-# this workflow's primary job is to (1) re-run the CI gates on the tagged
-# commit and (2) create a GitHub release pointing at the changelog entry.
+# packagist.org publishes the version from the same tag push, through the
+# repository's push-event webhook (https://packagist.org/api/github), with no
+# dependency on this workflow. A red `verify` therefore blocks only the
+# `release` job below — the GitHub release and its notes — never the version
+# consumers install. Only a repository tag rule restricting who may create v*
+# tags can stop a publish.
+#
+# `verify` is a subset of the PR gate, not a re-run of it: format check,
+# phpstan and the unit suite on PHP 8.4 and 8.5, installed from composer.lock.
+# It omits `composer audit`, the coverage threshold, mutation testing, the
+# `illuminate/* ^12` leg and the `--no-dev` production-tree leg.
 #
 # OIDC Trusted Publishing on Packagist is currently a Private Packagist–only
 # feature (packagist/artifact-publish-github-action); public packagist.org
 # has no OIDC option today. Migrating would change ally-side Composer
-# consumption (private repo URL + token in composer.json) and is a commercial
-# decision tracked in Issue #11 — out of scope for this workflow until adopted.
+# consumption (private repo URL + token in composer.json) — a commercial
+# decision recorded in Issue #11 (closed, not adopted).
 
 name: Release
 

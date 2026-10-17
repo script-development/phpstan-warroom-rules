@@ -8,7 +8,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 - **Static analysis:** PHPStan 2.x (target framework — the package extends it)
 - **Test:** PHPUnit 11 (extends `PHPStan\Testing\RuleTestCase`)
 - **Format:** Pint (canonical config from war-room `templates/pint.json`)
-- **Publish:** Auto-sync to public packagist.org via repository webhook (`https://packagist.org/api/github`, push-trigger; `dev-*` aliases on branch push, versioned releases on tag push via `release.yml`). OIDC Trusted Publishing on Packagist is currently a Private Packagist–only feature (`packagist/artifact-publish-github-action`); public packagist.org has no OIDC option today. Migration to Private Packagist is tracked in Issue #11 — out of scope until adopted (would change ally-side Composer consumption).
+- **Publish:** Auto-sync to public packagist.org via repository webhook (`https://packagist.org/api/github`, push-trigger; `dev-*` aliases on branch push, versioned releases on tag push — the webhook publishes the tag; `release.yml` only creates the GitHub release). OIDC Trusted Publishing on Packagist is currently a Private Packagist–only feature (`packagist/artifact-publish-github-action`); public packagist.org has no OIDC option today. Migration to Private Packagist was audited in Issue #11 (closed, not adopted) — it would change ally-side Composer consumption.
 
 ## Doctrine source
 
@@ -110,7 +110,9 @@ SemVer per ADR-0021:
 - `main` is always release-ready.
 - Pull requests must update `CHANGELOG.md` under an `[Unreleased]` section.
 - A release PR moves `[Unreleased]` to a versioned heading and tags the merge commit (`v1.x.y`).
-- Packagist's webhook auto-sync picks up the tag and publishes the release; `release.yml` re-runs CI gates on the tagged commit and creates a GitHub release referencing the matching CHANGELOG entry.
+- Packagist's webhook picks up the tag push and publishes the version. That happens whatever `release.yml` does: the workflow runs on the same push and creates the GitHub release from the matching CHANGELOG entry, after its `verify` job passes.
+- `verify` is a subset of the PR gate, not a re-run of it — format check, phpstan and the unit suite on PHP `8.4` and `8.5`, installed from `composer.lock`. It omits `composer audit`, the coverage threshold, mutation testing, `check-lowest-laravel` and `check-production-tree`. A red `verify` withholds the GitHub release only; it cannot withdraw or prevent the Packagist version.
+- The gate on what consumers install is therefore `ci-passed` on the tagged commit **before** the tag is pushed. Tag the merge commit of a release PR on `main`, which `ci-passed` gated at merge. No workflow can stop a `v*` tag pushed from any other commit; only a repository tag rule restricting who may create `v*` tags can.
 
 ## War Room ADR Projections
 
