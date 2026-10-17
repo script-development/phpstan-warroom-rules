@@ -4,8 +4,10 @@ declare(strict_types = 1);
 
 namespace ScriptDevelopment\PhpstanWarroomRules\Tests\Rules;
 
+use InvalidArgumentException;
 use PHPStan\Rules\Rule;
 use PHPStan\Testing\RuleTestCase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidRawExceptionMessageInResponseRule;
 
 /**
@@ -226,20 +228,78 @@ final class ForbidRawExceptionMessageInResponseRuleTest extends RuleTestCase
         );
     }
 
-    public function testMalformedSinkSignaturesAreSkippedNotFatal(): void
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function malformedSinkSignatures(): iterable
     {
-        // Garbage sink signatures (no `::`, too many `::`, empty class, empty
-        // method) are skipped by the signature parser — they neither crash nor
-        // arm a bogus sink, and the always-armed Response::error default still
-        // fires. Pins the parser's guard.
+        yield 'single colon' => ['App\Support\InvoiceLog:recordError'];
+        yield 'no method' => ['App\Support\InvoiceLog'];
+        yield 'empty class' => ['::recordError'];
+        yield 'empty method' => ['App\Support\InvoiceLog::'];
+        yield 'two separators' => ['App\Support\InvoiceLog::recordError::extra'];
+        yield 'triple colon' => ['App\Support\InvoiceLog:::recordError'];
+        yield 'leading space' => [' App\Support\InvoiceLog::recordError'];
+        yield 'trailing space' => ['App\Support\InvoiceLog::recordError '];
+        yield 'empty namespace segment' => ['App\\\InvoiceLog::recordError'];
+        yield 'trailing backslash' => ['App\Support\::recordError'];
+        yield 'method starts with a digit' => ['App\Support\InvoiceLog::1record'];
+        yield 'class starts with a digit' => ['1App\InvoiceLog::recordError'];
+    }
+
+    /**
+     * A sink entry that does not parse would arm nothing, and the raw message it
+     * was configured to catch would pass unreported.
+     */
+    #[DataProvider('malformedSinkSignatures')]
+    public function testAMalformedSinkSignatureStopsAnalysis(string $signature): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage(
+            "rawExceptionMessageSinks entry '" . $signature . "' is not a `FQCN::method` signature",
+        );
+
+        new ForbidRawExceptionMessageInResponseRule(['App\Support\InvoiceLog::recordError', $signature]);
+    }
+
+    public function testASinkWithALeadingBackslashStillArms(): void
+    {
         $this->ruleOverride = new ForbidRawExceptionMessageInResponseRule(
-            ['NoSeparatorHere', 'A::b::c', '::emptyClass', 'EmptyMethod::'],
+            ['\App\Support\InvoiceLog::recordError'],
         );
 
         $this->analyse(
-            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/ErrorSinkConcatGetMessage.php'],
-            [[self::MESSAGE, 16]],
+            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/PersistSinkGetMessage.php'],
+            [[self::MESSAGE, 21]],
         );
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function staticSinkSpellings(): iterable
+    {
+        yield 'as resolved' => ['App\Support\InvoiceLog::recordError'];
+        yield 'leading backslash' => ['\App\Support\InvoiceLog::recordError'];
+    }
+
+    #[DataProvider('staticSinkSpellings')]
+    public function testAConfiguredSinkArmsTheStaticCallForm(string $signature): void
+    {
+        $this->ruleOverride = new ForbidRawExceptionMessageInResponseRule([$signature]);
+
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/PersistSinkStaticGetMessage.php'],
+            [[self::MESSAGE, 14]],
+        );
+    }
+
+    public function testTheMalformedSinkErrorShowsTheExpectedShape(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage("e.g. 'App\\Support\\InvoiceLog::recordError'");
+
+        new ForbidRawExceptionMessageInResponseRule(['App\Support\InvoiceLog:recordError']);
     }
 
     public function testRuleResolvesFromExtensionNeonAndFiresOnDefaultSink(): void
