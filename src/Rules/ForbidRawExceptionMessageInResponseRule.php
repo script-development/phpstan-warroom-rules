@@ -5,6 +5,7 @@ declare(strict_types = 1);
 namespace ScriptDevelopment\PhpstanWarroomRules\Rules;
 
 use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use PhpParser\Node;
 use PhpParser\Node\Expr;
 use PhpParser\Node\Expr\BinaryOp\Concat;
@@ -26,13 +27,14 @@ use PHPStan\Type\TypeCombinator;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
-use function count;
 use function explode;
 use function file_get_contents;
 use function in_array;
 use function is_file;
 use function mb_strtolower;
 use function mb_trim;
+use function preg_match;
+use function sprintf;
 use function str_contains;
 use function str_starts_with;
 
@@ -133,6 +135,15 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
      */
     private const string DEFAULT_SINK = 'Laravel\Mcp\Response::error';
 
+    /**
+     * `FQCN::method` with PHP name syntax on both halves, anchored, so an entry
+     * with a stray colon, padding, or a missing half can never parse into a sink
+     * that matches nothing. A leading `\` is accepted and kept out of the class
+     * group, because the static-call form compares against the resolved name,
+     * which carries none.
+     */
+    private const string SINK_SIGNATURE_PATTERN = '/\A\\\?(?<class>[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*(?:\\\[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)*)::(?<method>[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)\z/';
+
     private const string THROWABLE = Throwable::class;
 
     /** Log-level method names — a call to any of these on a logger is the remediation, never a leak. Lower-case, matched folded. */
@@ -163,6 +174,7 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
      *                                                  built-in `Response::error`
      *                                                  default; empty by default so
      *                                                  the rule is safe to adopt.
+     *                                                  A malformed entry throws.
      * @param list<string> $safeMessageExceptionClasses exception FQCNs whose
      *                                                  messages are proven
      *                                                  app-authored (arch-test-
@@ -179,11 +191,7 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
         $this->sinks = [];
 
         foreach ([self::DEFAULT_SINK, ...$rawExceptionMessageSinks] as $signature) {
-            $parsed = $this->parseSinkSignature($signature);
-
-            if ($parsed !== null) {
-                $this->sinks[] = $parsed;
-            }
+            $this->sinks[] = $this->parseSinkSignature($signature);
         }
     }
 
@@ -224,17 +232,20 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
     }
 
     /**
-     * @return array{class: string, method: string}|null
+     * A malformed entry would arm no sink, so the leak it was configured to
+     * catch would pass unreported — it stops analysis instead.
+     *
+     * @throws InvalidArgumentException
+     *
+     * @return array{class: string, method: string}
      */
-    private function parseSinkSignature(string $signature): ?array
+    private function parseSinkSignature(string $signature): array
     {
-        $parts = explode('::', $signature);
-
-        if (count($parts) !== 2 || $parts[0] === '' || $parts[1] === '') {
-            return null;
+        if (preg_match(self::SINK_SIGNATURE_PATTERN, $signature, $matches) !== 1) {
+            throw new InvalidArgumentException(sprintf("rawExceptionMessageSinks entry '%s' is not a `FQCN::method` signature (e.g. 'App\\Support\\InvoiceLog::recordError'). A malformed entry arms no sink, so it is refused rather than skipped.", $signature));
         }
 
-        return ['class' => $parts[0], 'method' => mb_strtolower($parts[1])];
+        return ['class' => $matches['class'], 'method' => mb_strtolower($matches['method'])];
     }
 
     /**
