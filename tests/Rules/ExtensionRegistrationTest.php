@@ -12,6 +12,18 @@ use PHPUnit\Framework\TestCase;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use ReflectionClass;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Application;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\CannotRun;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\ChangedFile;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\CheckResult;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Config;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\EditedMigrationCheck;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Finding;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Git;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\IgnoreEntries;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\IgnoreGrowthCheck;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Reporter;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Waiver;
 use ScriptDevelopment\PhpstanWarroomRules\Support\AppendOnlyLogMessage;
 use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 use SplFileInfo;
@@ -50,6 +62,18 @@ final class ExtensionRegistrationTest extends TestCase
     /** @var list<class-string> */
     private const array HELPERS = [
         AppendOnlyLogMessage::class,
+        Application::class,
+        CannotRun::class,
+        ChangedFile::class,
+        CheckResult::class,
+        Config::class,
+        EditedMigrationCheck::class,
+        Finding::class,
+        Git::class,
+        IgnoreEntries::class,
+        IgnoreGrowthCheck::class,
+        Reporter::class,
+        Waiver::class,
         NamespacePrefix::class,
     ];
 

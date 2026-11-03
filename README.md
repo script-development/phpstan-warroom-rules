@@ -497,6 +497,57 @@ Six rules only fire inside `App\Actions` — the namespace itself or anything un
 
 `ConnectionTransactionReturnTypeExtension` is registered alongside the rules. It resolves the return type of `$connection->transaction(fn () => $foo)` to the closure's return type instead of `mixed`, enabling strict typing of transaction call sites. It is load-bearing on `illuminate/* ^12`, whose `ConnectionInterface::transaction()` is annotated `@return mixed`; Laravel 13 annotates the method generically and PHPStan infers the same type without it.
 
+## Diff guards (`vendor/bin/warroom-diff-guards`)
+
+Some regressions only show in a comparison: an edited migration, a grown PHPStan baseline. PHPStan analyses one tree, so these checks ship as a Composer binary instead of a rule. Every consumer that requires this package gets it at `vendor/bin/warroom-diff-guards`.
+
+```bash
+vendor/bin/warroom-diff-guards --base=origin/development [--format=human|github] [--config=<file>]
+```
+
+Run it from the Composer project directory (`backend/` in a monorepo). It compares HEAD with `git merge-base <base> HEAD`, the commit the change forked from, never with the base's tip: against the tip, a branch behind its base would be charged with every migration the base gained since. The checks read committed content only; uncommitted edits are not compared. The config file is the one thing read from disk.
+
+| Check | Fails when |
+|---|---|
+| `edited-migration` | A file under a migrations directory (default `database/migrations`) that existed at the fork point is modified, renamed or deleted. Laravel records a migration as run by its file name, so an edit never reaches a database where it already ran, and a rename runs it again even when the content is unchanged. A deletion breaks rollback and reset. A migration added on this branch is silent however often it is rewritten. |
+| `ignore-growth` | An entry under `parameters.ignoreErrors` is added, a counted entry's `count` grows, or a counted entry loses its count. Files read: `phpstan.neon`, `phpstan.neon.dist`, `phpstan-baseline.neon`, `phpstan.neon.baseline`. They are folded into one list per revision, as PHPStan folds its includes, so an entry moved from the config into the baseline nets to nothing. Entries are keyed on identifier and path (the message only when there is no identifier), so a regenerated baseline with reworded messages is silent. The cost of that key: fixing one error and silencing another with the same identifier in the same file also nets to nothing. A count may only shrink, which is the "park" rule in the war-room canonical `phpstan.neon`. |
+
+Every run prints, per check, how many files it compared (`edited-migration: 0 findings over 3 changed migrations`). A check that compared nothing says so instead of reading as clean.
+
+**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config or ignore file that does not parse, an unknown option). A missing base is never a pass.
+
+**`warroom-diff-guards.json`** (optional, in the project directory, or `--config=<file>`):
+
+```json
+{
+    "migrations": ["database/migrations"],
+    "ignoreFiles": ["phpstan.neon", "phpstan-baseline.neon"],
+    "waivers": [
+        {
+            "check": "edited-migration",
+            "path": "database/migrations/2026_10_01_000000_create_drafts_table.php",
+            "reason": "Never deployed: added in #212, which has not been released."
+        }
+    ]
+}
+```
+
+A waiver names a check, the path the finding is about (the migration, or for `ignore-growth` the path the ignore entry silences, or the ignore file for an entry with no path), and a reason. A waiver without a reason, an unknown key or an unknown check makes the whole file `INVALID`: a typo must not read as "no waivers". A waiver that matches nothing in a change is printed as unused and does not fail the run, so remove it once the change that needed it has merged.
+
+**CI step** (needs the history to reach the merge base):
+
+```yaml
+- uses: actions/checkout@v4
+  with:
+      fetch-depth: 0
+- run: vendor/bin/warroom-diff-guards --base="origin/${{ github.base_ref }}" --format=github
+  working-directory: backend
+```
+
+`--format=github` turns each finding into an `::error` annotation on its file and line, named from the repository root. The binary needs only this package's `require` dependencies and `git`; the NEON parser is PHPStan's own.
+
+These checks follow [sloppy](https://github.com/heyosseus/sloppy) (MIT, `heyosseus/sloppy`), its SL214 and SL502; the code here is our own.
+
 ## Production dependencies
 
 The `illuminate/*` packages (`database`, `contracts`, `cache`, `filesystem`, `log`, `mail`) sit in `require`, not `require-dev`, on purpose. The rules and `ConnectionTransactionReturnTypeExtension` reflect against Illuminate contracts and classes (e.g. `Illuminate\Database\ConnectionInterface`, the cache/mail/queue facades the audit-scope rule reasons about) *at analysis time* — when a consumer runs PHPStan, this package's code resolves those symbols, so they are genuine analysis-time (runtime-for-the-extension) dependencies, not test-only tooling. Moving them to `require-dev` would omit them from a normal `composer require --dev` install and break consumers that analyse non-Laravel or partial trees where the Illuminate symbols are not otherwise present.

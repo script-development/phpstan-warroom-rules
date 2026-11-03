@@ -46,6 +46,22 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 
 Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snapshot-on-Retry Safety) was the first Phase 2 addition, promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). `EnforceResourceDataValidatorOptInRule` (ADR-0009 §EAGER_LOAD validator opt-in) is the second Phase 2 addition, promoted from kendo PR #1084 under war-room enforcement queue #55. `EnforceFormRequestToDtoRule` (ADR-0012) is the third Phase 2 addition, promoted from entreezuil's `tests/Arch/FormRequestsTest.php` under the same queue #55 (instance 2). `EnforceExplicitHydrationRule` (ADR-0019) is the next Phase 2 candidate.
 
+## Diff guards
+
+`bin/warroom-diff-guards` (a Composer `bin`, logic in `src/DiffGuards/`) compares HEAD with `git merge-base <base> HEAD` and fails on what only a comparison can show. It is a binary, not a rule, because PHPStan analyses one tree, and because only 2 of 13 consumers put `tests/` in PHPStan's `paths`.
+
+| Check | Fails on |
+|---|---|
+| `edited-migration` | A migration that existed at the fork point modified, renamed (even with identical content) or deleted. |
+| `ignore-growth` | A new `ignoreErrors` entry, a grown `count`, or a count removed, over the configured NEON files folded into one list per revision. |
+
+- **Exit codes are the contract:** 0 passed, 1 findings, 2 could not run (`MISSING` input or `INVALID` config). A missing base is exit 2, never a pass. `CannotRunTest` holds one case per exit-2 path.
+- **Every run prints a denominator per check** (`N findings over M changed migrations`, or `compared nothing`).
+- **Git is called through `proc_open` with argument arrays only,** paths relative to the project directory (`--relative`, `<rev>:./<path>`), so a `backend/` project reads its own tree; annotations add the repository prefix back.
+- **NEON is read through PHPStan's `NeonAdapter`** under an inline ignore of `phpstanApi.*`: Nette is scoped inside the phar, so `Nette\Neon` is not loadable by name, and the binary adds no runtime dependency of its own. A PHPStan release that moves the adapter fails the binary with exit 2, and this package's suite goes red on the Dependabot bump.
+- **Escape hatch:** `warroom-diff-guards.json` waivers, each a check, a subject path and a mandatory reason. A waiver without a reason makes the file `INVALID`. Tests build throwaway repositories with `tests/DiffGuards/GitRepository`, which scrubs `GIT_DIR`/`GIT_INDEX_FILE`/`GIT_WORK_TREE` and hides the global git config.
+- Every `src/DiffGuards/` class is a named helper in `ExtensionRegistrationTest::HELPERS`; none is registered in `extension.neon`.
+
 ## Conventions
 
 - **Namespace:** `ScriptDevelopment\PhpstanWarroomRules\` (PSR-4, `src/`).
@@ -156,5 +172,5 @@ SemVer per ADR-0021:
 ## What this territory does NOT do
 
 - Does not enforce its rules on itself's source code beyond syntactic correctness — the rules target Laravel application code (`App\Actions`, `App\*`), not a static-analysis package.
-- Does not ship operational PHP code or services. It is a static-analysis library only.
+- Does not ship services or application code. Besides the PHPStan rules it ships one CI tool, the `warroom-diff-guards` binary (§ Diff guards), which reads git history and writes nothing.
 - Does not maintain a documentation site. Doctrine lives in `adrs.script.nl`; usage docs live in `README.md`.

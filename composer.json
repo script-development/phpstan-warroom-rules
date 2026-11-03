@@ -39,6 +39,9 @@
             "tests/Fixtures/"
         ]
     },
+    "bin": [
+        "bin/warroom-diff-guards"
+    ],
     "extra": {
         "phpstan": {
             "includes": [

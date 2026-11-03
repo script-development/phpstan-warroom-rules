@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 **Release as a whole: 0.x MINOR, consumer-impacting.** The case-folding fixes report writes and calls the rules used to miss, so a consumer can see new errors in code that passed; per this package's SemVer that is the pin-bump class, not a patch. A consumer that read zero on `ForbidCredentialCastBypassRule` before this release has to be re-measured after it.
 
+### Added
+
+- `warroom-diff-guards`, a Composer binary (`vendor/bin/warroom-diff-guards --base=<ref>`) that compares HEAD with its merge base against `<ref>` and fails on two things PHPStan cannot see in one tree: `edited-migration` (a migration that existed at the fork point modified, renamed or deleted) and `ignore-growth` (a new `ignoreErrors` entry, a grown `count`, or a count removed, across `phpstan.neon`, `phpstan.neon.dist`, `phpstan-baseline.neon` and `phpstan.neon.baseline`). Exit 0 passed, 1 findings, 2 could not run; every run prints how many files each check compared. `--format=github` writes `::error` annotations. Optional `warroom-diff-guards.json` sets the paths and holds waivers, each with a mandatory reason. Needs `git` and a history deep enough to reach the merge base (`fetch-depth: 0`). Modelled on [sloppy](https://github.com/heyosseus/sloppy) (MIT, `heyosseus/sloppy`) checks SL214 and SL502. **Versioning:** 0.x MINOR, new tool; nothing runs until a consumer adds the CI step.
+
 ### Changed
 
 - `ForbidAbortHelperRule` — the error message now depends on the namespace. Inside `App\Actions` (and below it, on the `\` boundary) it prescribes a domain exception the exception renderer maps to a status; it used to prescribe `HttpException`, which `ForbidHttpExceptionInActionsRule` then reported, so following the message guaranteed a second red run. Everywhere else the message is unchanged. The identifier is unchanged. War-room WR-2075.
