@@ -6,6 +6,7 @@ namespace ScriptDevelopment\PhpstanWarroomRules\Tests\DiffGuards;
 
 use PHPUnit\Framework\TestCase;
 use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Application;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Git;
 
 use function count;
 
@@ -273,6 +274,16 @@ final class WeakenedTestCheckTest extends TestCase
 
         self::assertSame(2, $exit, $output);
         self::assertStringContainsString('INVALID — tests/Unit/InvoiceTest.php does not parse as PHP', $output);
+    }
+
+    public function testAnOversizedTestFileIsInvalidNotRead(): void
+    {
+        $repository = $this->base()->branch('feature')->write('tests/Unit/InvoiceTest.php', self::PHPUNIT . "\n//" . str_repeat('x', Git::MAX_BYTES))->commit();
+
+        [$exit, $output] = $this->guard($repository);
+
+        self::assertSame(2, $exit, $output);
+        self::assertStringContainsString('INVALID — tests/Unit/InvoiceTest.php is ', $output);
     }
 
     public function testAWaiverExcusesAWeakenedTestFile(): void

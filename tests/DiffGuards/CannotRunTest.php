@@ -90,6 +90,7 @@ final class CannotRunTest extends TestCase
         yield 'migrations empty' => ['{"migrations": []}', "'migrations' must be a non-empty list of paths"];
         yield 'migrations a map' => ['{"migrations": {"a": "b"}}', "'migrations' must be a non-empty list of paths"];
         yield 'phpstanConfigs blank entry' => ['{"phpstanConfigs": [" / "]}', "every 'phpstanConfigs' entry must be a non-empty path"];
+        yield 'tests empty' => ['{"tests": []}', "'tests' must be a non-empty list of paths"];
         yield 'phpstanConfigs non-string entry' => ['{"phpstanConfigs": [3]}', "every 'phpstanConfigs' entry must be a non-empty path"];
         yield 'waivers a map' => ['{"waivers": {"a": 1}}', "'waivers' must be a list"];
         yield 'waiver not an object' => ['{"waivers": ["x"]}', 'waiver #0 must be an object with only check, path and reason'];
