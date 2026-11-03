@@ -1,4 +1,13 @@
 parameters:
+    # PHPStan core option, not a rule of this package: every inline
+    # `@phpstan-ignore` names an identifier AND gives a reason in parentheses
+    # after it (`ignore.noComment`), and the identifier-less
+    # `@phpstan-ignore-line` / `@phpstan-ignore-next-line` are reported
+    # outright (`ignore.allLineErrors`). A suppression with no recorded reason
+    # cannot be reviewed. A consumer's own `phpstan.neon` may set it back to
+    # `false`; its parameters are merged after this file's.
+    reportIgnoresWithoutComments: true
+
     # `EnforceResourceDataValidatorOptInRule`: FQCN of the abstract resource
     # base class. Default matches the kendo / emmie / ublgenie / entreezuil
     # convention `App\Http\Resources\ResourceData`. Override per consumer

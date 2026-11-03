@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 **Release as a whole: 0.x MINOR, consumer-impacting.** The case-folding fixes report writes and calls the rules used to miss, so a consumer can see new errors in code that passed; per this package's SemVer that is the pin-bump class, not a patch. A consumer that read zero on `ForbidCredentialCastBypassRule` before this release has to be re-measured after it.
 
+### Added
+
+- `extension.neon` sets PHPStan's own `reportIgnoresWithoutComments: true` — **surfaces new errors (consumer-impacting, breaking under the 0.x convention).** Every inline `@phpstan-ignore` must carry a reason in parentheses after each identifier it names: `@phpstan-ignore argument.type (why)`. A bare identifier, or empty parentheses, is reported as `ignore.noComment`; `@phpstan-ignore-line` and `@phpstan-ignore-next-line` are reported as `ignore.allLineErrors` whatever text follows them. In every rejected case the ignore also stops suppressing, so the error it hid is reported again. `ignoreErrors` entries and baselines are unaffected. A consumer that cannot adopt it yet sets `reportIgnoresWithoutComments: false` in its own `phpstan.neon`, which wins over the shipped value. `ReportIgnoresWithoutCommentsTest` reads the option through the container's `FileAnalyser` (a `RuleTestCase` builds its analyser with it hard-coded off) and goes red with the setting removed.
+
+  **Consumer audit demands (pin bump).** Measured on 2026-11-03 at each consumer's default branch, over the paths its `phpstan.neon` analyses, with a comment-token scan calibrated against PHPStan on kendo (same two sites): brick-inventory-orchestrator 53 of 57 inline ignores reasonless, emmie 113 of 141 (120 errors: some ignores name two identifiers, three are `-line` / `-next-line`), kendo 2 of 27, entreezuil 1 of 2, and zero in ublgenie, wijs, isms, btc-dash, town-crier, codebook, lokalekeuze and laravel-skeleton. Each site is fixed by adding the reason, or the consumer sets the option to `false` until it can.
+
 ### Changed
 
 - `ForbidAbortHelperRule` — the error message now depends on the namespace. Inside `App\Actions` (and below it, on the `\` boundary) it prescribes a domain exception the exception renderer maps to a status; it used to prescribe `HttpException`, which `ForbidHttpExceptionInActionsRule` then reported, so following the message guaranteed a second red run. Everywhere else the message is unchanged. The identifier is unchanged. War-room WR-2075.
