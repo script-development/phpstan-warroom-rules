@@ -46,6 +46,8 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 
 Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snapshot-on-Retry Safety) was the first Phase 2 addition, promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). `EnforceResourceDataValidatorOptInRule` (ADR-0009 §EAGER_LOAD validator opt-in) is the second Phase 2 addition, promoted from kendo PR #1084 under war-room enforcement queue #55. `EnforceFormRequestToDtoRule` (ADR-0012) is the third Phase 2 addition, promoted from entreezuil's `tests/Arch/FormRequestsTest.php` under the same queue #55 (instance 2). `EnforceExplicitHydrationRule` (ADR-0019) is the next Phase 2 candidate.
 
+**Shipped PHPStan settings, not rules.** `extension.neon` also sets `reportIgnoresWithoutComments: true`, PHPStan's own option: an inline `@phpstan-ignore id` without `(reason)` is `ignore.noComment`, and `@phpstan-ignore-line` / `@phpstan-ignore-next-line` are `ignore.allLineErrors` whatever text follows. A consumer's `phpstan.neon` overrides it. `ReportIgnoresWithoutCommentsTest` reads it through the container's `FileAnalyser`, because a `RuleTestCase` builds its analyser with the option hard-coded off; `ReportIgnoresWithoutCommentsConsumerOverrideTest` pins the consumer override.
+
 ## Conventions
 
 - **Namespace:** `ScriptDevelopment\PhpstanWarroomRules\` (PSR-4, `src/`).
