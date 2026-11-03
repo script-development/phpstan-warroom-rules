@@ -6,6 +6,7 @@ namespace ScriptDevelopment\PhpstanWarroomRules\DiffGuards;
 
 use function count;
 use function is_resource;
+use function sprintf;
 
 /**
  * The repository as the project directory sees it.
@@ -17,6 +18,9 @@ use function is_resource;
  */
 final readonly class Git
 {
+    /** A file past this is INVALID rather than read; the largest fleet PHPStan config is about 115 KB. */
+    public const int MAX_BYTES = 4 * 1_024 * 1_024;
+
     public function __construct(
         private string $directory,
     ) {}
@@ -100,6 +104,16 @@ final readonly class Git
 
         if ($out === '') {
             return null;
+        }
+
+        [$status, $size] = $this->run(['cat-file', '-s', $revision . ':./' . $path]);
+
+        if ($status !== 0) {
+            throw CannotRun::missing("Cannot read {$path} at {$revision}.");
+        }
+
+        if ((int) $size > self::MAX_BYTES) {
+            throw CannotRun::invalid(sprintf('%s is %d bytes at %s, over the %d-byte limit this tool reads.', $path, (int) $size, $revision, self::MAX_BYTES));
         }
 
         [$status, $contents] = $this->run(['cat-file', 'blob', $revision . ':./' . $path]);

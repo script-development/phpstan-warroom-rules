@@ -11,6 +11,8 @@ use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Application;
 use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\EditedMigrationCheck;
 use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Git;
 
+use function sprintf;
+
 final class ApplicationTest extends TestCase
 {
     private const string MIGRATION = 'database/migrations/2026_01_01_000000_create_users_table.php';
@@ -32,7 +34,7 @@ final class ApplicationTest extends TestCase
 
         self::assertSame(0, $exit, $output);
         self::assertStringContainsString("edited-migration: 0 findings over 1 changed migration\n", $output);
-        self::assertStringContainsString('ignore-growth: compared nothing — no changed ignore files in this change', $output);
+        self::assertStringContainsString('ignore-growth: compared nothing — no changed PHPStan config files in this change', $output);
         self::assertMatchesRegularExpression('/diff-guards: PASSED — 0 findings; compared HEAD with the merge base [0-9a-f]{12} of main over 1 changed path\n/', $output);
     }
 
@@ -109,37 +111,51 @@ final class ApplicationTest extends TestCase
         [$exit, $output] = $this->guard($repository->root, '--base=main');
 
         self::assertSame(0, $exit, $output);
-        self::assertStringContainsString("ignore-growth: 0 findings over 1 changed ignore file\n", $output);
+        self::assertStringContainsString("ignore-growth: 0 findings over 1 changed PHPStan config file\n", $output);
     }
 
     public function testANewIgnoreAndAnUncountedParkEachFail(): void
     {
         $repository = $this->base()->branch('feature')
-            ->write('phpstan.neon', str_replace("            count: 3\n", '', self::PARK))
+            ->write('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n\n" . str_replace("            count: 3\n", '', self::PARK))
             ->write('phpstan-baseline.neon', "parameters:\n\tignoreErrors:\n\t\t-\n\t\t\tidentifier: argument.type\n\t\t\tcount: 1\n\t\t\tpath: app/Foo.php\n")
             ->commit();
 
         [$exit, $output] = $this->guard($repository->root, '--base=main');
 
         self::assertSame(1, $exit, $output);
-        self::assertStringContainsString('phpstan.neon:5  Ignored error staticMethod.dynamicCall @ routes/console.php lost its count (3) and now silences without limit.', $output);
+        self::assertStringContainsString('phpstan.neon:8  Ignored error staticMethod.dynamicCall @ routes/console.php lost its count (3) and now silences without limit.', $output);
         self::assertStringContainsString('phpstan-baseline.neon:6  New ignored error: argument.type @ app/Foo.php, count 1.', $output);
-        self::assertStringContainsString("ignore-growth: 2 findings over 2 changed ignore files\n", $output);
+        self::assertStringContainsString("ignore-growth: 2 findings over 2 changed PHPStan config files\n", $output);
     }
 
-    public function testAnEntryMovedIntoTheBaselineNetsToNothingAndARegeneratedBaselineIsSilent(): void
+    public function testAnEntryMovedIntoAnIncludedBaselineNetsToNothing(): void
     {
-        $repository = $this->base();
-        $repository->write('phpstan-baseline.neon', "parameters:\n\tignoreErrors:\n\t\t-\n\t\t\tmessage: '#^old wording$#'\n\t\t\tidentifier: argument.type\n\t\t\tcount: 1\n\t\t\tpath: app/Foo.php\n")->commit();
-        $repository->branch('feature')
-            ->write('phpstan.neon', "parameters:\n    level: max\n")
-            ->write('phpstan-baseline.neon', "parameters:\n\tignoreErrors:\n\t\t-\n\t\t\tmessage: '#^new wording$#'\n\t\t\tidentifier: argument.type\n\t\t\tcount: 1\n\t\t\tpath: app/Foo.php\n\t\t-\n\t\t\tidentifier: staticMethod.dynamicCall\n\t\t\tcount: 3\n\t\t\tpath: routes/console.php\n")
+        $repository = $this->base()->branch('feature')
+            ->write('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n\nparameters:\n    level: max\n")
+            ->write('phpstan-baseline.neon', "parameters:\n\tignoreErrors:\n\t\t-\n\t\t\tidentifier: staticMethod.dynamicCall\n\t\t\tcount: 3\n\t\t\tpath: routes/console.php\n")
             ->commit();
 
         [$exit, $output] = $this->guard($repository->root, '--base=main');
 
         self::assertSame(0, $exit, $output);
-        self::assertStringContainsString('ignore-growth: 0 findings over 2 changed ignore files', $output);
+        self::assertStringContainsString('ignore-growth: 0 findings over 2 changed PHPStan config files', $output);
+    }
+
+    public function testASwappedMessageAtTheSameCountIsANewSuppression(): void
+    {
+        $entry = "parameters:\n    ignoreErrors:\n        -\n            message: '#^%s$#'\n            identifier: argument.type\n            count: 1\n            path: app/Foo.php\n";
+        $repository = $this->base();
+        $repository->write('phpstan.neon', sprintf($entry, 'old error'))->commit();
+        $repository->branch('feature')->write('phpstan.neon', sprintf($entry, 'new error'))->commit();
+
+        [$exit, $output] = $this->guard($repository->root, '--base=main');
+
+        self::assertSame(1, $exit, $output);
+        self::assertStringContainsString('New ignored error: argument.type | #^new error$# @ app/Foo.php, count 1.', $output);
+
+        $repository->write('phpstan.neon', sprintf($entry, 'new error') . "    level: max\n")->commit();
+        self::assertSame(0, $this->guard($repository->root, '--base=' . mb_trim($repository->git('rev-parse', 'HEAD~1')))[0], 'Control: the same message at the same count is silent.');
     }
 
     public function testAnUncountedEntryAtTheBaseMayChangeFreely(): void
@@ -151,18 +167,18 @@ final class ApplicationTest extends TestCase
         self::assertSame(0, $this->guard($repository->root, '--base=main')[0]);
     }
 
-    public function testAnEntryInTwoHeadFilesIsReportedOnceOnTheFirstConfiguredFile(): void
+    public function testAnEntryInTwoIncludedFilesIsReportedOnceOnTheFirstLoadedFile(): void
     {
         $repository = $this->base()->branch('feature')
-            ->write('phpstan.neon', str_replace('count: 3', 'count: 4', self::PARK))
-            ->write('phpstan.neon.dist', self::PARK)
+            ->write('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n\n" . str_replace('count: 3', 'count: 4', self::PARK))
+            ->write('phpstan-baseline.neon', self::PARK)
             ->commit();
 
         [$exit, $output] = $this->guard($repository->root, '--base=main');
 
         self::assertSame(1, $exit, $output);
         self::assertSame(1, mb_substr_count($output, 'grew from count 3 to 7'), $output);
-        self::assertStringContainsString('  phpstan.neon:6  ', $output);
+        self::assertStringContainsString('  phpstan.neon:9  ', $output);
     }
 
     public function testAWaiverWithAReasonExcusesItsFindingAndAnUnusedOneIsReported(): void
@@ -277,17 +293,119 @@ final class ApplicationTest extends TestCase
         self::assertStringContainsString('Ignored error z.z @ z.php grew from count 1 to 2.', $output);
     }
 
-    public function testAConfigWithoutPathKeysKeepsEveryDefaultFile(): void
+    public function testOnlyTheConfigPhpstanDiscoversIsCompared(): void
     {
-        $repository = $this->base()->branch('feature')
-            ->write('phpstan.neon.dist', self::PARK)
-            ->write('warroom-diff-guards.json', '{"waivers": []}')
+        $repository = $this->base()->branch('feature')->write('phpstan.neon.dist', str_replace('count: 3', 'count: 9', self::PARK))->commit();
+
+        [$exit, $output] = $this->guard($repository->root, '--base=main');
+
+        self::assertSame(0, $exit, $output);
+        self::assertStringContainsString('ignore-growth: compared nothing', $output);
+    }
+
+    public function testAnEntryMovedFromAnUnloadedFileIntoTheLoadedOneIsGrowth(): void
+    {
+        $repository = $this->base();
+        $repository->write('phpstan.neon', "parameters:\n    level: max\n")->write('phpstan.neon.dist', self::PARK)->commit();
+        $repository->branch('feature')->write('phpstan.neon', self::PARK)->write('phpstan.neon.dist', "parameters:\n    level: max\n")->commit();
+
+        [$exit, $output] = $this->guard($repository->root, '--base=main');
+
+        self::assertSame(1, $exit, $output);
+        self::assertStringContainsString('phpstan.neon:6  New ignored error: staticMethod.dynamicCall @ routes/console.php, count 3.', $output);
+    }
+
+    public function testTheDiscoveredRootIsTheFirstFilePhpstanProbes(): void
+    {
+        $repository = $this->base();
+        $repository->git('rm', '--quiet', 'phpstan.neon');
+        $repository->write('phpstan.dist.neon', self::PARK)->write('.phpstan.neon.dist', "parameters:\n    level: max\n")->commit();
+        $repository->branch('feature')->write('phpstan.dist.neon', str_replace('count: 3', 'count: 4', self::PARK))->commit();
+
+        self::assertSame(0, $this->guard($repository->root, '--base=main')[0], '.phpstan.neon.dist is probed before phpstan.dist.neon');
+
+        $repository->write('.phpstan.neon.dist', self::PARK)->commit();
+        $repository->write('.phpstan.neon.dist', str_replace('count: 3', 'count: 4', self::PARK))->commit();
+
+        self::assertSame(1, $this->guard($repository->root, '--base=' . mb_trim($repository->git('rev-parse', 'HEAD~1')))[0]);
+    }
+
+    public function testConfiguredRootsAreComparedEachWithTheirOwnIncludes(): void
+    {
+        $repository = $this->base();
+        $repository->write('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n")
+            ->write('phpstan.neon.baseline', "includes:\n    - vendor/larastan/larastan/extension.neon\n    - phar://phpstan.phar/conf/bleedingEdge.neon\n    - %rootDir%/conf/bleedingEdge.neon\n    - /etc/phpstan/shared.neon\n    - ./build/../phpstan-baseline.neon\n\nparameters:\n    level: max\n")
+            ->write('phpstan-baseline.neon', self::PARK)
+            ->commit();
+        $repository->branch('feature')
+            ->write('phpstan-baseline.neon', str_replace('count: 3', 'count: 5', self::PARK))
+            ->write('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n\nparameters:\n    level: 8\n")
+            ->write('phpstan.neon.baseline', "includes:\n    - vendor/larastan/larastan/extension.neon\n    - phar://phpstan.phar/conf/bleedingEdge.neon\n    - %rootDir%/conf/bleedingEdge.neon\n    - /etc/phpstan/shared.neon\n    - ./build/../phpstan-baseline.neon\n\nparameters:\n    level: 9\n")
+            ->write('warroom-diff-guards.json', '{"phpstanConfigs": ["phpstan.neon", "phpstan.neon.baseline"]}')
             ->commit();
 
         [$exit, $output] = $this->guard($repository->root, '--base=main');
 
         self::assertSame(1, $exit, $output);
-        self::assertStringContainsString('grew from count 3 to 6', $output);
+        self::assertSame(1, mb_substr_count($output, 'grew from count 3 to 5'), $output);
+        self::assertStringContainsString('phpstan-baseline.neon:6  Ignored error staticMethod.dynamicCall @ routes/console.php grew from count 3 to 5.', $output);
+        self::assertStringContainsString("ignore-growth: 1 finding over 3 changed PHPStan config files\n", $output);
+    }
+
+    public function testIncludesResolveFromTheIncludingFile(): void
+    {
+        $repository = $this->base();
+        $repository->write('config/phpstan.neon', "includes:\n    - local.neon\n    - %currentWorkingDirectory%/phpstan-baseline.neon\n")
+            ->write('config/local.neon', "parameters:\n    level: max\n")
+            ->write('phpstan-baseline.neon', self::PARK)
+            ->write('warroom-diff-guards.json', '{"phpstanConfigs": ["config/phpstan.neon"]}')
+            ->commit();
+        $repository->branch('feature')
+            ->write('config/local.neon', self::PARK)
+            ->commit();
+
+        [$exit, $output] = $this->guard($repository->root, '--base=main');
+
+        self::assertSame(1, $exit, $output);
+        self::assertStringContainsString('config/local.neon:6  Ignored error staticMethod.dynamicCall @ routes/console.php grew from count 3 to 6.', $output);
+
+        $repository->write('config/phpstan.neon', "includes:\n    - ../phpstan-baseline.neon\n")->write('config/local.neon', "parameters:\n    level: max\n")->commit();
+        $repository->write('phpstan-baseline.neon', str_replace('count: 3', 'count: 4', self::PARK))->commit();
+
+        self::assertStringContainsString('grew from count 3 to 4', $this->guard($repository->root, '--base=' . mb_trim($repository->git('rev-parse', 'HEAD~1')))[1]);
+    }
+
+    public function testAnIncludeThatIsNotNeonCannotBeCompared(): void
+    {
+        $repository = $this->base()->branch('feature')->write('phpstan.neon', "includes:\n    - phpstan-baseline.php\n")->write('phpstan-baseline.php', '<?php return [];')->commit();
+
+        [$exit, $output] = $this->guard($repository->root, '--base=main');
+
+        self::assertSame(2, $exit, $output);
+        self::assertStringContainsString('INVALID — phpstan.neon includes phpstan-baseline.php, which is not NEON', $output);
+    }
+
+    public function testAnIncludeCycleIsReadOnce(): void
+    {
+        $repository = $this->base()->branch('feature')
+            ->write('phpstan.neon', "includes:\n    - other.neon\n\n" . self::PARK)
+            ->write('other.neon', "includes:\n    - phpstan.neon\n")
+            ->commit();
+
+        self::assertSame(0, $this->guard($repository->root, '--base=main')[0]);
+    }
+
+    public function testAnOversizedConfigIsInvalidNotRead(): void
+    {
+        $repository = $this->base()->branch('feature')->write('phpstan.neon', self::PARK . "\n" . str_repeat('#', Git::MAX_BYTES))->commit();
+
+        [$exit, $output] = $this->guard($repository->root, '--base=main');
+
+        self::assertSame(2, $exit, $output);
+        self::assertStringContainsString('INVALID — phpstan.neon is ' . (mb_strlen(self::PARK) + 1 + Git::MAX_BYTES) . ' bytes at HEAD, over the ' . Git::MAX_BYTES . '-byte limit', $output);
+
+        $repository->write('phpstan.neon', self::PARK . "\n" . str_repeat('#', Git::MAX_BYTES - mb_strlen(self::PARK) - 1))->commit();
+        self::assertSame(0, $this->guard($repository->root, '--base=main')[0], 'Control: a file exactly at the limit is read.');
     }
 
     public function testEveryConfiguredMigrationDirectoryIsRead(): void

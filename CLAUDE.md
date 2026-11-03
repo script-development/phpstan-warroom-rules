@@ -55,8 +55,9 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 | Check | Fails on |
 |---|---|
 | `edited-migration` | A migration that existed at the fork point modified, renamed (even with identical content) or deleted. |
-| `ignore-growth` | A new `ignoreErrors` entry, a grown `count`, or a count removed, over the configured NEON files folded into one list per revision. |
+| `ignore-growth` | An error suppressed at HEAD that was not at the merge base (a new entry, a grown `count`, a count removed), keyed on identifier + message + path, over what PHPStan loads: the root config (configured, or PHPStan's own discovery order) and its `includes`, recursively. |
 
+- **No file over `Git::MAX_BYTES` (4 MiB) is read**: it is `INVALID`, exit 2. The largest PHPStan config in the fleet was 114,852 bytes on 2026-11-03.
 - **Exit codes are the contract:** 0 passed, 1 findings, 2 could not run (`MISSING` input or `INVALID` config). A missing base is exit 2, never a pass. `CannotRunTest` holds one case per exit-2 path.
 - **Every run prints a denominator per check** (`N findings over M changed migrations`, or `compared nothing`).
 - **Git is called through `proc_open` with argument arrays only,** paths relative to the project directory (`--relative`, `<rev>:./<path>`), so a `backend/` project reads its own tree; annotations add the repository prefix back.

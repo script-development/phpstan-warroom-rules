@@ -535,18 +535,18 @@ Run it from the Composer project directory (`backend/` in a monorepo). It compar
 | Check | Fails when |
 |---|---|
 | `edited-migration` | A file under a migrations directory (default `database/migrations`) that existed at the fork point is modified, renamed or deleted. Laravel records a migration as run by its file name, so an edit never reaches a database where it already ran, and a rename runs it again even when the content is unchanged. A deletion breaks rollback and reset. A migration added on this branch is silent however often it is rewritten. |
-| `ignore-growth` | An entry under `parameters.ignoreErrors` is added, a counted entry's `count` grows, or a counted entry loses its count. Files read: `phpstan.neon`, `phpstan.neon.dist`, `phpstan-baseline.neon`, `phpstan.neon.baseline`. They are folded into one list per revision, as PHPStan folds its includes, so an entry moved from the config into the baseline nets to nothing. Entries are keyed on identifier and path (the message only when there is no identifier), so a regenerated baseline with reworded messages is silent. The cost of that key: fixing one error and silencing another with the same identifier in the same file also nets to nothing. A count may only shrink, which is the "park" rule in the war-room canonical `phpstan.neon`. |
+| `ignore-growth` | An error is suppressed at HEAD that was not suppressed at the merge base: a new `parameters.ignoreErrors` entry, a counted entry whose `count` grew, or a counted entry that lost its count. What is compared is what PHPStan loads: the root config (each `phpstanConfigs` entry, or else the first of `.phpstan.neon`, `phpstan.neon`, `.phpstan.neon.dist`, `phpstan.neon.dist`, `.phpstan.dist.neon`, `phpstan.dist.neon` that exists, PHPStan's own probe order) plus every file it `includes`, recursively, folded into one list per revision. An entry moved between two files loaded together is silent; an entry moved from a file nothing loads into a loaded one is growth. Entries are keyed on identifier, message pattern(s) and path(s), so swapping the message of an entry at the same count is a new suppression. **Cost:** a PHPStan upgrade that rewords messages in a regenerated baseline reads as new entries; a waiver on each path covers that change. Includes under `vendor/`, `phar://` or `%rootDir%` are not in the repository and are read at neither revision; an included file that is not NEON is `INVALID`. A count may only shrink, which is the "park" rule in the war-room canonical `phpstan.neon`. |
 
 Every run prints, per check, how many files it compared (`edited-migration: 0 findings over 3 changed migrations`). A check that compared nothing says so instead of reading as clean.
 
-**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config or ignore file that does not parse, an unknown option). A missing base is never a pass.
+**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config or PHPStan config that does not parse, an unknown option, or a file over the 4 MiB read limit). A missing base is never a pass.
 
 **`warroom-diff-guards.json`** (optional, in the project directory, or `--config=<file>`):
 
 ```json
 {
     "migrations": ["database/migrations"],
-    "ignoreFiles": ["phpstan.neon", "phpstan-baseline.neon"],
+    "phpstanConfigs": ["phpstan.neon"],
     "waivers": [
         {
             "check": "edited-migration",

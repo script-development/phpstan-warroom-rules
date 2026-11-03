@@ -11,7 +11,7 @@ use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\IgnoreEntries;
 
 final class IgnoreEntriesTest extends TestCase
 {
-    public function testEntriesFoldToACountPerIdentifierAndPath(): void
+    public function testEntriesKeyOnIdentifierMessageAndPath(): void
     {
         $entries = IgnoreEntries::parse('phpstan-baseline.neon', <<<'EOF'
             parameters:
@@ -32,8 +32,13 @@ final class IgnoreEntriesTest extends TestCase
             			path: app/Bar.php
             EOF);
 
-        self::assertSame(['argument.type @ app/Foo.php' => 3, 'argument.type @ app/Bar.php' => 4], $entries->counts);
-        self::assertSame(['argument.type @ app/Foo.php' => 'app/Foo.php', 'argument.type @ app/Bar.php' => 'app/Bar.php'], $entries->subjects);
+        self::assertSame([
+            'argument.type | #^first wording$# @ app/Foo.php' => 2,
+            'argument.type | #^second wording$# @ app/Foo.php' => 1,
+            'argument.type @ app/Bar.php' => 4,
+        ], $entries->counts);
+        self::assertSame('app/Foo.php', $entries->subjects['argument.type | #^second wording$# @ app/Foo.php']);
+        self::assertSame([], $entries->includes);
     }
 
     public function testAnUncountedEntryIsUnboundedAndStaysUnboundedWhenSummed(): void
@@ -87,6 +92,11 @@ final class IgnoreEntriesTest extends TestCase
         self::assertSame('', $entries->subjects['#^a bare pattern$# @ (any path)']);
     }
 
+    public function testIncludesAreListedAsWritten(): void
+    {
+        self::assertSame(['phpstan-baseline.neon', 'vendor/x/extension.neon'], IgnoreEntries::parse('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n    - vendor/x/extension.neon\n")->includes);
+    }
+
     public function testAReplacingIgnoreErrorsKeyIsRead(): void
     {
         $entries = IgnoreEntries::parse('phpstan.neon', "parameters:\n    ignoreErrors!:\n        -\n            identifier: a.b\n            count: 2\n            path: x.php\n");
@@ -118,6 +128,8 @@ final class IgnoreEntriesTest extends TestCase
     public static function malformed(): iterable
     {
         yield 'not NEON' => ["parameters:\n  ignoreErrors: [\n"];
+        yield 'includes a scalar' => ["includes: x.neon\n"];
+        yield 'includes not paths' => ["includes:\n    - 3\n"];
         yield 'parameters a scalar' => ["parameters: 3\n"];
         yield 'ignoreErrors a scalar' => ["parameters:\n    ignoreErrors: 3\n"];
         yield 'entry neither pattern nor map' => ["parameters:\n    ignoreErrors:\n        - 3\n"];

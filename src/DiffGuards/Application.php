@@ -85,7 +85,7 @@ final readonly class Application
 
         $results = [
             (new EditedMigrationCheck)->run($changes, $config->migrations),
-            (new IgnoreGrowthCheck($git))->run($fork, $changes, $config->ignoreFiles),
+            (new IgnoreGrowthCheck($git))->run($fork, $changes, $config->phpstanConfigs),
         ];
 
         $failed = 0;
