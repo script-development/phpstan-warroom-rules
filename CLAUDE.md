@@ -50,6 +50,24 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 
 **Shipped PHPStan settings, not rules.** `extension.neon` also sets `reportIgnoresWithoutComments: true`, PHPStan's own option: an inline `@phpstan-ignore id` without `(reason)` is `ignore.noComment`, and `@phpstan-ignore-line` / `@phpstan-ignore-next-line` are `ignore.allLineErrors` whatever text follows. A consumer's `phpstan.neon` overrides it. `ReportIgnoresWithoutCommentsTest` reads it through the container's `FileAnalyser`, because a `RuleTestCase` builds its analyser with the option hard-coded off; `ReportIgnoresWithoutCommentsConsumerOverrideTest` pins the consumer override.
 
+## Diff guards
+
+`bin/warroom-diff-guards` (a Composer `bin`, logic in `src/DiffGuards/`) compares HEAD with `git merge-base <base> HEAD` and fails on what only a comparison can show. It is a binary, not a rule, because PHPStan analyses one tree, and because only 2 of 13 consumers put `tests/` in PHPStan's `paths`.
+
+| Check | Fails on |
+|---|---|
+| `edited-migration` | A migration that existed at the fork point modified, renamed (even with identical content) or deleted. |
+| `ignore-growth` | An error suppressed at HEAD that was not at the merge base (a new entry, a grown `count`, a count removed), keyed on every field PHPStan's `ignoreErrors` schema matches on, over what PHPStan loads: the root config (configured, or PHPStan's own discovery order) and its `includes`, recursively. A replacing `ignoreErrors!` / `parameters!` key is `INVALID`. |
+
+- **No file over `Git::MAX_BYTES` (4 MiB) is read**: it is `INVALID`, exit 2. The largest PHPStan config in the fleet was 114,852 bytes on 2026-11-03.
+- **Exit codes are the contract:** 0 passed, 1 findings, 2 could not run (`MISSING` input or `INVALID` config). A missing base is exit 2, never a pass. `CannotRunTest` holds one case per exit-2 path.
+- **Every run prints a denominator per check** (`N findings over M changed migrations`, or `compared nothing`).
+- **Git runs without the repository-selecting environment:** `Git::REPOSITORY_VARIABLES` (what `git rev-parse --local-env-vars` lists, held equal-or-wider by a test) is removed from every child process, so an inherited `GIT_DIR` cannot point the comparison at another repository.
+- **Git is called through `proc_open` with argument arrays only,** paths relative to the project directory (`--relative`, `<rev>:./<path>`), so a `backend/` project reads its own tree; annotations add the repository prefix back.
+- **NEON is read with `nette/neon`, declared in `require`.** PHPStan's own copy is scoped inside its phar (`_PHPStan_*\Nette\Neon`), so the two never share a class name, and PHPStan's `NeonAdapter` is outside its backward-compatibility promise: a PHPStan bump in a consumer must not be able to turn the guard into exit 2 on every PR. A file that does not parse is `INVALID` (exit 2).
+- **Escape hatch:** `warroom-diff-guards.json` waivers, each a check, a subject path and a mandatory reason. A waiver without a reason makes the file `INVALID`. Tests build throwaway repositories with `tests/DiffGuards/GitRepository`, which scrubs `GIT_DIR`/`GIT_INDEX_FILE`/`GIT_WORK_TREE` and hides the global git config.
+- Every `src/DiffGuards/` class is a named helper in `ExtensionRegistrationTest::HELPERS`; none is registered in `extension.neon`.
+
 ## Conventions
 
 - **Namespace:** `ScriptDevelopment\PhpstanWarroomRules\` (PSR-4, `src/`).
@@ -160,5 +178,5 @@ SemVer per ADR-0021:
 ## What this territory does NOT do
 
 - Does not enforce its rules on itself's source code beyond syntactic correctness — the rules target Laravel application code (`App\Actions`, `App\*`), not a static-analysis package.
-- Does not ship operational PHP code or services. It is a static-analysis library only.
+- Does not ship services or application code. Besides the PHPStan rules it ships one CI tool, the `warroom-diff-guards` binary (§ Diff guards), which reads git history and writes nothing.
 - Does not maintain a documentation site. Doctrine lives in `adrs.script.nl`; usage docs live in `README.md`.
