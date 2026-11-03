@@ -89,8 +89,8 @@ final class CannotRunTest extends TestCase
         yield 'migrations not a list' => ['{"migrations": "database/migrations"}', "'migrations' must be a non-empty list of paths"];
         yield 'migrations empty' => ['{"migrations": []}', "'migrations' must be a non-empty list of paths"];
         yield 'migrations a map' => ['{"migrations": {"a": "b"}}', "'migrations' must be a non-empty list of paths"];
-        yield 'ignoreFiles blank entry' => ['{"ignoreFiles": [" / "]}', "every 'ignoreFiles' entry must be a non-empty path"];
-        yield 'ignoreFiles non-string entry' => ['{"ignoreFiles": [3]}', "every 'ignoreFiles' entry must be a non-empty path"];
+        yield 'phpstanConfigs blank entry' => ['{"phpstanConfigs": [" / "]}', "every 'phpstanConfigs' entry must be a non-empty path"];
+        yield 'phpstanConfigs non-string entry' => ['{"phpstanConfigs": [3]}', "every 'phpstanConfigs' entry must be a non-empty path"];
         yield 'waivers a map' => ['{"waivers": {"a": 1}}', "'waivers' must be a list"];
         yield 'waiver not an object' => ['{"waivers": ["x"]}', 'waiver #0 must be an object with only check, path and reason'];
         yield 'waiver unknown key' => ['{"waivers": [{"check": "edited-migration", "path": "x", "reason": "y", "until": "z"}]}', 'waiver #0 must be an object'];

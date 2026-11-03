@@ -487,11 +487,36 @@ Matching is namespace-BOUNDARY aware — `App` and `App\` behave identically, an
 
 A sentinel is a **fixed, plausible value written at the call site**: a scalar literal, `true` / `false`, a class constant, an empty array — and a **bare global constant** (`?? SOME_APP_DEFAULT`), which is the same decision with a name on it. There is no allowlist of constant names; a fallback that is genuinely the caller's own default belongs in a variable (`?? $default`), which is a deliberate miss.
 
-The boundary tell is a **required** `mixed` parameter. An optional one is the caller's own default flowing in, so `get(string $key, mixed $default = null): ?string` is a lookup helper and its `?? ''` stays silent. Known residual false positive: a helper with a **required** `mixed` key plus a default parameter (`get(mixed $key, string $default = ''): ?string`) is indistinguishable from a narrowing helper by signature alone and still fires — the escape hatch is an inline `@phpstan-ignore forbidSentinelFallbackOnNarrowingHelper.sentinelFallback`.
+The boundary tell is a **required** `mixed` parameter. An optional one is the caller's own default flowing in, so `get(string $key, mixed $default = null): ?string` is a lookup helper and its `?? ''` stays silent. Known residual false positive: a helper with a **required** `mixed` key plus a default parameter (`get(mixed $key, string $default = ''): ?string`) is indistinguishable from a narrowing helper by signature alone and still fires — the escape hatch is an inline `@phpstan-ignore forbidSentinelFallbackOnNarrowingHelper.sentinelFallback (reason)`, the reason being required (see [Inline ignores need a reason](#inline-ignores-need-a-reason)).
 
 ### Action namespace assumption
 
 Six rules only fire inside `App\Actions` — the namespace itself or anything under it on the `\` separator, so `App\Actions\Billing` is in and `App\ActionsLegacy` is not: `EnforceActionResultDtoRule`, `EnforceActionTransactionsRule`, `EnforceAuditSnapshotOnRetryRule`, `EnforceAuditTransactionScopeRule`, `ForbidDatabaseManagerInActionsRule` and `ForbidHttpExceptionInActionsRule`. `ForbidAbortHelperRule` fires everywhere but reads the same boundary to pick its remedy. The namespace is not configurable; it matches the Laravel convention used in every `script-development` territory. Territories using a different actions namespace should open a PR to make it configurable.
+
+## Inline ignores need a reason
+
+`extension.neon` sets PHPStan's own `reportIgnoresWithoutComments: true`. Every inline ignore names the identifier it suppresses and says why, in parentheses after that identifier:
+
+```php
+// Rejected: ignore.noComment, and the suppressed error is reported again.
+$value = legacyLookup($key); // @phpstan-ignore argument.type
+
+// Accepted.
+$value = legacyLookup($key); // @phpstan-ignore argument.type (the vendor stub types the key as string; int keys are accepted since v3)
+```
+
+What PHPStan reports, per form:
+
+| Form | Result |
+|---|---|
+| `@phpstan-ignore id (reason)` | Accepted, on the same line or on the line above. |
+| `@phpstan-ignore id` or `@phpstan-ignore id ()` | `ignore.noComment`. Empty parentheses are not a reason. |
+| `@phpstan-ignore a (reason), b` | `ignore.noComment` for `b`. Each identifier carries its own reason. |
+| `@phpstan-ignore-line`, `@phpstan-ignore-next-line` | `ignore.allLineErrors`, whatever text follows. Replace them with `@phpstan-ignore id (reason)`. |
+
+In each rejected case the ignore stops suppressing, so the original error is reported as well. Text after an identifier without parentheses (`@phpstan-ignore id because …`) is an `ignore.parseError` with or without this option.
+
+The option judges inline comments only. `ignoreErrors` entries and baseline files in `phpstan.neon` are unaffected. A consumer that cannot adopt it yet sets `reportIgnoresWithoutComments: false` in its own `phpstan.neon`, which overrides the shipped value.
 
 ## Type extension
 
@@ -510,19 +535,19 @@ Run it from the Composer project directory (`backend/` in a monorepo). It compar
 | Check | Fails when |
 |---|---|
 | `edited-migration` | A file under a migrations directory (default `database/migrations`) that existed at the fork point is modified, renamed or deleted. Laravel records a migration as run by its file name, so an edit never reaches a database where it already ran, and a rename runs it again even when the content is unchanged. A deletion breaks rollback and reset. A migration added on this branch is silent however often it is rewritten. |
-| `ignore-growth` | An entry under `parameters.ignoreErrors` is added, a counted entry's `count` grows, or a counted entry loses its count. Files read: `phpstan.neon`, `phpstan.neon.dist`, `phpstan-baseline.neon`, `phpstan.neon.baseline`. They are folded into one list per revision, as PHPStan folds its includes, so an entry moved from the config into the baseline nets to nothing. Entries are keyed on identifier and path (the message only when there is no identifier), so a regenerated baseline with reworded messages is silent. The cost of that key: fixing one error and silencing another with the same identifier in the same file also nets to nothing. A count may only shrink, which is the "park" rule in the war-room canonical `phpstan.neon`. |
+| `ignore-growth` | An error is suppressed at HEAD that was not suppressed at the merge base: a new `parameters.ignoreErrors` entry, a counted entry whose `count` grew, or a counted entry that lost its count. What is compared is what PHPStan loads: the root config (each `phpstanConfigs` entry, or else the first of `.phpstan.neon`, `phpstan.neon`, `.phpstan.neon.dist`, `phpstan.neon.dist`, `.phpstan.dist.neon`, `phpstan.dist.neon` that exists, PHPStan's own probe order) plus every file it `includes`, recursively, folded into one list per revision. An entry moved between two files loaded together is silent; an entry moved from a file nothing loads into a loaded one is growth. Entries are keyed on identifier, message pattern(s) and path(s), so swapping the message of an entry at the same count is a new suppression. **Cost:** a PHPStan upgrade that rewords messages in a regenerated baseline reads as new entries; a waiver on each path covers that change. Includes under `vendor/`, `phar://` or `%rootDir%` are not in the repository and are read at neither revision; an included file that is not NEON is `INVALID`. A count may only shrink, which is the "park" rule in the war-room canonical `phpstan.neon`. |
 | `weakened-test` | In a changed PHP file under a test directory (default `tests`), compared by test name with the fork point: a test newly skipped (`markTestSkipped`, `markTestIncomplete`, Pest `->skip()` / `->todo()`, a conditional skip included); a new assertion that cannot fail (`assertTrue(true)`, `assertFalse(false)`, `assertNull(null)`, `assertSame($a, $a)` / `assertEquals` of the same expression, `addToAssertionCount()`, `expect(true)->toBeTrue()` and its `toBeFalse` / `toBeNull` / `toBe` / `toEqual` kin), also in a brand-new test; a test that made assertions at the base and makes none now; a test deleted with no replacement. Tests are read with `nikic/php-parser`: PHPUnit `test*` methods, `#[Test]` and `@test` as `Class::method`, Pest `it()` / `test()` prefixed by their `describe()` blocks. Assertions made through a helper in the same file count. Silent: a skip that existed at the base, a brand-new skipped or todo test, fewer assertions above zero, a dataset change, a file moved. A deleted test is replaced by a same-named test anywhere in the change, a new test with an identical body, or a new test with at least as many assertions that can fail; each new test replaces one at most. A test file that does not parse is `INVALID`. |
 
 Every run prints, per check, how many files it compared (`edited-migration: 0 findings over 3 changed migrations`). A check that compared nothing says so instead of reading as clean.
 
-**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config, ignore or test file that does not parse, an unknown option). A missing base is never a pass.
+**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config, PHPStan config or test file that does not parse, an unknown option, or a file over the 4 MiB read limit). A missing base is never a pass.
 
 **`warroom-diff-guards.json`** (optional, in the project directory, or `--config=<file>`):
 
 ```json
 {
     "migrations": ["database/migrations"],
-    "ignoreFiles": ["phpstan.neon", "phpstan-baseline.neon"],
+    "phpstanConfigs": ["phpstan.neon"],
     "tests": ["tests"],
     "waivers": [
         {

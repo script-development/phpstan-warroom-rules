@@ -46,6 +46,8 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 
 Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snapshot-on-Retry Safety) was the first Phase 2 addition, promoted from cross-territory Pest arch tests (emmie PR #187, entreezuil PR #139, ublgenie PR #166, kendo PR #1029). `EnforceResourceDataValidatorOptInRule` (ADR-0009 §EAGER_LOAD validator opt-in) is the second Phase 2 addition, promoted from kendo PR #1084 under war-room enforcement queue #55. `EnforceFormRequestToDtoRule` (ADR-0012) is the third Phase 2 addition, promoted from entreezuil's `tests/Arch/FormRequestsTest.php` under the same queue #55 (instance 2). `EnforceExplicitHydrationRule` (ADR-0019) is the next Phase 2 candidate.
 
+**Shipped PHPStan settings, not rules.** `extension.neon` also sets `reportIgnoresWithoutComments: true`, PHPStan's own option: an inline `@phpstan-ignore id` without `(reason)` is `ignore.noComment`, and `@phpstan-ignore-line` / `@phpstan-ignore-next-line` are `ignore.allLineErrors` whatever text follows. A consumer's `phpstan.neon` overrides it. `ReportIgnoresWithoutCommentsTest` reads it through the container's `FileAnalyser`, because a `RuleTestCase` builds its analyser with the option hard-coded off; `ReportIgnoresWithoutCommentsConsumerOverrideTest` pins the consumer override.
+
 ## Diff guards
 
 `bin/warroom-diff-guards` (a Composer `bin`, logic in `src/DiffGuards/`) compares HEAD with `git merge-base <base> HEAD` and fails on what only a comparison can show. It is a binary, not a rule, because PHPStan analyses one tree, and because only 2 of 13 consumers put `tests/` in PHPStan's `paths`.
@@ -53,9 +55,10 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 | Check | Fails on |
 |---|---|
 | `edited-migration` | A migration that existed at the fork point modified, renamed (even with identical content) or deleted. |
-| `ignore-growth` | A new `ignoreErrors` entry, a grown `count`, or a count removed, over the configured NEON files folded into one list per revision. |
+| `ignore-growth` | An error suppressed at HEAD that was not at the merge base (a new entry, a grown `count`, a count removed), keyed on identifier + message + path, over what PHPStan loads: the root config (configured, or PHPStan's own discovery order) and its `includes`, recursively. |
 | `weakened-test` | A test newly skipped, given an assertion that cannot fail, stripped of every assertion, or deleted with nothing in its place, compared by name across the changed files under `tests/` (parsed with `nikic/php-parser`). |
 
+- **No file over `Git::MAX_BYTES` (4 MiB) is read**: it is `INVALID`, exit 2. The largest PHPStan config in the fleet was 114,852 bytes on 2026-11-03.
 - **Exit codes are the contract:** 0 passed, 1 findings, 2 could not run (`MISSING` input or `INVALID` config). A missing base is exit 2, never a pass. `CannotRunTest` holds one case per exit-2 path.
 - **Every run prints a denominator per check** (`N findings over M changed migrations`, or `compared nothing`).
 - **Git is called through `proc_open` with argument arrays only,** paths relative to the project directory (`--relative`, `<rev>:./<path>`), so a `backend/` project reads its own tree; annotations add the repository prefix back.

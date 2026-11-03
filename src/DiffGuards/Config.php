@@ -30,17 +30,15 @@ final readonly class Config
 
     public const array DEFAULT_TESTS = ['tests'];
 
-    public const array DEFAULT_IGNORE_FILES = ['phpstan.neon', 'phpstan.neon.dist', 'phpstan-baseline.neon', 'phpstan.neon.baseline'];
-
     /**
      * @param list<string> $migrations
-     * @param list<string> $ignoreFiles
+     * @param list<string> $phpstanConfigs root configs, as passed to `phpstan -c`; empty to discover one as PHPStan does
      * @param list<Waiver> $waivers
      * @param list<string> $tests
      */
     public function __construct(
         public array $migrations = self::DEFAULT_MIGRATIONS,
-        public array $ignoreFiles = self::DEFAULT_IGNORE_FILES,
+        public array $phpstanConfigs = [],
         public array $waivers = [],
         public array $tests = self::DEFAULT_TESTS,
     ) {}
@@ -72,7 +70,7 @@ final readonly class Config
             throw CannotRun::invalid("{$path} must hold a JSON object.");
         }
 
-        $unknown = array_diff(array_keys($data), ['migrations', 'ignoreFiles', 'tests', 'waivers']);
+        $unknown = array_diff(array_keys($data), ['migrations', 'phpstanConfigs', 'tests', 'waivers']);
 
         if ($unknown !== []) {
             throw CannotRun::invalid("{$path} has unknown key(s): " . implode(', ', $unknown) . '.');
@@ -80,7 +78,7 @@ final readonly class Config
 
         return new self(
             self::paths($data, 'migrations', self::DEFAULT_MIGRATIONS, $path),
-            self::paths($data, 'ignoreFiles', self::DEFAULT_IGNORE_FILES, $path),
+            self::paths($data, 'phpstanConfigs', [], $path),
             self::waivers($data['waivers'] ?? [], $path),
             self::paths($data, 'tests', self::DEFAULT_TESTS, $path),
         );
