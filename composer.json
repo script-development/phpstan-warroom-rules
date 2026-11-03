@@ -22,7 +22,7 @@
         "psr/log": "^3.0"
     },
     "require-dev": {
-        "infection/infection": "^0.34.0",
+        "infection/infection": "^0.35.8",
         "laravel/pint": "^1.18",
         "phpunit/phpunit": "^11.0"
     },
