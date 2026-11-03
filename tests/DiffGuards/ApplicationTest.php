@@ -423,6 +423,61 @@ final class ApplicationTest extends TestCase
         self::assertStringContainsString('Migration modules/billing/migrations/x.php existed at the base', $output);
     }
 
+    public function testASwappedIdentifierListAtTheSameCountIsANewSuppression(): void
+    {
+        $entry = "parameters:\n    ignoreErrors:\n        -\n            identifiers: [%s]\n            count: 1\n            path: app/Foo.php\n";
+        $repository = $this->base();
+        $repository->write('phpstan.neon', sprintf($entry, 'old.id'))->commit();
+        $repository->branch('feature')->write('phpstan.neon', sprintf($entry, 'new.id'))->commit();
+
+        [$exit, $output] = $this->guard($repository->root, '--base=main');
+
+        self::assertSame(1, $exit, $output);
+        self::assertStringContainsString('New ignored error: new.id @ app/Foo.php, count 1.', $output);
+
+        $repository->write('phpstan.neon', sprintf($entry, 'new.id') . "    level: max\n")->commit();
+        self::assertSame(0, $this->guard($repository->root, '--base=' . mb_trim($repository->git('rev-parse', 'HEAD~1')))[0], 'Control: the same identifiers at the same count are silent.');
+    }
+
+    public function testAnInheritedGitDirCannotRedirectTheComparison(): void
+    {
+        $decoy = (new GitRepository)->write('app/Decoy.php', '<?php')->commit('decoy');
+        $repository = $this->base()->branch('feature')->write(self::MIGRATION, '<?php // edited')->commit();
+        putenv('GIT_DIR=' . $decoy->root . '/.git');
+        putenv('GIT_WORK_TREE=' . $decoy->root);
+
+        try {
+            [$exit, $output] = $this->guard($repository->root, '--base=main');
+        } finally {
+            putenv('GIT_DIR');
+            putenv('GIT_WORK_TREE');
+        }
+
+        self::assertSame(1, $exit, $output);
+        self::assertStringContainsString("edited-migration: 1 finding over 1 changed migration\n", $output);
+    }
+
+    public function testTheClearedVariablesCoverEveryRepositoryVariableGitNames(): void
+    {
+        $repository = $this->base();
+        $named = array_values(array_filter(explode("\n", $repository->git('rev-parse', '--local-env-vars'))));
+
+        self::assertNotEmpty($named);
+        self::assertSame([], array_values(array_diff($named, Git::REPOSITORY_VARIABLES)));
+    }
+
+    public function testAReplacingIgnoreErrorsKeyIsRefusedNotSummed(): void
+    {
+        $repository = $this->base();
+        $repository->write('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n")->write('phpstan-baseline.neon', self::PARK)->commit();
+        $repository->branch('feature')->write('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n\nparameters:\n    ignoreErrors!:\n        -\n            identifier: staticMethod.dynamicCall\n            count: 1\n            path: routes/console.php\n")->commit();
+
+        [$exit, $output] = $this->guard($repository->root, '--base=main');
+
+        self::assertSame(2, $exit, $output);
+        self::assertStringContainsString('INVALID — phpstan.neon replaces included ignoreErrors with a `!` key', $output);
+    }
+
     private function base(): GitRepository
     {
         return (new GitRepository)->write(self::MIGRATION, '<?php // users')->write('phpstan.neon', self::PARK)->write('app/Model.php', '<?php')->commit('base');

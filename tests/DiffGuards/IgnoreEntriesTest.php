@@ -87,7 +87,7 @@ final class IgnoreEntriesTest extends TestCase
         self::assertSame([
             '#^a bare pattern$# @ (any path)' => null,
             '#^a$# | #^z$# @ app/Http/Kernel.php, routes/web.php' => null,
-            'Exact text. @ config/app.php' => 1,
+            'rawMessage Exact text. @ config/app.php' => 1,
         ], $entries->counts);
         self::assertSame('', $entries->subjects['#^a bare pattern$# @ (any path)']);
     }
@@ -97,11 +97,30 @@ final class IgnoreEntriesTest extends TestCase
         self::assertSame(['phpstan-baseline.neon', 'vendor/x/extension.neon'], IgnoreEntries::parse('phpstan.neon', "includes:\n    - phpstan-baseline.neon\n    - vendor/x/extension.neon\n")->includes);
     }
 
-    public function testAReplacingIgnoreErrorsKeyIsRead(): void
+    public function testEveryMatchingFieldIsPartOfTheKeyWithSingularAndPluralFolded(): void
     {
-        $entries = IgnoreEntries::parse('phpstan.neon', "parameters:\n    ignoreErrors!:\n        -\n            identifier: a.b\n            count: 2\n            path: x.php\n");
+        $entries = IgnoreEntries::parse('phpstan.neon', <<<'EOF'
+            parameters:
+                ignoreErrors:
+                    -
+                        identifiers: [b.b, a.a]
+                        count: 1
+                        path: x.php
+                    -
+                        identifier: c.c
+                        identifiers: [d.d]
+                        rawMessage: 'Literal text.'
+                        rawMessages: ['Another.']
+                        message: '#^m$#'
+                        paths: [z.php]
+                        path: y.php
+                        count: 2
+            EOF);
 
-        self::assertSame(['a.b @ x.php' => 2], $entries->counts);
+        self::assertSame([
+            'a.a | b.b @ x.php' => 1,
+            'c.c | d.d | #^m$# | rawMessage Another. | rawMessage Literal text. @ y.php, z.php' => 2,
+        ], $entries->counts);
     }
 
     public function testAFileWithoutIgnoreErrorsHasNoEntries(): void
@@ -130,6 +149,8 @@ final class IgnoreEntriesTest extends TestCase
         yield 'not NEON' => ["parameters:\n  ignoreErrors: [\n"];
         yield 'includes a scalar' => ["includes: x.neon\n"];
         yield 'includes not paths' => ["includes:\n    - 3\n"];
+        yield 'replacing ignoreErrors' => ["parameters:\n    ignoreErrors!:\n        - '#x#'\n"];
+        yield 'replacing parameters' => ["parameters!:\n    level: max\n"];
         yield 'parameters a scalar' => ["parameters: 3\n"];
         yield 'ignoreErrors a scalar' => ["parameters:\n    ignoreErrors: 3\n"];
         yield 'entry neither pattern nor map' => ["parameters:\n    ignoreErrors:\n        - 3\n"];
