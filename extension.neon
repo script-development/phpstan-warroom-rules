@@ -222,6 +222,12 @@ services:
             narrowingHelperNamespacePrefixes: %narrowingHelperNamespacePrefixes%
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidSwallowedBroadExceptionRule
+        tags: [phpstan.rules.rule]
+    -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidPlaceholderBodyRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Collectors\CacheKeyTaintCollector
         tags: [phpstan.collector]
     -
