@@ -4,8 +4,8 @@ declare(strict_types = 1);
 
 namespace ScriptDevelopment\PhpstanWarroomRules\DiffGuards;
 
-use PHPStan\DependencyInjection\NeonAdapter;
-use Throwable;
+use Nette\Neon\Exception;
+use Nette\Neon\Neon;
 
 use function array_key_exists;
 use function is_array;
@@ -35,24 +35,14 @@ final readonly class IgnoreEntries
 
     public static function parse(string $file, string $contents): self
     {
-        $temporary = tempnam(sys_get_temp_dir(), 'diff-guards-');
-
-        if ($temporary === false) {
-            throw CannotRun::missing("Cannot create a temporary file to parse {$file}.");
-        }
-
         try {
-            file_put_contents($temporary, $contents);
-            // @phpstan-ignore phpstanApi.constructor, phpstanApi.method (no public NEON decoder exists; Nette is scoped inside the phar, and a renamed adapter fails here as exit 2, never as a pass)
-            $decoded = (new NeonAdapter([]))->load($temporary);
-        } catch (Throwable $exception) {
+            $decoded = Neon::decode($contents);
+        } catch (Exception $exception) {
             throw CannotRun::invalid("{$file} does not parse as NEON: {$exception->getMessage()}");
-        } finally {
-            unlink($temporary);
         }
 
-        $parameters = $decoded['parameters'] ?? [];
-        $entries = is_array($parameters) ? $parameters['ignoreErrors'] ?? [] : null;
+        $parameters = is_array($decoded) ? $decoded['parameters'] ?? [] : [];
+        $entries = is_array($parameters) ? $parameters['ignoreErrors'] ?? $parameters['ignoreErrors!'] ?? [] : null;
 
         if (!is_array($entries)) {
             throw CannotRun::invalid("{$file}: parameters.ignoreErrors is not a list.");

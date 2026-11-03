@@ -544,13 +544,15 @@ A waiver names a check, the path the finding is about (the migration, or for `ig
   working-directory: backend
 ```
 
-`--format=github` turns each finding into an `::error` annotation on its file and line, named from the repository root. The binary needs only this package's `require` dependencies and `git`; the NEON parser is PHPStan's own.
+`--format=github` turns each finding into an `::error` annotation on its file and line, named from the repository root. The binary needs only this package's `require` dependencies and `git`. It reads NEON with `nette/neon` (a runtime dependency of this package since the binary landed); PHPStan's internal NEON reader is not part of its public API.
 
 These checks follow [sloppy](https://github.com/heyosseus/sloppy) (MIT, `heyosseus/sloppy`), its SL214 and SL502; the code here is our own.
 
 ## Production dependencies
 
 The `illuminate/*` packages (`database`, `contracts`, `cache`, `filesystem`, `log`, `mail`) sit in `require`, not `require-dev`, on purpose. The rules and `ConnectionTransactionReturnTypeExtension` reflect against Illuminate contracts and classes (e.g. `Illuminate\Database\ConnectionInterface`, the cache/mail/queue facades the audit-scope rule reasons about) *at analysis time* — when a consumer runs PHPStan, this package's code resolves those symbols, so they are genuine analysis-time (runtime-for-the-extension) dependencies, not test-only tooling. Moving them to `require-dev` would omit them from a normal `composer require --dev` install and break consumers that analyse non-Laravel or partial trees where the Illuminate symbols are not otherwise present.
+
+`nette/neon` is in `require` for the `warroom-diff-guards` binary, which parses `phpstan.neon` and baselines at run time. PHPStan bundles its own copy under a scoped namespace inside the phar, so the two do not collide.
 
 ## Versioning
 

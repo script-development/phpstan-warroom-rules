@@ -87,10 +87,18 @@ final class IgnoreEntriesTest extends TestCase
         self::assertSame('', $entries->subjects['#^a bare pattern$# @ (any path)']);
     }
 
+    public function testAReplacingIgnoreErrorsKeyIsRead(): void
+    {
+        $entries = IgnoreEntries::parse('phpstan.neon', "parameters:\n    ignoreErrors!:\n        -\n            identifier: a.b\n            count: 2\n            path: x.php\n");
+
+        self::assertSame(['a.b @ x.php' => 2], $entries->counts);
+    }
+
     public function testAFileWithoutIgnoreErrorsHasNoEntries(): void
     {
         self::assertSame([], IgnoreEntries::parse('phpstan.neon', "parameters:\n    level: max\n")->counts);
         self::assertSame([], IgnoreEntries::parse('phpstan.neon', '')->counts);
+        self::assertSame([], IgnoreEntries::parse('phpstan.neon', "just a scalar\n")->counts);
     }
 
     public function testMergeSumsAcrossFilesAsPhpstanFoldsIncludes(): void
