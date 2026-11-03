@@ -25,8 +25,8 @@ final readonly class Application
     private const string USAGE = <<<'EOF'
         Usage: warroom-diff-guards --base=<ref> [--format=human|github] [--config=<file>]
 
-        Compares HEAD with `git merge-base <ref> HEAD` and fails on an edited migration
-        or a grown PHPStan ignore. Run it from the composer project directory.
+        Compares HEAD with `git merge-base <ref> HEAD` and fails on an edited migration,
+        a grown PHPStan ignore or a weakened test. Run it from the composer project directory.
 
         Exit codes: 0 passed, 1 findings, 2 could not run (MISSING or INVALID).
 
@@ -86,6 +86,7 @@ final readonly class Application
         $results = [
             (new EditedMigrationCheck)->run($changes, $config->migrations),
             (new IgnoreGrowthCheck($git))->run($fork, $changes, $config->phpstanConfigs),
+            (new WeakenedTestCheck($git))->run($fork, $changes, $config->tests),
         ];
 
         $failed = 0;

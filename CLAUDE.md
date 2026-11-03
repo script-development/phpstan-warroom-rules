@@ -58,6 +58,7 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 |---|---|
 | `edited-migration` | A migration that existed at the fork point modified, renamed (even with identical content) or deleted. |
 | `ignore-growth` | An error suppressed at HEAD that was not at the merge base (a new entry, a grown `count`, a count removed), keyed on every field PHPStan's `ignoreErrors` schema matches on, over what PHPStan loads: the root config (configured, or PHPStan's own discovery order) and its `includes`, recursively. A replacing `ignoreErrors!` / `parameters!` key is `INVALID`. |
+| `weakened-test` | A test newly skipped, given an assertion that cannot fail, stripped of every assertion, or deleted with nothing in its place, compared by name across the changed files under `tests/` (parsed with `nikic/php-parser`). |
 
 - **No file over `Git::MAX_BYTES` (4 MiB) is read**: it is `INVALID`, exit 2. The largest PHPStan config in the fleet was 114,852 bytes on 2026-11-03.
 - **Exit codes are the contract:** 0 passed, 1 findings, 2 could not run (`MISSING` input or `INVALID` config). A missing base is exit 2, never a pass. `CannotRunTest` holds one case per exit-2 path.

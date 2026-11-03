@@ -90,11 +90,12 @@ final class CannotRunTest extends TestCase
         yield 'migrations empty' => ['{"migrations": []}', "'migrations' must be a non-empty list of paths"];
         yield 'migrations a map' => ['{"migrations": {"a": "b"}}', "'migrations' must be a non-empty list of paths"];
         yield 'phpstanConfigs blank entry' => ['{"phpstanConfigs": [" / "]}', "every 'phpstanConfigs' entry must be a non-empty path"];
+        yield 'tests empty' => ['{"tests": []}', "'tests' must be a non-empty list of paths"];
         yield 'phpstanConfigs non-string entry' => ['{"phpstanConfigs": [3]}', "every 'phpstanConfigs' entry must be a non-empty path"];
         yield 'waivers a map' => ['{"waivers": {"a": 1}}', "'waivers' must be a list"];
         yield 'waiver not an object' => ['{"waivers": ["x"]}', 'waiver #0 must be an object with only check, path and reason'];
         yield 'waiver unknown key' => ['{"waivers": [{"check": "edited-migration", "path": "x", "reason": "y", "until": "z"}]}', 'waiver #0 must be an object'];
-        yield 'waiver unknown check' => ['{"waivers": [{"check": "edited-migrations", "path": "x", "reason": "y"}]}', 'waiver #0 names no known check (edited-migration, ignore-growth)'];
+        yield 'waiver unknown check' => ['{"waivers": [{"check": "edited-migrations", "path": "x", "reason": "y"}]}', 'waiver #0 names no known check (edited-migration, ignore-growth, weakened-test)'];
         yield 'waiver no path' => ['{"waivers": [{"check": "edited-migration", "reason": "y"}]}', 'waiver #0 names no path'];
         yield 'waiver blank path' => ['{"waivers": [{"check": "edited-migration", "path": " ", "reason": "y"}]}', 'waiver #0 names no path'];
         yield 'waiver no reason' => ['{"waivers": [{"check": "edited-migration", "path": "x"}]}', 'waiver #0 for x carries no reason'];

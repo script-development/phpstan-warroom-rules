@@ -23,7 +23,10 @@ use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Git;
 use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\IgnoreEntries;
 use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\IgnoreGrowthCheck;
 use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Reporter;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\TestBody;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\TestInventory;
 use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\Waiver;
+use ScriptDevelopment\PhpstanWarroomRules\DiffGuards\WeakenedTestCheck;
 use ScriptDevelopment\PhpstanWarroomRules\Support\AppendOnlyLogMessage;
 use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 use SplFileInfo;
@@ -73,6 +76,9 @@ final class ExtensionRegistrationTest extends TestCase
         IgnoreEntries::class,
         IgnoreGrowthCheck::class,
         Reporter::class,
+        TestBody::class,
+        TestInventory::class,
+        WeakenedTestCheck::class,
         Waiver::class,
         NamespacePrefix::class,
     ];

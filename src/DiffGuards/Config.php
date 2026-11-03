@@ -24,19 +24,23 @@ final readonly class Config
 {
     public const string FILE = 'warroom-diff-guards.json';
 
-    public const array CHECKS = [EditedMigrationCheck::NAME, IgnoreGrowthCheck::NAME];
+    public const array CHECKS = [EditedMigrationCheck::NAME, IgnoreGrowthCheck::NAME, WeakenedTestCheck::NAME];
 
     public const array DEFAULT_MIGRATIONS = ['database/migrations'];
+
+    public const array DEFAULT_TESTS = ['tests'];
 
     /**
      * @param list<string> $migrations
      * @param list<string> $phpstanConfigs root configs, as passed to `phpstan -c`; empty to discover one as PHPStan does
      * @param list<Waiver> $waivers
+     * @param list<string> $tests
      */
     public function __construct(
         public array $migrations = self::DEFAULT_MIGRATIONS,
         public array $phpstanConfigs = [],
         public array $waivers = [],
+        public array $tests = self::DEFAULT_TESTS,
     ) {}
 
     /**
@@ -66,7 +70,7 @@ final readonly class Config
             throw CannotRun::invalid("{$path} must hold a JSON object.");
         }
 
-        $unknown = array_diff(array_keys($data), ['migrations', 'phpstanConfigs', 'waivers']);
+        $unknown = array_diff(array_keys($data), ['migrations', 'phpstanConfigs', 'tests', 'waivers']);
 
         if ($unknown !== []) {
             throw CannotRun::invalid("{$path} has unknown key(s): " . implode(', ', $unknown) . '.');
@@ -76,6 +80,7 @@ final readonly class Config
             self::paths($data, 'migrations', self::DEFAULT_MIGRATIONS, $path),
             self::paths($data, 'phpstanConfigs', [], $path),
             self::waivers($data['waivers'] ?? [], $path),
+            self::paths($data, 'tests', self::DEFAULT_TESTS, $path),
         );
     }
 

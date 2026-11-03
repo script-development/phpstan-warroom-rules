@@ -544,7 +544,7 @@ The option judges inline comments only. `ignoreErrors` entries and baseline file
 
 ## Diff guards (`vendor/bin/warroom-diff-guards`)
 
-Some regressions only show in a comparison: an edited migration, a grown PHPStan baseline. PHPStan analyses one tree, so these checks ship as a Composer binary instead of a rule. Every consumer that requires this package gets it at `vendor/bin/warroom-diff-guards`.
+Some regressions only show in a comparison: an edited migration, a grown PHPStan baseline, a weakened test. PHPStan analyses one tree, so these checks ship as a Composer binary instead of a rule. Every consumer that requires this package gets it at `vendor/bin/warroom-diff-guards`.
 
 ```bash
 vendor/bin/warroom-diff-guards --base=origin/development [--format=human|github] [--config=<file>]
@@ -556,10 +556,11 @@ Run it from the Composer project directory (`backend/` in a monorepo). It compar
 |---|---|
 | `edited-migration` | A file under a migrations directory (default `database/migrations`) that existed at the fork point is modified, renamed or deleted. Laravel records a migration as run by its file name, so an edit never reaches a database where it already ran, and a rename runs it again even when the content is unchanged. A deletion breaks rollback and reset. A migration added on this branch is silent however often it is rewritten. |
 | `ignore-growth` | An error is suppressed at HEAD that was not suppressed at the merge base: a new `parameters.ignoreErrors` entry, a counted entry whose `count` grew, or a counted entry that lost its count. What is compared is what PHPStan loads: the root config (each `phpstanConfigs` entry, or else the first of `.phpstan.neon`, `phpstan.neon`, `.phpstan.neon.dist`, `phpstan.neon.dist`, `.phpstan.dist.neon`, `phpstan.dist.neon` that exists, PHPStan's own probe order) plus every file it `includes`, recursively, folded into one list per revision. An entry moved between two files loaded together is silent; an entry moved from a file nothing loads into a loaded one is growth. Entries are keyed on every field PHPStan matches on (`identifier`/`identifiers`, `message`/`messages`, `rawMessage`/`rawMessages`, `path`/`paths`, each singular folded into its plural), so swapping any of them at the same count is a new suppression. A `ignoreErrors!` or `parameters!` key, which replaces included entries instead of adding to them, is `INVALID`: the comparison models merged lists only, and no fleet config used it on 2026-11-03. **Cost:** a PHPStan upgrade that rewords messages in a regenerated baseline reads as new entries; a waiver on each path covers that change. Includes under `vendor/`, `phar://` or `%rootDir%` are not in the repository and are read at neither revision; an included file that is not NEON is `INVALID`. A count may only shrink, which is the "park" rule in the war-room canonical `phpstan.neon`. |
+| `weakened-test` | In a changed PHP file under a test directory (default `tests`), compared by test name with the fork point: a test newly skipped (`markTestSkipped`, `markTestIncomplete`, Pest `->skip()` / `->todo()`, a conditional skip included); a new assertion that cannot fail (`assertTrue(true)`, `assertFalse(false)`, `assertNull(null)`, `assertSame($a, $a)` / `assertEquals` of the same expression, `addToAssertionCount()`, `expect(true)->toBeTrue()` and its `toBeFalse` / `toBeNull` / `toBe` / `toEqual` kin), also in a brand-new test; a test that made assertions at the base and makes none now; a test deleted with no replacement. Tests are read with `nikic/php-parser`: PHPUnit `test*` methods, `#[Test]` and `@test` as `Class::method`, Pest `it()` / `test()` prefixed by their `describe()` blocks. Assertions made through a helper in the same file count. Silent: a skip that existed at the base, a brand-new skipped or todo test, fewer assertions above zero, a dataset change, a file moved. A deleted test is replaced by a same-named test anywhere in the change, a new test with an identical body, or a new test with at least as many assertions that can fail; each new test replaces one at most. A test file that does not parse is `INVALID`. |
 
 Every run prints, per check, how many files it compared (`edited-migration: 0 findings over 3 changed migrations`). A check that compared nothing says so instead of reading as clean.
 
-**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config or PHPStan config that does not parse, an unknown option, or a file over the 4 MiB read limit). A missing base is never a pass.
+**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config, PHPStan config or test file that does not parse, an unknown option, or a file over the 4 MiB read limit). A missing base is never a pass.
 
 **`warroom-diff-guards.json`** (optional, in the project directory, or `--config=<file>`):
 
@@ -567,6 +568,7 @@ Every run prints, per check, how many files it compared (`edited-migration: 0 fi
 {
     "migrations": ["database/migrations"],
     "phpstanConfigs": ["phpstan.neon"],
+    "tests": ["tests"],
     "waivers": [
         {
             "check": "edited-migration",
@@ -577,7 +579,7 @@ Every run prints, per check, how many files it compared (`edited-migration: 0 fi
 }
 ```
 
-A waiver names a check, the path the finding is about (the migration, or for `ignore-growth` the path the ignore entry silences, or the ignore file for an entry with no path), and a reason. A waiver without a reason, an unknown key or an unknown check makes the whole file `INVALID`: a typo must not read as "no waivers". A waiver that matches nothing in a change is printed as unused and does not fail the run, so remove it once the change that needed it has merged.
+A waiver names a check, the path the finding is about (the migration; for `ignore-growth` the path the ignore entry silences, or the ignore file for an entry with no path; for `weakened-test` the test file), and a reason. A waiver without a reason, an unknown key or an unknown check makes the whole file `INVALID`: a typo must not read as "no waivers". A waiver that matches nothing in a change is printed as unused and does not fail the run, so remove it once the change that needed it has merged.
 
 **CI step** (needs the history to reach the merge base):
 
@@ -591,7 +593,7 @@ A waiver names a check, the path the finding is about (the migration, or for `ig
 
 `--format=github` turns each finding into an `::error` annotation on its file and line, named from the repository root. The binary needs only this package's `require` dependencies and `git`. It reads NEON with `nette/neon` (a runtime dependency of this package since the binary landed); PHPStan's internal NEON reader is not part of its public API.
 
-These checks follow [sloppy](https://github.com/heyosseus/sloppy) (MIT, `heyosseus/sloppy`), its SL214 and SL502; the code here is our own.
+These checks follow [sloppy](https://github.com/heyosseus/sloppy) (MIT, `heyosseus/sloppy`), its SL214, SL502 and SL503; the code here is our own.
 
 ## Production dependencies
 
