@@ -499,7 +499,7 @@ Six rules only fire inside `App\Actions` — the namespace itself or anything un
 
 ## Diff guards (`vendor/bin/warroom-diff-guards`)
 
-Some regressions only show in a comparison: an edited migration, a grown PHPStan baseline. PHPStan analyses one tree, so these checks ship as a Composer binary instead of a rule. Every consumer that requires this package gets it at `vendor/bin/warroom-diff-guards`.
+Some regressions only show in a comparison: an edited migration, a grown PHPStan baseline, a weakened test. PHPStan analyses one tree, so these checks ship as a Composer binary instead of a rule. Every consumer that requires this package gets it at `vendor/bin/warroom-diff-guards`.
 
 ```bash
 vendor/bin/warroom-diff-guards --base=origin/development [--format=human|github] [--config=<file>]
@@ -511,10 +511,11 @@ Run it from the Composer project directory (`backend/` in a monorepo). It compar
 |---|---|
 | `edited-migration` | A file under a migrations directory (default `database/migrations`) that existed at the fork point is modified, renamed or deleted. Laravel records a migration as run by its file name, so an edit never reaches a database where it already ran, and a rename runs it again even when the content is unchanged. A deletion breaks rollback and reset. A migration added on this branch is silent however often it is rewritten. |
 | `ignore-growth` | An entry under `parameters.ignoreErrors` is added, a counted entry's `count` grows, or a counted entry loses its count. Files read: `phpstan.neon`, `phpstan.neon.dist`, `phpstan-baseline.neon`, `phpstan.neon.baseline`. They are folded into one list per revision, as PHPStan folds its includes, so an entry moved from the config into the baseline nets to nothing. Entries are keyed on identifier and path (the message only when there is no identifier), so a regenerated baseline with reworded messages is silent. The cost of that key: fixing one error and silencing another with the same identifier in the same file also nets to nothing. A count may only shrink, which is the "park" rule in the war-room canonical `phpstan.neon`. |
+| `weakened-test` | In a changed PHP file under a test directory (default `tests`), compared by test name with the fork point: a test newly skipped (`markTestSkipped`, `markTestIncomplete`, Pest `->skip()` / `->todo()`, a conditional skip included); a new assertion that cannot fail (`assertTrue(true)`, `assertFalse(false)`, `assertNull(null)`, `assertSame($a, $a)` / `assertEquals` of the same expression, `addToAssertionCount()`, `expect(true)->toBeTrue()` and its `toBeFalse` / `toBeNull` / `toBe` / `toEqual` kin), also in a brand-new test; a test that made assertions at the base and makes none now; a test deleted with no replacement. Tests are read with `nikic/php-parser`: PHPUnit `test*` methods, `#[Test]` and `@test` as `Class::method`, Pest `it()` / `test()` prefixed by their `describe()` blocks. Assertions made through a helper in the same file count. Silent: a skip that existed at the base, a brand-new skipped or todo test, fewer assertions above zero, a dataset change, a file moved. A deleted test is replaced by a same-named test anywhere in the change, a new test with an identical body, or a new test with at least as many assertions that can fail; each new test replaces one at most. A test file that does not parse is `INVALID`. |
 
 Every run prints, per check, how many files it compared (`edited-migration: 0 findings over 3 changed migrations`). A check that compared nothing says so instead of reading as clean.
 
-**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config or ignore file that does not parse, an unknown option). A missing base is never a pass.
+**Exit codes:** `0` passed, `1` findings, `2` could not run. Exit 2 is printed as `MISSING` (no git work tree, no `--base`, a base that does not resolve, no merge base, an unreadable file) or `INVALID` (a config, ignore or test file that does not parse, an unknown option). A missing base is never a pass.
 
 **`warroom-diff-guards.json`** (optional, in the project directory, or `--config=<file>`):
 
@@ -522,6 +523,7 @@ Every run prints, per check, how many files it compared (`edited-migration: 0 fi
 {
     "migrations": ["database/migrations"],
     "ignoreFiles": ["phpstan.neon", "phpstan-baseline.neon"],
+    "tests": ["tests"],
     "waivers": [
         {
             "check": "edited-migration",
@@ -532,7 +534,7 @@ Every run prints, per check, how many files it compared (`edited-migration: 0 fi
 }
 ```
 
-A waiver names a check, the path the finding is about (the migration, or for `ignore-growth` the path the ignore entry silences, or the ignore file for an entry with no path), and a reason. A waiver without a reason, an unknown key or an unknown check makes the whole file `INVALID`: a typo must not read as "no waivers". A waiver that matches nothing in a change is printed as unused and does not fail the run, so remove it once the change that needed it has merged.
+A waiver names a check, the path the finding is about (the migration; for `ignore-growth` the path the ignore entry silences, or the ignore file for an entry with no path; for `weakened-test` the test file), and a reason. A waiver without a reason, an unknown key or an unknown check makes the whole file `INVALID`: a typo must not read as "no waivers". A waiver that matches nothing in a change is printed as unused and does not fail the run, so remove it once the change that needed it has merged.
 
 **CI step** (needs the history to reach the merge base):
 
@@ -546,7 +548,7 @@ A waiver names a check, the path the finding is about (the migration, or for `ig
 
 `--format=github` turns each finding into an `::error` annotation on its file and line, named from the repository root. The binary needs only this package's `require` dependencies and `git`. It reads NEON with `nette/neon` (a runtime dependency of this package since the binary landed); PHPStan's internal NEON reader is not part of its public API.
 
-These checks follow [sloppy](https://github.com/heyosseus/sloppy) (MIT, `heyosseus/sloppy`), its SL214 and SL502; the code here is our own.
+These checks follow [sloppy](https://github.com/heyosseus/sloppy) (MIT, `heyosseus/sloppy`), its SL214, SL502 and SL503; the code here is our own.
 
 ## Production dependencies
 

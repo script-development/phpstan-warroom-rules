@@ -54,6 +54,7 @@ Phase 2 expands the rule set: `EnforceAuditSnapshotOnRetryRule` (ADR-0001 §Snap
 |---|---|
 | `edited-migration` | A migration that existed at the fork point modified, renamed (even with identical content) or deleted. |
 | `ignore-growth` | A new `ignoreErrors` entry, a grown `count`, or a count removed, over the configured NEON files folded into one list per revision. |
+| `weakened-test` | A test newly skipped, given an assertion that cannot fail, stripped of every assertion, or deleted with nothing in its place, compared by name across the changed files under `tests/` (parsed with `nikic/php-parser`). |
 
 - **Exit codes are the contract:** 0 passed, 1 findings, 2 could not run (`MISSING` input or `INVALID` config). A missing base is exit 2, never a pass. `CannotRunTest` holds one case per exit-2 path.
 - **Every run prints a denominator per check** (`N findings over M changed migrations`, or `compared nothing`).

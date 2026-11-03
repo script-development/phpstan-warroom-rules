@@ -24,9 +24,11 @@ final readonly class Config
 {
     public const string FILE = 'warroom-diff-guards.json';
 
-    public const array CHECKS = [EditedMigrationCheck::NAME, IgnoreGrowthCheck::NAME];
+    public const array CHECKS = [EditedMigrationCheck::NAME, IgnoreGrowthCheck::NAME, WeakenedTestCheck::NAME];
 
     public const array DEFAULT_MIGRATIONS = ['database/migrations'];
+
+    public const array DEFAULT_TESTS = ['tests'];
 
     public const array DEFAULT_IGNORE_FILES = ['phpstan.neon', 'phpstan.neon.dist', 'phpstan-baseline.neon', 'phpstan.neon.baseline'];
 
@@ -34,11 +36,13 @@ final readonly class Config
      * @param list<string> $migrations
      * @param list<string> $ignoreFiles
      * @param list<Waiver> $waivers
+     * @param list<string> $tests
      */
     public function __construct(
         public array $migrations = self::DEFAULT_MIGRATIONS,
         public array $ignoreFiles = self::DEFAULT_IGNORE_FILES,
         public array $waivers = [],
+        public array $tests = self::DEFAULT_TESTS,
     ) {}
 
     /**
@@ -68,7 +72,7 @@ final readonly class Config
             throw CannotRun::invalid("{$path} must hold a JSON object.");
         }
 
-        $unknown = array_diff(array_keys($data), ['migrations', 'ignoreFiles', 'waivers']);
+        $unknown = array_diff(array_keys($data), ['migrations', 'ignoreFiles', 'tests', 'waivers']);
 
         if ($unknown !== []) {
             throw CannotRun::invalid("{$path} has unknown key(s): " . implode(', ', $unknown) . '.');
@@ -78,6 +82,7 @@ final readonly class Config
             self::paths($data, 'migrations', self::DEFAULT_MIGRATIONS, $path),
             self::paths($data, 'ignoreFiles', self::DEFAULT_IGNORE_FILES, $path),
             self::waivers($data['waivers'] ?? [], $path),
+            self::paths($data, 'tests', self::DEFAULT_TESTS, $path),
         );
     }
 
