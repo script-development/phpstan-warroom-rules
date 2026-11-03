@@ -17,6 +17,7 @@ use PhpParser\Node\Name;
 use PhpParser\Node\Stmt\Catch_;
 use PhpParser\NodeFinder;
 use PHPStan\Analyser\Scope;
+use PHPStan\Reflection\ReflectionProvider;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
@@ -43,8 +44,10 @@ use function sprintf;
  * A broad catch is silent when its body, nested closures included, contains:
  *
  *   - no `throw` expression,
- *   - no reporting call — a `report()` / `report_if()` / `report_unless()` /
- *     `logger()` / `info()` helper, any static call on the `Log` facade, or any
+ *   - no reporting call — a call that RESOLVES to the global `report()` /
+ *     `report_if()` / `report_unless()` / `logger()` / `info()` helper (a
+ *     same-namespace function of that name, or an alias of another function,
+ *     is not one; an alias of the helper is), any static call on the `Log` facade, or any
  *     call on a receiver typed as a PSR `LoggerInterface` (which covers
  *     Laravel's `Logger` and `LogManager`), and
  *   - no read of the caught variable. A body that hands the exception on — into
@@ -89,6 +92,10 @@ final class ForbidSwallowedBroadExceptionRule implements Rule
     private const string PSR_LOGGER = LoggerInterface::class;
 
     private const string IDENTIFIER = 'forbidSwallowedBroadException.swallowed';
+
+    public function __construct(
+        private readonly ReflectionProvider $reflectionProvider,
+    ) {}
 
     public function getNodeType(): string
     {
@@ -138,7 +145,8 @@ final class ForbidSwallowedBroadExceptionRule implements Rule
     {
         if ($node instanceof FuncCall) {
             return $node->name instanceof Name
-                && in_array($node->name->toLowerString(), self::REPORTING_FUNCTIONS, true);
+                && $this->reflectionProvider->hasFunction($node->name, $scope)
+                && in_array(mb_strtolower($this->reflectionProvider->getFunction($node->name, $scope)->getName()), self::REPORTING_FUNCTIONS, true);
         }
 
         if ($node instanceof StaticCall) {

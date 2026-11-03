@@ -13,6 +13,8 @@ use ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidSwallowedBroadExceptionRul
  */
 final class ForbidSwallowedBroadExceptionRuleTest extends RuleTestCase
 {
+    private const string HELPERS = __DIR__ . '/../Fixtures/SwallowedBroadException/_helpers.php';
+
     private const string TIP = 'Report it (report($e), Log::…), rethrow it wrapped in a domain exception, or catch the narrow type you expect. A deliberate fail-open (telemetry, the review bus, an error sink) takes an inline PHPStan ignore on forbidSwallowedBroadException.swallowed with the reason.';
 
     public function testFlagsABroadCatchWhoseFailureGoesNowhere(): void
@@ -34,7 +36,7 @@ final class ForbidSwallowedBroadExceptionRuleTest extends RuleTestCase
     public function testStaysSilentWhenTheFailureIsRethrownReportedOrCarried(): void
     {
         $this->analyse(
-            [__DIR__ . '/../Fixtures/SwallowedBroadException/Silent.php'],
+            [__DIR__ . '/../Fixtures/SwallowedBroadException/Silent.php', self::HELPERS],
             [],
         );
     }
@@ -57,9 +59,25 @@ final class ForbidSwallowedBroadExceptionRuleTest extends RuleTestCase
         );
     }
 
+    public function testAReportingCallIsOneThatResolvesToTheGlobalHelper(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/SwallowedBroadException/NamespaceLocalReport.php',
+                __DIR__ . '/../Fixtures/SwallowedBroadException/AliasedReport.php',
+                self::HELPERS,
+            ],
+            [
+                [self::message('Catch of Throwable'), 17, self::TIP],
+                [self::message('Catch of Throwable'), 22, self::TIP],
+                [self::message('Catch of Throwable'), 26, self::TIP],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
-        return new ForbidSwallowedBroadExceptionRule;
+        return new ForbidSwallowedBroadExceptionRule(self::createReflectionProvider());
     }
 
     private static function message(string $catchOf): string

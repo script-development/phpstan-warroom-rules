@@ -50,7 +50,9 @@ use function sprintf;
  * empty". A message that names a reason (`Method not implemented by Laravel.`,
  * `Cannot stub a final class`) is a refusal, not a placeholder. An abstract or
  * interface method has no body and is never read. Comments inside a nested
- * closure or class belong to that body and are reported there, once.
+ * closure or class belong to that body and are reported there, once; a
+ * docblock on a nested declaration belongs to that declaration and is not
+ * read at all.
  *
  * Doctrine source: war-room §Architectural Principles — Explicit over implicit
  * (#1): a placeholder ships a name that promises work the body does not do.
@@ -219,10 +221,11 @@ final class ForbidPlaceholderBodyRule implements Rule
     }
 
     /**
-     * Every comment in the body, once each and in source order, without
-     * descending into a nested function or class: those are bodies of their own.
-     * A comment is attached to every node starting at its position, so it is
-     * keyed by that position.
+     * Every comment belonging to the body's own statements, once each and in
+     * source order. A nested function or class is a body of its own, and the
+     * comments php-parser attaches to its declaration node — its docblock —
+     * are its, not the enclosing body's. A comment is attached to every node
+     * starting at its position, so it is keyed by that position.
      *
      * @param array<Node> $nodes
      *
@@ -249,12 +252,12 @@ final class ForbidPlaceholderBodyRule implements Rule
             return;
         }
 
-        foreach ($subject->getComments() as $comment) {
-            $comments[$comment->getStartFilePos()] = $comment;
-        }
-
         if ($subject instanceof FunctionLike || $subject instanceof ClassLike) {
             return;
+        }
+
+        foreach ($subject->getComments() as $comment) {
+            $comments[$comment->getStartFilePos()] = $comment;
         }
 
         foreach ($subject->getSubNodeNames() as $name) {

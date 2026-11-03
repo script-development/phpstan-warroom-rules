@@ -56,6 +56,16 @@ final class ForbidPlaceholderBodyRuleTest extends RuleTestCase
         );
     }
 
+    public function testCommentsOnANestedDeclarationBelongToThatDeclaration(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/PlaceholderBody/NestedDeclarationComments.php'],
+            [
+                [self::elided('... existing code ...'), 29],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new ForbidPlaceholderBodyRule;
