@@ -487,11 +487,36 @@ Matching is namespace-BOUNDARY aware — `App` and `App\` behave identically, an
 
 A sentinel is a **fixed, plausible value written at the call site**: a scalar literal, `true` / `false`, a class constant, an empty array — and a **bare global constant** (`?? SOME_APP_DEFAULT`), which is the same decision with a name on it. There is no allowlist of constant names; a fallback that is genuinely the caller's own default belongs in a variable (`?? $default`), which is a deliberate miss.
 
-The boundary tell is a **required** `mixed` parameter. An optional one is the caller's own default flowing in, so `get(string $key, mixed $default = null): ?string` is a lookup helper and its `?? ''` stays silent. Known residual false positive: a helper with a **required** `mixed` key plus a default parameter (`get(mixed $key, string $default = ''): ?string`) is indistinguishable from a narrowing helper by signature alone and still fires — the escape hatch is an inline `@phpstan-ignore forbidSentinelFallbackOnNarrowingHelper.sentinelFallback`.
+The boundary tell is a **required** `mixed` parameter. An optional one is the caller's own default flowing in, so `get(string $key, mixed $default = null): ?string` is a lookup helper and its `?? ''` stays silent. Known residual false positive: a helper with a **required** `mixed` key plus a default parameter (`get(mixed $key, string $default = ''): ?string`) is indistinguishable from a narrowing helper by signature alone and still fires — the escape hatch is an inline `@phpstan-ignore forbidSentinelFallbackOnNarrowingHelper.sentinelFallback (reason)`, the reason being required (see [Inline ignores need a reason](#inline-ignores-need-a-reason)).
 
 ### Action namespace assumption
 
 Six rules only fire inside `App\Actions` — the namespace itself or anything under it on the `\` separator, so `App\Actions\Billing` is in and `App\ActionsLegacy` is not: `EnforceActionResultDtoRule`, `EnforceActionTransactionsRule`, `EnforceAuditSnapshotOnRetryRule`, `EnforceAuditTransactionScopeRule`, `ForbidDatabaseManagerInActionsRule` and `ForbidHttpExceptionInActionsRule`. `ForbidAbortHelperRule` fires everywhere but reads the same boundary to pick its remedy. The namespace is not configurable; it matches the Laravel convention used in every `script-development` territory. Territories using a different actions namespace should open a PR to make it configurable.
+
+## Inline ignores need a reason
+
+`extension.neon` sets PHPStan's own `reportIgnoresWithoutComments: true`. Every inline ignore names the identifier it suppresses and says why, in parentheses after that identifier:
+
+```php
+// Rejected: ignore.noComment, and the suppressed error is reported again.
+$value = legacyLookup($key); // @phpstan-ignore argument.type
+
+// Accepted.
+$value = legacyLookup($key); // @phpstan-ignore argument.type (the vendor stub types the key as string; int keys are accepted since v3)
+```
+
+What PHPStan reports, per form:
+
+| Form | Result |
+|---|---|
+| `@phpstan-ignore id (reason)` | Accepted, on the same line or on the line above. |
+| `@phpstan-ignore id` or `@phpstan-ignore id ()` | `ignore.noComment`. Empty parentheses are not a reason. |
+| `@phpstan-ignore a (reason), b` | `ignore.noComment` for `b`. Each identifier carries its own reason. |
+| `@phpstan-ignore-line`, `@phpstan-ignore-next-line` | `ignore.allLineErrors`, whatever text follows. Replace them with `@phpstan-ignore id (reason)`. |
+
+In each rejected case the ignore stops suppressing, so the original error is reported as well. Text after an identifier without parentheses (`@phpstan-ignore id because …`) is an `ignore.parseError` with or without this option.
+
+The option judges inline comments only. `ignoreErrors` entries and baseline files in `phpstan.neon` are unaffected. A consumer that cannot adopt it yet sets `reportIgnoresWithoutComments: false` in its own `phpstan.neon`, which overrides the shipped value.
 
 ## Type extension
 
