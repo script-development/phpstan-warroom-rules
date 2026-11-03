@@ -15,8 +15,10 @@ use function is_string;
 /**
  * The `parameters.ignoreErrors` of one NEON file, folded to a count per key.
  *
- * The key is everything that decides which errors an entry silences: the identifier, the
- * message pattern(s) and the path(s). An entry that keeps its identifier, path and count
+ * The key is every field PHPStan's `ignoreErrors` schema matches on: `identifier` and
+ * `identifiers`, `message` and `messages`, `rawMessage` and `rawMessages`, `path` and
+ * `paths`, each singular folded into its plural as PHPStan expands them. `count` is the
+ * quantity, `reportUnmatched` changes nothing that is suppressed. An entry that keeps its identifier, path and count
  * but swaps its message silences a different error, so it is a new key. The price: a
  * PHPStan upgrade that rewords messages in a regenerated baseline reads as new entries.
  * A count of null is an uncounted entry, which silences without limit. `includes` lists
@@ -52,7 +54,12 @@ final readonly class IgnoreEntries
         }
 
         $parameters = $decoded['parameters'] ?? [];
-        $entries = is_array($parameters) ? $parameters['ignoreErrors'] ?? $parameters['ignoreErrors!'] ?? [] : null;
+
+        if (array_key_exists('parameters!', $decoded) || is_array($parameters) && array_key_exists('ignoreErrors!', $parameters)) {
+            throw CannotRun::invalid("{$file} replaces included ignoreErrors with a `!` key; this tool compares only merged lists. Drop the `!` or remove the included entries.");
+        }
+
+        $entries = is_array($parameters) ? $parameters['ignoreErrors'] ?? [] : null;
 
         if (!is_array($entries)) {
             throw CannotRun::invalid("{$file}: parameters.ignoreErrors is not a list.");
@@ -116,15 +123,13 @@ final readonly class IgnoreEntries
             throw CannotRun::invalid("{$file}: an ignoreErrors entry is neither a pattern nor a map.");
         }
 
-        $paths = $entry['paths'] ?? (isset($entry['path']) ? [$entry['path']] : []);
         $count = $entry['count'] ?? null;
 
-        if (!is_array($paths) || $count !== null && !is_int($count)) {
+        if (array_key_exists('paths', $entry) && !is_array($entry['paths']) || $count !== null && !is_int($count)) {
             throw CannotRun::invalid("{$file}: an ignoreErrors entry has a malformed path or count.");
         }
 
-        $paths = array_values(array_filter($paths, is_string(...)));
-        sort($paths);
+        $paths = self::strings($entry, 'path', 'paths');
 
         return [self::what($entry), implode(', ', $paths), $count];
     }
@@ -134,14 +139,26 @@ final readonly class IgnoreEntries
      */
     private static function what(array $entry): string
     {
-        $message = $entry['message'] ?? $entry['rawMessage'] ?? $entry['messages'] ?? $entry['rawMessages'] ?? [];
-        $parts = array_values(array_filter(is_array($message) ? $message : [$message], is_string(...)));
-        sort($parts);
+        $identifiers = self::strings($entry, 'identifier', 'identifiers');
+        $messages = self::strings($entry, 'message', 'messages');
+        $raw = array_map(static fn(string $message): string => 'rawMessage ' . $message, self::strings($entry, 'rawMessage', 'rawMessages'));
 
-        if (is_string($entry['identifier'] ?? null)) {
-            array_unshift($parts, $entry['identifier']);
-        }
+        return implode(' | ', [...$identifiers, ...$messages, ...$raw]);
+    }
 
-        return implode(' | ', $parts);
+    /**
+     * The singular and plural spellings of one field, merged and sorted, as PHPStan expands them.
+     *
+     * @param array<mixed> $entry
+     *
+     * @return list<string>
+     */
+    private static function strings(array $entry, string $one, string $many): array
+    {
+        $values = [$entry[$one] ?? null, ...(is_array($entry[$many] ?? null) ? $entry[$many] : [])];
+        $values = array_values(array_filter($values, is_string(...)));
+        sort($values);
+
+        return $values;
     }
 }

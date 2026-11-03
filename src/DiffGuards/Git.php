@@ -21,6 +21,18 @@ final readonly class Git
     /** A file past this is INVALID rather than read; the largest fleet PHPStan config is about 115 KB. */
     public const int MAX_BYTES = 4 * 1_024 * 1_024;
 
+    /**
+     * What `git rev-parse --local-env-vars` lists: the variables that point git at a repository,
+     * index or object store other than the one found from the project directory. A hook exports
+     * them for its own repository, which discovery from the project directory finds again.
+     */
+    public const array REPOSITORY_VARIABLES = [
+        'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
+        'GIT_OBJECT_DIRECTORY', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_IMPLICIT_WORK_TREE', 'GIT_GRAFT_FILE',
+        'GIT_INDEX_FILE', 'GIT_NO_REPLACE_OBJECTS', 'GIT_REPLACE_REF_BASE', 'GIT_PREFIX', 'GIT_SHALLOW_FILE',
+        'GIT_COMMON_DIR',
+    ];
+
     public function __construct(
         private string $directory,
     ) {}
@@ -133,7 +145,8 @@ final readonly class Git
     private function run(array $arguments): array
     {
         $pipes = [];
-        $process = proc_open(['git', ...$arguments], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $this->directory);
+        $environment = array_diff_key(getenv(), array_flip(self::REPOSITORY_VARIABLES));
+        $process = proc_open(['git', ...$arguments], [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, $this->directory, $environment);
 
         if (!is_resource($process)) {
             throw CannotRun::missing('git could not be started.');
