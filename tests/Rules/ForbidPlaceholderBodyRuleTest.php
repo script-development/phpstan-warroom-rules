@@ -66,6 +66,17 @@ final class ForbidPlaceholderBodyRuleTest extends RuleTestCase
         );
     }
 
+    public function testADocblockIsDocumentationWhileLineAndBlockCommentsAreRead(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/PlaceholderBody/StatementDocblocks.php'],
+            [
+                [self::elided('... existing code ...'), 25],
+                [self::elided('... rest of the method ... kept'), 27],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new ForbidPlaceholderBodyRule;

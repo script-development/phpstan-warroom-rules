@@ -5,6 +5,7 @@ declare(strict_types = 1);
 namespace ScriptDevelopment\PhpstanWarroomRules\Rules;
 
 use PhpParser\Comment;
+use PhpParser\Comment\Doc;
 use PhpParser\Node;
 use PhpParser\Node\Arg;
 use PhpParser\Node\Expr\New_;
@@ -221,8 +222,8 @@ final class ForbidPlaceholderBodyRule implements Rule
     }
 
     /**
-     * Every comment belonging to the body's own statements, once each and in
-     * source order. A nested function or class is a body of its own, and the
+     * Every line or block comment belonging to the body's own statements, once
+     * each and in source order. A docblock is documentation, never an elision. A nested function or class is a body of its own, and the
      * comments php-parser attaches to its declaration node — its docblock —
      * are its, not the enclosing body's. A comment is attached to every node
      * starting at its position, so it is keyed by that position.
@@ -257,7 +258,9 @@ final class ForbidPlaceholderBodyRule implements Rule
         }
 
         foreach ($subject->getComments() as $comment) {
-            $comments[$comment->getStartFilePos()] = $comment;
+            if (!$comment instanceof Doc) {
+                $comments[$comment->getStartFilePos()] = $comment;
+            }
         }
 
         foreach ($subject->getSubNodeNames() as $name) {
