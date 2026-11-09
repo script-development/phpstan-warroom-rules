@@ -20,7 +20,7 @@ final readonly class CompliantSentinelReturn
 
     public function execute(string $email, string $password): User
     {
-        $result = $this->db->transaction(function() use ($email): User|InvalidCredentialsException {
+        $result = $this->db->transaction(function() use ($email): InvalidCredentialsException|User {
             $user = User::query()->where('email', $email)->first();
 
             if ($user === null) {
