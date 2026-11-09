@@ -11,14 +11,15 @@
     ],
     "require": {
         "php": "^8.4",
-        "phpstan/phpstan": "^2.0",
-        "nikic/php-parser": "^5.0",
-        "illuminate/database": "^12.0 || ^13.0",
-        "illuminate/contracts": "^12.0 || ^13.0",
         "illuminate/cache": "^12.0 || ^13.0",
+        "illuminate/contracts": "^12.0 || ^13.0",
+        "illuminate/database": "^12.0 || ^13.0",
         "illuminate/filesystem": "^12.0 || ^13.0",
         "illuminate/log": "^12.0 || ^13.0",
         "illuminate/mail": "^12.0 || ^13.0",
+        "nette/neon": "^4.0",
+        "nikic/php-parser": "^5.0",
+        "phpstan/phpstan": "^2.0",
         "psr/log": "^3.0"
     },
     "require-dev": {
@@ -39,6 +40,9 @@
             "tests/Fixtures/"
         ]
     },
+    "bin": [
+        "bin/warroom-diff-guards"
+    ],
     "extra": {
         "phpstan": {
             "includes": [
