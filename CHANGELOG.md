@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-09
+
+**Release as a whole: 0.x MINOR, consumer-impacting.** `^0.12` excludes it, so tagging auto-adopts nobody. Each territory adopts on its own `^0.13` pin-bump PR and should expect NEW errors where a facade's service is injected in the facade's place: `user()` on an injected Auth service in a controller; a mutation on an injected `AuthManager`, `CacheManager`, `SessionManager` or another blocklisted facade's service inside an Action's `transaction()` closure; a raw exception message passed to the service behind a facade-named `rawExceptionMessageSinks` entry. Before Rector's facade-to-service rewrite, only services a consumer already injects by hand are affected. Not measured per consumer.
+
 ### Changed
 
 - Package dev lock: `phpstan/phpstan` 2.3.5, `nikic/php-parser` 5.9.0, `illuminate/*` 13.40.0, `laravel/pint` 1.32.1 and `infection/infection` 0.35.10, whose `require-dev` range moves to `^0.35.10`. The `require` ranges are unchanged, so consumers resolve as before. Laravel 13.40 made `RateLimiter` macroable, so `CacheKeySinkTableTest` now skips the methods `Macroable` declares on any class that uses it, not on `Repository` alone. **Versioning:** none.
@@ -325,7 +329,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.13.0
 [0.12.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.12.0
 [0.11.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.11.0
 [0.10.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.10.0
