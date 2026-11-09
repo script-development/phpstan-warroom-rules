@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Changed
 
 - Package dev lock: `phpstan/phpstan` 2.3.5, `nikic/php-parser` 5.9.0, `illuminate/*` 13.40.0, `laravel/pint` 1.32.1 and `infection/infection` 0.35.10, whose `require-dev` range moves to `^0.35.10`. The `require` ranges are unchanged, so consumers resolve as before. Laravel 13.40 made `RateLimiter` macroable, so `CacheKeySinkTableTest` now skips the methods `Macroable` declares on any class that uses it, not on `Repository` alone. **Versioning:** none.
+- Package dev tooling: `phpunit/phpunit` 11.5 → 13.4.6, `require-dev` range `^13.4`. The suite and `phpunit.xml.dist` run unchanged. **Versioning:** none.
 
 ## [0.12.0] — 2026-11-09
 
