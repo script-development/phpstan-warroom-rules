@@ -6,7 +6,7 @@ Composer package distributing war-room-doctrine PHPStan rules across `script-dev
 
 - **Language:** PHP 8.4+ (uses `private const string` syntax; `mb_ltrim`/`mb_trim` via Pint `mb_str_functions`)
 - **Static analysis:** PHPStan 2.x (target framework — the package extends it)
-- **Test:** PHPUnit 13 (extends `PHPStan\Testing\RuleTestCase`)
+- **Test:** PHPUnit 13 (extends `PHPStan\Testing\RuleTestCase`), which needs PHP 8.4.1+ to install the dev dependencies
 - **Format:** Pint (canonical config from war-room `templates/pint.json`)
 - **Publish:** Auto-sync to public packagist.org via repository webhook (`https://packagist.org/api/github`, push-trigger; `dev-*` aliases on branch push, versioned releases on tag push — the webhook publishes the tag; `release.yml` only creates the GitHub release). OIDC Trusted Publishing on Packagist is currently a Private Packagist–only feature (`packagist/artifact-publish-github-action`); public packagist.org has no OIDC option today. Migration to Private Packagist was audited in Issue #11 (closed, not adopted) — it would change ally-side Composer consumption.
 
