@@ -38,6 +38,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Security
 
 - Package dev lock: `symfony/mime` v8.1.0 → v8.1.10 for CVE-2026-45070 (PKSA-wtxr-p26d-nn42, email header injection), which turned `composer audit` red on every CI run. Lockfile only; consumers resolve their own `symfony/mime`, so nothing changes for them.
+- Package dev lock: `symfony/filesystem` v8.1.0 → v8.1.11 for PKSA-g499-cm4q-v35y (GHSA-6prc-h956-hxjq: a prefix before `://` was treated as a root, so a path could escape its base directory), which turned `composer audit` red on this release's CI run. Lockfile only and a dev dependency; consumers resolve their own `symfony/filesystem`, so nothing changes for them.
 
 ## [0.11.0] — 2026-10-01
 
