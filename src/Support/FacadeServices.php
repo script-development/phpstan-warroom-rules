@@ -80,9 +80,6 @@ final class FacadeServices
         return false;
     }
 
-    /**
-     * The facade whose service `$type` is, or null.
-     */
     public static function facadeOf(Type $type): ?string
     {
         foreach (self::SERVICES as $facade => $services) {
