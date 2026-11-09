@@ -13,17 +13,20 @@ use PhpParser\Node\Expr\MethodCall;
 use PhpParser\Node\Expr\StaticCall;
 use PhpParser\Node\Identifier;
 use PhpParser\Node\Name;
+use PhpParser\PrettyPrinter\Standard;
 use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
 use PHPStan\Type\ObjectType;
+use ScriptDevelopment\PhpstanWarroomRules\Support\FacadeServices;
 use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function sprintf;
 
 /**
- * Flags Request::user() / Auth::user() / auth()->user() calls inside controller methods.
+ * Flags Request::user() / Auth::user() / auth()->user() calls inside controller methods,
+ * and `user()` on the Auth facade's service injected in its place.
  * Use the #[\Illuminate\Container\Attributes\CurrentUser] container attribute on the
  * method parameter instead — eliminates the nullable-then-assert dance.
  *
@@ -41,7 +44,7 @@ use function sprintf;
  * canonical resolution path (constructor DI for Actions, authenticated payload
  * threading for jobs, etc.).
  *
- * Detection (three call shapes branch in `processNode`):
+ * Detection (four call shapes branch in `processNode`):
  *   1. `MethodCall` — receiver type is a (subtype of) `Illuminate\Http\Request`
  *      and method name is `user`. Type-based via `ObjectType::isSuperTypeOf()`,
  *      mirroring `EnforceAuditSnapshotOnRetryRule::receiverIsConnectionInterface()`.
@@ -51,8 +54,13 @@ use function sprintf;
  *   3. `StaticCall` — class name resolves to `Illuminate\Support\Facades\Auth`
  *      and method name is `user`. FQCN comparison via `$scope->resolveName()`
  *      handles aliased imports.
+ *   4. `MethodCall` — receiver type is the Auth facade's service (`AuthManager`
+ *      and the other `Contracts\Auth\Factory` implementations, or a `Guard`)
+ *      and method name is `user`. A receiver that is itself a call
+ *      (`$this->auth->guard('api')->user()`) stays out, as
+ *      `Auth::guard('api')->user()` does.
  *
- * Containing-class gate (applied to all three branches): the rule fires only
+ * Containing-class gate (applied to every branch): the rule fires only
  * when `$scope->getNamespace()` starts with a configured controller prefix
  * (default `App\Http\Controllers`). This
  * mirrors `ForbidEloquentMutationInControllersRule` and the canonical
@@ -161,6 +169,11 @@ final class EnforceCurrentUserAttributeRule implements Rule
         // Shape 2: auth()->user() — receiver is FuncCall('auth')
         if ($this->receiverIsAuthHelper($node)) {
             return [$this->buildError('auth()->user()')];
+        }
+
+        // Shape 4: $this->auth->user() — receiver is the injected Auth service
+        if (!$node->var instanceof CallLike && FacadeServices::serves(self::AUTH_FACADE_FQCN, $scope->getType($node->var))) {
+            return [$this->buildError(new Standard()->prettyPrintExpr($node))];
         }
 
         return [];

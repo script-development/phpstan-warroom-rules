@@ -8,6 +8,8 @@ use PHPStan\Rules\Rule;
 use PHPStan\Testing\RuleTestCase;
 use ScriptDevelopment\PhpstanWarroomRules\Rules\EnforceCurrentUserAttributeRule;
 
+use function sprintf;
+
 /**
  * @extends RuleTestCase<EnforceCurrentUserAttributeRule>
  */
@@ -18,6 +20,8 @@ final class EnforceCurrentUserAttributeRuleTest extends RuleTestCase
     private const string EXPECTED_AUTH_FACADE = 'Authenticated-user resolution in controller methods uses the #[CurrentUser] container attribute. Add `#[\Illuminate\Container\Attributes\CurrentUser] User $user` to the method signature instead of calling Auth::user() inside the body.';
 
     private const string EXPECTED_AUTH_HELPER = 'Authenticated-user resolution in controller methods uses the #[CurrentUser] container attribute. Add `#[\Illuminate\Container\Attributes\CurrentUser] User $user` to the method signature instead of calling auth()->user() inside the body.';
+
+    private const string EXPECTED_INJECTED = 'Authenticated-user resolution in controller methods uses the #[CurrentUser] container attribute. Add `#[\Illuminate\Container\Attributes\CurrentUser] User $user` to the method signature instead of calling %s inside the body.';
 
     /**
      * Override hook: when set, `getRule()` returns this instance instead of
@@ -305,6 +309,34 @@ final class EnforceCurrentUserAttributeRuleTest extends RuleTestCase
                 [self::EXPECTED_REQUEST_USER, 50],
                 [self::EXPECTED_AUTH_FACADE, 83],
             ],
+        );
+    }
+
+    public function testFlagsTheInjectedAuthService(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/FacadeServices/_stubs.php',
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/InjectedAuthInController.php',
+            ],
+            [
+                [sprintf(self::EXPECTED_INJECTED, '$this->authManager->user()'), 19],
+                [sprintf(self::EXPECTED_INJECTED, '$this->guard->user()'), 24],
+                [sprintf(self::EXPECTED_INJECTED, '$guard->user()'), 29],
+            ],
+        );
+    }
+
+    public function testIgnoresAGuardChainAndAnUnrelatedUserMethod(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/_stubs.php',
+                __DIR__ . '/../Fixtures/FacadeServices/_stubs.php',
+                __DIR__ . '/../Fixtures/CurrentUserAttribute/InjectedAuthGuardChainInController.php',
+            ],
+            [],
         );
     }
 
