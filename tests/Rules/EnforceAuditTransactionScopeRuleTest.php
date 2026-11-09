@@ -255,6 +255,32 @@ final class EnforceAuditTransactionScopeRuleTest extends RuleTestCase
         );
     }
 
+    public function testViolationInjectedFacadeServiceInsideClosure(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FacadeServices/_stubs.php',
+                __DIR__ . '/../Fixtures/AuditTransactionScope/ViolationInjectedFacadeServiceInsideClosure.php',
+            ],
+            [
+                [$this->message('App\Actions\Auth\ViolationInjectedFacadeServiceInsideClosure', 'AuthManager', 'login'), 27],
+                [$this->message('App\Actions\Auth\ViolationInjectedFacadeServiceInsideClosure', 'CacheManager', 'put'), 28],
+                [$this->message('App\Actions\Auth\ViolationInjectedFacadeServiceInsideClosure', 'SessionManager', 'put'), 29],
+            ],
+        );
+    }
+
+    public function testCompliantInjectedFacadeService(): void
+    {
+        $this->analyse(
+            [
+                __DIR__ . '/../Fixtures/FacadeServices/_stubs.php',
+                __DIR__ . '/../Fixtures/AuditTransactionScope/CompliantInjectedFacadeService.php',
+            ],
+            [],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new EnforceAuditTransactionScopeRule;

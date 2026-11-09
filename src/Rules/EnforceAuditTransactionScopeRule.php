@@ -35,6 +35,8 @@ use PHPStan\Analyser\Scope;
 use PHPStan\Rules\IdentifierRuleError;
 use PHPStan\Rules\Rule;
 use PHPStan\Rules\RuleErrorBuilder;
+use PHPStan\Type\ObjectType;
+use ScriptDevelopment\PhpstanWarroomRules\Support\FacadeServices;
 use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 
 use function in_array;
@@ -79,7 +81,9 @@ use function sprintf;
  * Instance-call detection — `$this->guard->login(...)` form: walks the
  * `PropertyFetch` to a constructor parameter and matches the declared type
  * (or its short FQCN) against the blocklist keys. Same shape as
- * `EnforceActionTransactionsRule::getNonDatabasePropertyNames()`.
+ * `EnforceActionTransactionsRule::getNonDatabasePropertyNames()`. A declared
+ * type that is no key but serves a blocklisted facade (`AuthManager`,
+ * `CacheManager`, `SessionManager`) takes that facade's methods.
  *
  * Static-facade detection — `Auth::login(...)` form: matches the `StaticCall`
  * class via `$scope->resolveName()` against the blocklist's facade FQCNs.
@@ -412,11 +416,11 @@ final class EnforceAuditTransactionScopeRule implements Rule
             return null;
         }
 
-        if (!isset(self::BLOCKLISTED_METHODS[$propertyType])) {
-            return null;
-        }
+        $methods = self::BLOCKLISTED_METHODS[$propertyType]
+            ?? self::BLOCKLISTED_METHODS[FacadeServices::facadeOf(new ObjectType($propertyType)) ?? '']
+            ?? null;
 
-        if (!in_array(mb_strtolower($methodName), self::BLOCKLISTED_METHODS[$propertyType], true)) {
+        if ($methods === null || !in_array(mb_strtolower($methodName), $methods, true)) {
             return null;
         }
 
