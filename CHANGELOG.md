@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Package dev lock: `phpstan/phpstan` 2.3.5, `nikic/php-parser` 5.9.0, `illuminate/*` 13.40.0, `laravel/pint` 1.32.1 and `infection/infection` 0.35.10, whose `require-dev` range moves to `^0.35.10`. The `require` ranges are unchanged, so consumers resolve as before. Laravel 13.40 made `RateLimiter` macroable, so `CacheKeySinkTableTest` now skips the methods `Macroable` declares on any class that uses it, not on `Repository` alone. **Versioning:** none.
+
 ## [0.12.0] — 2026-11-09
 
 **Release as a whole: 0.x MINOR, consumer-impacting.** `^0.11` excludes it, so tagging auto-adopts nobody. Each territory adopts on its own `^0.12` pin-bump PR and should expect NEW errors from four sources: `reportIgnoresWithoutComments` (reasonless inline ignores measured 2026-11-03: emmie 113, brick-inventory-orchestrator 53, kendo 2, entreezuil 1), `ForbidSwallowedBroadExceptionRule` (kendo 8 of 116 broad catches, lokalekeuze 0), `ForbidPlaceholderBodyRule` (0 on kendo and lokalekeuze), and the case-folding fixes below. A malformed `rawExceptionMessageSinks` entry now stops analysis instead of arming nothing. The case-folding fixes report writes and calls the rules used to miss, so a consumer can see new errors in code that passed; per this package's SemVer that is the pin-bump class, not a patch. A consumer that read zero on `ForbidCredentialCastBypassRule` before this release has to be re-measured after it.

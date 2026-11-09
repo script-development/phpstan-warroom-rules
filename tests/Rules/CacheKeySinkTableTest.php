@@ -9,6 +9,7 @@ use Illuminate\Cache\RateLimiter;
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\LockProvider;
 use Illuminate\Contracts\Cache\Store;
+use Illuminate\Support\Traits\Macroable;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionClassConstant;
@@ -43,8 +44,6 @@ final class CacheKeySinkTableTest extends TestCase
             'limiter', // looks that definition up
         ],
         Repository::class => [
-            'hasmacro', // Macroable: names a macro
-            'macro',
             // ArrayAccess: `$cache[$key]` is an array access, not a method call, so a
             // method sink would cover only an explicit `->offsetGet()`. WR-1827.
             'offsetexists',
@@ -89,6 +88,9 @@ final class CacheKeySinkTableTest extends TestCase
             RateLimiter::class => $this->table('RATE_LIMITER_SINKS'),
         ];
 
+        // Macroable's methods name a macro, on whichever class uses the trait.
+        $macroable = new ReflectionClass(Macroable::class)->getFileName();
+
         foreach ($tables as $class => $table) {
             $keyed = [];
 
@@ -96,7 +98,7 @@ final class CacheKeySinkTableTest extends TestCase
                 $first = $method->getParameters()[0] ?? null;
                 $name = mb_strtolower($method->getName());
 
-                if ($first !== null && in_array($first->getName(), self::KEY_PARAMETERS, true) && !in_array($name, self::NOT_SINKS[$class] ?? [], true)) {
+                if ($first !== null && in_array($first->getName(), self::KEY_PARAMETERS, true) && !in_array($name, self::NOT_SINKS[$class] ?? [], true) && $method->getFileName() !== $macroable) {
                     $keyed[] = $name;
                 }
             }
