@@ -393,10 +393,6 @@ final class EnforceAuditTransactionScopeRule implements Rule
     }
 
     /**
-     * The closure arguments of an `afterCommit()` call on a connection: the
-     * `DB` facade, or `$this->property` whose declared constructor type serves
-     * it (`ConnectionInterface`, `DatabaseManager`).
-     *
      * @param array<string, string> $constructorPropertyTypes property-name => FQCN
      *
      * @return list<Arg>
