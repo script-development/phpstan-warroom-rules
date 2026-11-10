@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Fixed
+
+- `EnforceAuditTransactionScopeRule` — **false-positive narrowing.** It walked every closure inside a `transaction()` body, including the callback handed to `afterCommit()`, which runs after the commit. A mutation there, such as `$this->connection->afterCommit(fn () => $this->filesystemManager->delete($path))`, was reported, and Emmie had to move the delete into a private method to pass (Emmie #3609). A closure or arrow function passed to `afterCommit()` on the `DB` facade, or on a constructor-injected `ConnectionInterface` (any `Connection`) or `DatabaseManager`, is no longer walked. Its other arguments still are, since they run at the call, and `afterCommit()` on any other receiver is walked as before. **Versioning:** patch.
+
 ## [0.13.0] — 2026-11-09
 
 **Release as a whole: 0.x MINOR, consumer-impacting.** `^0.12` excludes it, so tagging auto-adopts nobody. Each territory adopts on its own `^0.13` pin-bump PR and should expect NEW errors where a facade's service is injected in the facade's place: `user()` on an injected Auth service in a controller; a mutation on an injected `AuthManager`, `CacheManager`, `SessionManager` or another blocklisted facade's service inside an Action's `transaction()` closure; a raw exception message passed to the service behind a facade-named `rawExceptionMessageSinks` entry. Before Rector's facade-to-service rewrite, only services a consumer already injects by hand are affected. Not measured per consumer.

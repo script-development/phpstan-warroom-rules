@@ -281,6 +281,27 @@ final class EnforceAuditTransactionScopeRuleTest extends RuleTestCase
         );
     }
 
+    public function testCompliantAfterCommitMutation(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AuditTransactionScope/CompliantAfterCommitMutation.php'],
+            [],
+        );
+    }
+
+    public function testViolationMutationOutsideAfterCommit(): void
+    {
+        $this->analyse(
+            [__DIR__ . '/../Fixtures/AuditTransactionScope/ViolationMutationOutsideAfterCommit.php'],
+            [
+                [$this->message('App\Actions\Auth\ViolationMutationOutsideAfterCommit', 'FilesystemManager', 'delete'), 30],
+                [$this->message('App\Actions\Auth\ViolationMutationOutsideAfterCommit', 'FilesystemManager', 'delete'), 31],
+                [$this->message('App\Actions\Auth\ViolationMutationOutsideAfterCommit', 'FilesystemManager', 'delete'), 32],
+                [$this->message('App\Actions\Auth\ViolationMutationOutsideAfterCommit', 'FilesystemManager', 'delete'), 33],
+            ],
+        );
+    }
+
     protected function getRule(): Rule
     {
         return new EnforceAuditTransactionScopeRule;

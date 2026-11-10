@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
@@ -72,6 +73,9 @@ use function sprintf;
  *      looking for blocklist violations. Nested `transaction(...)` calls
  *      inside the outer closure are walked into transitively — a nested
  *      mutation is still inside the outer transaction's rollback scope.
+ *      A closure handed to `afterCommit()` on a connection (`DB`, a
+ *      `ConnectionInterface`, `DatabaseManager`) is not walked: it runs
+ *      after the commit.
  *
  * Blocklist — mutation methods only on a canonical set of facades + contracts.
  * Reads (`Auth::user()`, `Session::get()`, `Cache::get()`, etc.) are
@@ -361,7 +365,7 @@ final class EnforceAuditTransactionScopeRule implements Rule
 
         $body = $closure instanceof Closure ? $closure->stmts : [$closure->expr];
 
-        $this->walkNodes($body, function(Node $node) use (&$violations, $constructorPropertyTypes, $scope): void {
+        $this->walkNodes($body, function(Node $node) use (&$violations, $constructorPropertyTypes, $scope): array {
             if ($node instanceof MethodCall) {
                 $violation = $this->checkInstanceCall($node, $constructorPropertyTypes);
 
@@ -369,7 +373,7 @@ final class EnforceAuditTransactionScopeRule implements Rule
                     $violations[] = $violation;
                 }
 
-                return;
+                return $this->afterCommitCallbacks($node, $constructorPropertyTypes, $scope);
             }
 
             if ($node instanceof StaticCall) {
@@ -378,10 +382,46 @@ final class EnforceAuditTransactionScopeRule implements Rule
                 if ($violation !== null) {
                     $violations[] = $violation;
                 }
+
+                return $this->afterCommitCallbacks($node, $constructorPropertyTypes, $scope);
             }
+
+            return [];
         });
 
         return $violations;
+    }
+
+    /**
+     * @param array<string, string> $constructorPropertyTypes property-name => FQCN
+     *
+     * @return list<Arg>
+     */
+    private function afterCommitCallbacks(MethodCall|StaticCall $node, array $constructorPropertyTypes, Scope $scope): array
+    {
+        if (!$node->name instanceof Identifier || $node->name->toLowerString() !== 'aftercommit') {
+            return [];
+        }
+
+        if ($node instanceof StaticCall) {
+            $onConnection = $node->class instanceof Name && $scope->resolveName($node->class) === DB::class;
+        } else {
+            $onConnection = $node->var instanceof PropertyFetch
+                && $node->var->var instanceof Variable
+                && $node->var->var->name === 'this'
+                && $node->var->name instanceof Identifier
+                && isset($constructorPropertyTypes[$node->var->name->toString()])
+                && FacadeServices::serves(DB::class, new ObjectType($constructorPropertyTypes[$node->var->name->toString()]));
+        }
+
+        if (!$onConnection) {
+            return [];
+        }
+
+        return array_values(array_filter(
+            $node->getArgs(),
+            static fn(Arg $arg): bool => $arg->value instanceof Closure || $arg->value instanceof ArrowFunction,
+        ));
     }
 
     /**
@@ -524,8 +564,10 @@ final class EnforceAuditTransactionScopeRule implements Rule
      * Recursively walk a list of nodes, invoking `$callback` on each one.
      * Mirrors `EnforceActionTransactionsRule::walkNodes()` for parity —
      * re-evaluate at v1.0 once the duplication trigger is acted on.
+     * `$callback` returns the items of the node's child lists not to walk into.
      *
      * @param array<int|string, Node|null> $nodes
+     * @param callable(Node): list<Node>   $callback
      */
     private function walkNodes(array $nodes, callable $callback): void
     {
@@ -534,7 +576,7 @@ final class EnforceAuditTransactionScopeRule implements Rule
                 continue;
             }
 
-            $callback($node);
+            $skipped = $callback($node);
 
             foreach ($node->getSubNodeNames() as $name) {
                 $subNode = $node->{$name};
@@ -543,7 +585,7 @@ final class EnforceAuditTransactionScopeRule implements Rule
                     $this->walkNodes([$subNode], $callback);
                 } elseif (is_array($subNode)) {
                     $this->walkNodes(
-                        array_filter($subNode, static fn(mixed $item): bool => $item instanceof Node),
+                        array_filter($subNode, static fn(mixed $item): bool => $item instanceof Node && !in_array($item, $skipped, true)),
                         $callback,
                     );
                 }
