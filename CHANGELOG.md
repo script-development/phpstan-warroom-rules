@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-11-10
+
+**Release as a whole: PATCH, no new errors.** `^0.13` takes it automatically. A closure handed to `afterCommit()` on a connection inside a `transaction()` closure is no longer reported by `EnforceAuditTransactionScopeRule`, so a consumer can drop a workaround such as moving the deferred mutation into a private method.
+
 ### Fixed
 
 - `EnforceAuditTransactionScopeRule` — **false-positive narrowing.** It walked every closure inside a `transaction()` body, including the callback handed to `afterCommit()`, which runs after the commit. A mutation there, such as `$this->connection->afterCommit(fn () => $this->filesystemManager->delete($path))`, was reported, and Emmie had to move the delete into a private method to pass (Emmie #3609). A closure or arrow function passed to `afterCommit()` on the `DB` facade, or on a constructor-injected `ConnectionInterface` (any `Connection`) or `DatabaseManager`, is no longer walked. Its other arguments still are, since they run at the call, and `afterCommit()` on any other receiver is walked as before. **Versioning:** patch.
@@ -333,7 +337,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.13.1
 [0.13.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.13.0
 [0.12.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.12.0
 [0.11.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.11.0
