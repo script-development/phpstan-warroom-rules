@@ -25,6 +25,7 @@ use PHPStan\Type\ObjectType;
 use PHPStan\Type\Type;
 use PHPStan\Type\TypeCombinator;
 use Psr\Log\LoggerInterface;
+use ScriptDevelopment\PhpstanWarroomRules\Support\FacadeServices;
 use Throwable;
 
 use function explode;
@@ -64,7 +65,9 @@ use function str_starts_with;
  *   - a `StaticCall` whose resolved class equals the sink FQCN
  *     (`Response::error(...)`), and
  *   - a `MethodCall` whose receiver type is a subtype of the sink FQCN
- *     (`$this->response->error(...)`, an injected persist-sink service).
+ *     (`$this->response->error(...)`, an injected persist-sink service), or,
+ *     for a Laravel facade sink, the facade's service injected in its place
+ *     (`Response::json` also matches `$this->responseFactory->json(...)`).
  *
  * A matched sink call is flagged when ANY argument is, directly OR via string
  * concatenation (`'context: ' . $e->getMessage()`):
@@ -274,7 +277,9 @@ final class ForbidRawExceptionMessageInResponseRule implements Rule
                 continue;
             }
 
-            if ((new ObjectType($sink['class']))->isSuperTypeOf($scope->getType($node->var))->yes()) {
+            $receiverType = $scope->getType($node->var);
+
+            if ((new ObjectType($sink['class']))->isSuperTypeOf($receiverType)->yes() || FacadeServices::serves($sink['class'], $receiverType)) {
                 return true;
             }
         }

@@ -13,6 +13,7 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use ReflectionClass;
 use ScriptDevelopment\PhpstanWarroomRules\Support\AppendOnlyLogMessage;
+use ScriptDevelopment\PhpstanWarroomRules\Support\FacadeServices;
 use ScriptDevelopment\PhpstanWarroomRules\Support\NamespacePrefix;
 use SplFileInfo;
 use Throwable;
@@ -50,6 +51,7 @@ final class ExtensionRegistrationTest extends TestCase
     /** @var list<class-string> */
     private const array HELPERS = [
         AppendOnlyLogMessage::class,
+        FacadeServices::class,
         NamespacePrefix::class,
     ];
 

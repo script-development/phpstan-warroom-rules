@@ -79,6 +79,30 @@ final class ForbidRawExceptionMessageInResponseRuleTest extends RuleTestCase
         );
     }
 
+    public function testFlagsAFacadeSinkOnTheServiceInjectedInItsPlace(): void
+    {
+        $this->ruleOverride = new ForbidRawExceptionMessageInResponseRule(
+            ['Illuminate\Support\Facades\Response::make'],
+        );
+
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/FacadeSinkInjectedGetMessage.php'],
+            [[self::MESSAGE, 18]],
+        );
+    }
+
+    public function testIgnoresAFacadeSinkMethodOnAnUnrelatedReceiver(): void
+    {
+        $this->ruleOverride = new ForbidRawExceptionMessageInResponseRule(
+            ['Illuminate\Support\Facades\Response::make'],
+        );
+
+        $this->analyse(
+            [self::STUBS, __DIR__ . '/../Fixtures/RawExceptionMessageInResponse/FacadeSinkUnrelatedReceiver.php'],
+            [],
+        );
+    }
+
     public function testIgnoresLoggingOfRawMessage(): void
     {
         // Log::error / logger()->error / report() — the remediation, never a leak.

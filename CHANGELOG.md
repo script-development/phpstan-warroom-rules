@@ -6,9 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-11-10
+
+**Release as a whole: PATCH, no new errors.** `^0.13` takes it automatically. A closure handed to `afterCommit()` on a connection inside a `transaction()` closure is no longer reported by `EnforceAuditTransactionScopeRule`, so a consumer can drop a workaround such as moving the deferred mutation into a private method.
+
+### Fixed
+
+- `EnforceAuditTransactionScopeRule` — **false-positive narrowing.** It walked every closure inside a `transaction()` body, including the callback handed to `afterCommit()`, which runs after the commit. A mutation there, such as `$this->connection->afterCommit(fn () => $this->filesystemManager->delete($path))`, was reported, and Emmie had to move the delete into a private method to pass (Emmie #3609). A closure or arrow function passed to `afterCommit()` on the `DB` facade, or on a constructor-injected `ConnectionInterface` (any `Connection`) or `DatabaseManager`, is no longer walked. Its other arguments still are, since they run at the call, and `afterCommit()` on any other receiver is walked as before. **Versioning:** patch.
+
+## [0.13.0] — 2026-11-09
+
+**Release as a whole: 0.x MINOR, consumer-impacting.** `^0.12` excludes it, so tagging auto-adopts nobody. Each territory adopts on its own `^0.13` pin-bump PR and should expect NEW errors where a facade's service is injected in the facade's place: `user()` on an injected Auth service in a controller; a mutation on an injected `AuthManager`, `CacheManager`, `SessionManager` or another blocklisted facade's service inside an Action's `transaction()` closure; a raw exception message passed to the service behind a facade-named `rawExceptionMessageSinks` entry. Before Rector's facade-to-service rewrite, only services a consumer already injects by hand are affected. Not measured per consumer.
+
 ### Changed
 
 - Package dev lock: `phpstan/phpstan` 2.3.5, `nikic/php-parser` 5.9.0, `illuminate/*` 13.40.0, `laravel/pint` 1.32.1 and `infection/infection` 0.35.10, whose `require-dev` range moves to `^0.35.10`. The `require` ranges are unchanged, so consumers resolve as before. Laravel 13.40 made `RateLimiter` macroable, so `CacheKeySinkTableTest` now skips the methods `Macroable` declares on any class that uses it, not on `Repository` alone. **Versioning:** none.
+- Package dev tooling: `phpunit/phpunit` 11.5 → 13.4.6, `require-dev` range `^13.4`. The suite and `phpunit.xml.dist` run unchanged. **Versioning:** none.
+
+### Fixed
+
+- Facade rules see the injected service — **fires on more code (consumer-impacting).** Rector's `StaticFacadeToServiceMethodCallRector` turns `Auth::user()` into `$this->authManager->user()`, and the rules that matched the facade stopped seeing the call. `EnforceCurrentUserAttributeRule` now also flags `user()` on a receiver typed as the Auth service (`AuthManager` or any `Contracts\Auth\Factory`, or a `Guard`); a guard reached through a call (`->guard('api')->user()`) stays silent, as `Auth::guard('api')->user()` does. `EnforceAuditTransactionScopeRule` gives a constructor-injected type that serves a blocklisted facade (`AuthManager`, `CacheManager`, `SessionManager`, `QueueManager`, `FilesystemManager`, `MailManager`, `BroadcastManager`) that facade's mutation methods. A `rawExceptionMessageSinks` entry naming a facade also matches the facade's service injected in its place. `Support\FacadeServices` holds the facade-to-type map; `CacheKeyTaintCollector` already matched cache receivers by type and is unchanged. Code that injected these services before the rollout can see new errors. **Versioning:** 0.x minor.
 
 ## [0.12.0] — 2026-11-09
 
@@ -320,7 +337,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Test coverage is smoke-level for v0.1.0; full matrix for `EnforceActionTransactionsRule` (non-DB property exclusions, nested closure transaction detection, full 18-method write list) lands in a follow-up.
 - Action namespace assumption: rules that scope to Actions match `App\Actions\*`. Lift to a parameter when a non-conforming territory onboards.
 
-[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/script-development/phpstan-warroom-rules/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.13.1
+[0.13.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.13.0
 [0.12.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.12.0
 [0.11.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.11.0
 [0.10.0]: https://github.com/script-development/phpstan-warroom-rules/releases/tag/v0.10.0

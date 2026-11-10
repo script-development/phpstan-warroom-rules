@@ -48,3 +48,8 @@ class FormRequest {}
 namespace Symfony\Component\HttpKernel\Exception;
 
 interface HttpExceptionInterface {}
+
+namespace Illuminate\Session;
+
+// `Support\FacadeServices` names it; `illuminate/session` is not a dependency either.
+class SessionManager {}
