@@ -237,6 +237,9 @@ services:
         class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidPlaceholderBodyRule
         tags: [phpstan.rules.rule]
     -
+        class: ScriptDevelopment\PhpstanWarroomRules\Rules\ForbidMixedConfigInjectionRule
+        tags: [phpstan.rules.rule]
+    -
         class: ScriptDevelopment\PhpstanWarroomRules\Collectors\CacheKeyTaintCollector
         tags: [phpstan.collector]
     -

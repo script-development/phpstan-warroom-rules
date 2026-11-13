@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `ForbidMixedConfigInjectionRule` — new rule, identifier `forbidMixedConfigInjection.untypedConfigParameter`. Reports a parameter of any function, method, closure or arrow function, constructor-promoted ones included, that carries the container's `#[Config]` attribute (`Illuminate\Container\Attributes\Config`, matched by resolved FQCN, case-folded, so an aliased import counts and a first-party attribute named `Config` does not) and declares no type or `mixed`. ADR-0016 § Type Safety makes the declared type the config value's contract; `mixed` leaves every reader to narrow it by hand, and a malformed value reads as "unset". Any other declared type passes, unions included (`array|string|null`); `mixed` without the attribute never fires. No escape hatch. Measured 2026-11-13 by running the rule alone over each consumer's `backend/app`: lokalekeuze 16 of 71 `#[Config]` parameters, btc-dash 3 of 36, medialab 0 of 6 on `development`. **Versioning: a new rule — 0.x minor; it reports new errors in lokalekeuze and btc-dash.**
+
 ## [0.13.1] — 2026-11-10
 
 **Release as a whole: PATCH, no new errors.** `^0.13` takes it automatically. A closure handed to `afterCommit()` on a connection inside a `transaction()` closure is no longer reported by `EnforceAuditTransactionScopeRule`, so a consumer can drop a workaround such as moving the deferred mutation into a private method.
